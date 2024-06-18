@@ -1,0 +1,11 @@
+[
+  "in/tile.laz",
+  {
+    "type": "writers.gdal",
+    "filename": "out/dem.tif",
+    "window_size": 20,
+    "resolution": 1.0,
+    "where": "Classification == 2",
+    "output_type": "mean"
+  }
+]
