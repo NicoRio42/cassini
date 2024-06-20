@@ -6,4 +6,6 @@ edition = "2021"
 [dependencies]
 image = "0.25.1"
 imageproc = "0.25.0"
+shapefile = "0.6.0"
+skia-safe = "0.75.0"
 tiff = "0.9.1"

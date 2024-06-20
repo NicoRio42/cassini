@@ -1,5 +1,9 @@
-use image::{Rgba, RgbaImage};
+pub mod canvas;
+
+use canvas::Canvas;
+use image::{Rgb, Rgba, RgbaImage};
 use imageproc::{drawing::draw_filled_rect_mut, rect::Rect};
+use shapefile::dbase;
 use std::fs::File;
 use tiff::decoder::{Decoder, DecodingResult};
 
@@ -12,15 +16,20 @@ const GREEN_1: Rgba<u8> = Rgba([197, 255, 185, 255]);
 const GREEN_2: Rgba<u8> = Rgba([139, 255, 116, 255]);
 const GREEN_3: Rgba<u8> = Rgba([61, 255, 23, 255]);
 const BLACK: Rgba<u8> = Rgba([0, 0, 0, 255]);
+const BROWN: (u8, u8, u8) = (209, 92, 0);
 const YELLOW_THRESHOLD: f64 = 700.0;
 const GREEN_1_THRESHOLD: f64 = 100.0;
 const GREEN_2_THRESHOLD: f64 = 200.0;
 const GREEN_3_THRESHOLD: f64 = 300.0;
 const SLOPE_THRESHOLD: f32 = 40.0;
 
+const MIN_X: i32 = 900000;
+const MIN_Y: i32 = 6440000;
+
 fn main() {
-    render_vegetation();
-    render_cliffs();
+    // render_vegetation();
+    // render_cliffs();
+    render_contours_to_png();
 }
 
 fn render_vegetation() {
@@ -164,4 +173,50 @@ fn render_cliffs() {
     cliffs_layer_img
         .save("../out/cliffs.png")
         .expect("could not save cliffs png");
+}
+
+fn render_contours_to_png() {
+    let contours = shapefile::read_as::<_, shapefile::Polyline, shapefile::dbase::Record>(
+        "../out/contours.shp",
+    )
+    .expect("Could not open contours shapefile");
+
+    let mut contours_layer_img = Canvas::new(
+        (1001 * DEM_RESOLUTION) as i32,
+        (1001 * DEM_RESOLUTION) as i32,
+    );
+
+    for (polyline, record) in contours {
+        let elevation = match record.get("elev") {
+            Some(dbase::FieldValue::Numeric(Some(x))) => x,
+            Some(_) => panic!("Expected 'elev' to be a numeric in polygon-dataset"),
+            None => panic!("Field 'elev' is not within polygon-dataset"),
+        };
+
+        let is_normal_contour = *elevation as i32 % 5 == 0;
+
+        if is_normal_contour {
+            for part in polyline.parts() {
+                if part.len() < 2 {
+                    continue;
+                }
+
+                let mut points: Vec<(f32, f32)> = vec![];
+
+                for point in part {
+                    points.push((
+                        (point.x as i32 % 1000) as f32,
+                        (1001 - (point.y as i32 % 1000)) as f32,
+                    ))
+                }
+
+                contours_layer_img.set_stroke_cap_round();
+                contours_layer_img.set_line_width(2.0);
+                contours_layer_img.set_color(BROWN);
+                contours_layer_img.draw_polyline(&points)
+            }
+        }
+    }
+
+    contours_layer_img.save_as("../out/contours.png");
 }
