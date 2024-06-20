@@ -3,8 +3,8 @@
   {
     "type": "writers.gdal",
     "filename": "out/dem.tif",
-    "window_size": 20,
-    "resolution": 1.0,
+    "window_size": 1,
+    "resolution": 1,
     "where": "Classification == 2",
     "output_type": "mean"
   },
