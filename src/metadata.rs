@@ -29,7 +29,7 @@ pub struct Metadata {
 pub fn get_metadata() -> Metadata {
     let raw_metadata = match fs::read_to_string("./out/metadata.json") {
         Ok(contents) => contents,
-        Err(error) => panic!("No metadata file"),
+        Err(_) => panic!("No metadata file"),
     };
 
     return serde_json::from_str(&raw_metadata).unwrap();

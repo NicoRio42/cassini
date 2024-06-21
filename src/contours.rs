@@ -1,21 +1,29 @@
 use crate::{
     canvas::Canvas,
-    constants::{BROWN, DEM_RESOLUTION, MIN_X, MIN_Y},
+    config::Config,
+    constants::{BROWN, INCH},
+    metadata::Metadata,
 };
 use shapefile::dbase;
 
-pub fn render_contours_to_png() {
+pub fn render_contours_to_png(
+    image_width: u32,
+    image_height: u32,
+    config: &Config,
+    metadata: &Metadata,
+) {
     println!("Rendering contours");
+
+    let scale_factor = config.dpi_resolution / INCH;
+    let min_x = metadata.stages.filters_info.bbox.minx.round() as i32;
+    let min_y = metadata.stages.filters_info.bbox.miny.round() as i32;
 
     let contours = shapefile::read_as::<_, shapefile::Polyline, shapefile::dbase::Record>(
         "./out/contours.shp",
     )
     .expect("Could not open contours shapefile");
 
-    let mut contours_layer_img = Canvas::new(
-        (1001 * DEM_RESOLUTION) as i32,
-        (1001 * DEM_RESOLUTION) as i32,
-    );
+    let mut contours_layer_img = Canvas::new(image_width as i32, image_height as i32);
 
     for (polyline, record) in contours {
         let elevation = match record.get("elev") {
@@ -35,8 +43,8 @@ pub fn render_contours_to_png() {
 
             for point in part {
                 points.push((
-                    (point.x as i32 - MIN_X) as f32,
-                    (1001 - (point.y as i32 - MIN_Y)) as f32,
+                    (point.x as i32 - min_x) as f32,
+                    (image_height as i32 - ((point.y as i32 - min_y) * scale_factor as i32)) as f32,
                 ))
             }
 

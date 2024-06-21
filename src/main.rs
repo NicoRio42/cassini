@@ -14,6 +14,7 @@ use clap::Parser;
 use cli::Args;
 use cliffs::render_cliffs;
 use config::get_config;
+use constants::INCH;
 use contours::render_contours_to_png;
 use full_map::render_full_map_to_png;
 use lidar::process_lidar;
@@ -30,13 +31,20 @@ fn main() {
     }
 
     let metadata = get_metadata();
-    println!("{}", metadata.stages.filters_info.bbox.maxx);
-
     let config = get_config();
-    println!("{}", config.dem_resolution);
 
-    render_vegetation();
-    render_cliffs();
-    render_contours_to_png();
-    render_full_map_to_png();
+    let image_width =
+        ((metadata.stages.filters_info.bbox.maxx - metadata.stages.filters_info.bbox.minx).round()
+            * config.dpi_resolution
+            / INCH) as u32;
+
+    let image_height =
+        ((metadata.stages.filters_info.bbox.maxy - metadata.stages.filters_info.bbox.miny).round()
+            * config.dpi_resolution
+            / INCH) as u32;
+
+    render_vegetation(image_width, image_height, &config);
+    render_cliffs(image_width, image_height, &config);
+    render_contours_to_png(image_width, image_height, &config, &metadata);
+    render_full_map_to_png(image_width, image_height);
 }

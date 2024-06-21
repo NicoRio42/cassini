@@ -1,12 +1,9 @@
-use crate::{canvas::Canvas, constants::DEM_RESOLUTION};
+use crate::canvas::Canvas;
 
-pub fn render_full_map_to_png() {
+pub fn render_full_map_to_png(image_width: u32, image_height: u32) {
     println!("Rendering map to png");
 
-    let mut full_map_canvas = Canvas::new(
-        (1001 * DEM_RESOLUTION) as i32,
-        (1001 * DEM_RESOLUTION) as i32,
-    );
+    let mut full_map_canvas = Canvas::new(image_width as i32, image_height as i32);
 
     let mut cliff_canvas = Canvas::load_from("./out/cliffs.png");
     let mut vegetation_canvas = Canvas::load_from("./out/vegetation.png");

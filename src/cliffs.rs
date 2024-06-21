@@ -3,23 +3,22 @@ use imageproc::drawing::draw_filled_ellipse_mut;
 use std::fs::File;
 use tiff::decoder::{Decoder, DecodingResult};
 
-use crate::constants::{BLACK, DEM_RESOLUTION, SLOPE_THRESHOLD, TRANSPARENT};
+use crate::{
+    config::Config,
+    constants::{BLACK, CLIFF_THICKNESS, INCH, TRANSPARENT},
+};
 
-pub fn render_cliffs() {
+pub fn render_cliffs(image_width: u32, image_height: u32, config: &Config) {
     println!("Rendering cliffs");
 
+    let dem_block_size_pixel = (config.dem_block_size as f32 * config.dpi_resolution / INCH) as u32;
     let slopes_tif_file = File::open("./out/slopes.tif").expect("Cannot find slopes tif image!");
 
     let mut slopes_img_decoder = Decoder::new(slopes_tif_file).expect("Cannot create decoder");
     slopes_img_decoder = slopes_img_decoder.with_limits(tiff::decoder::Limits::unlimited());
 
     let (slopes_width, slopes_height) = slopes_img_decoder.dimensions().unwrap();
-
-    let mut cliffs_layer_canvas = RgbaImage::from_pixel(
-        (slopes_width * DEM_RESOLUTION) as u32,
-        (slopes_height * DEM_RESOLUTION) as u32,
-        TRANSPARENT,
-    );
+    let mut cliffs_layer_canvas = RgbaImage::from_pixel(image_width, image_height, TRANSPARENT);
 
     let DecodingResult::F32(image_data) = slopes_img_decoder.read_image().unwrap() else {
         panic!("Cannot read band data")
@@ -31,18 +30,18 @@ pub fn render_cliffs() {
 
         let slope = image_data[index];
 
-        if slope < SLOPE_THRESHOLD {
+        if slope < config.slope_threshold {
             continue;
         }
 
         draw_filled_ellipse_mut(
             &mut cliffs_layer_canvas,
             (
-                x as i32 * DEM_RESOLUTION as i32,
-                y as i32 * DEM_RESOLUTION as i32,
+                x as i32 * dem_block_size_pixel as i32,
+                y as i32 * dem_block_size_pixel as i32,
             ),
-            2,
-            2,
+            CLIFF_THICKNESS / 2,
+            CLIFF_THICKNESS / 2,
             BLACK,
         );
     }
