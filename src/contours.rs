@@ -43,8 +43,8 @@ pub fn render_contours_to_png(
 
             for point in part {
                 points.push((
-                    (point.x as i32 - min_x) as f32,
-                    (image_height as i32 - ((point.y as i32 - min_y) * scale_factor as i32)) as f32,
+                    (point.x as i32 - min_x) as f32 * scale_factor,
+                    (image_height as f32 - ((point.y as i32 - min_y) as f32 * scale_factor)),
                 ))
             }
 

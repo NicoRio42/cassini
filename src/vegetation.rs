@@ -11,7 +11,8 @@ pub fn render_vegetation(image_width: u32, image_height: u32, config: &Config) {
     println!("Rendering vegetation");
 
     let vegetation_block_size_pixel =
-        (config.vegetation_block_size as f32 * config.dpi_resolution / INCH) as u32;
+        config.vegetation_block_size as f32 * config.dpi_resolution / INCH;
+    let casted_vegetation_block_size_pixel = vegetation_block_size_pixel.ceil() as u32;
 
     let forest_density_tif_file =
         File::open("./out/high-vegetation.tif").expect("Cannot find high vegetation tif image!");
@@ -40,10 +41,13 @@ pub fn render_vegetation(image_width: u32, image_height: u32, config: &Config) {
         draw_filled_rect_mut(
             &mut vegetation_layer_img,
             Rect::at(
-                x as i32 * vegetation_block_size_pixel as i32,
-                y as i32 * vegetation_block_size_pixel as i32,
+                (x as f32 * vegetation_block_size_pixel) as i32,
+                (y as f32 * vegetation_block_size_pixel) as i32,
             )
-            .of_size(vegetation_block_size_pixel, vegetation_block_size_pixel),
+            .of_size(
+                casted_vegetation_block_size_pixel,
+                casted_vegetation_block_size_pixel,
+            ),
             YELLOW,
         );
     }
@@ -83,10 +87,13 @@ pub fn render_vegetation(image_width: u32, image_height: u32, config: &Config) {
                 draw_filled_rect_mut(
                     &mut vegetation_layer_img,
                     Rect::at(
-                        x as i32 * vegetation_block_size_pixel as i32,
-                        y as i32 * vegetation_block_size_pixel as i32,
+                        (x as f32 * vegetation_block_size_pixel) as i32,
+                        (y as f32 * vegetation_block_size_pixel) as i32,
                     )
-                    .of_size(vegetation_block_size_pixel, vegetation_block_size_pixel),
+                    .of_size(
+                        casted_vegetation_block_size_pixel,
+                        casted_vegetation_block_size_pixel,
+                    ),
                     color,
                 );
             }

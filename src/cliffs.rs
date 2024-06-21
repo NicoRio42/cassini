@@ -11,7 +11,8 @@ use crate::{
 pub fn render_cliffs(image_width: u32, image_height: u32, config: &Config) {
     println!("Rendering cliffs");
 
-    let dem_block_size_pixel = (config.dem_block_size as f32 * config.dpi_resolution / INCH) as u32;
+    let dem_block_size_pixel = (config.dem_block_size as f32 * config.dpi_resolution / INCH);
+
     let slopes_tif_file = File::open("./out/slopes.tif").expect("Cannot find slopes tif image!");
 
     let mut slopes_img_decoder = Decoder::new(slopes_tif_file).expect("Cannot create decoder");
@@ -37,8 +38,8 @@ pub fn render_cliffs(image_width: u32, image_height: u32, config: &Config) {
         draw_filled_ellipse_mut(
             &mut cliffs_layer_canvas,
             (
-                x as i32 * dem_block_size_pixel as i32,
-                y as i32 * dem_block_size_pixel as i32,
+                (x as f32 * dem_block_size_pixel) as i32,
+                (y as f32 * dem_block_size_pixel) as i32,
             ),
             CLIFF_THICKNESS / 2,
             CLIFF_THICKNESS / 2,
