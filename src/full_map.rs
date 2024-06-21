@@ -1,6 +1,8 @@
 use crate::{canvas::Canvas, constants::DEM_RESOLUTION};
 
 pub fn render_full_map_to_png() {
+    println!("Rendering map to png");
+
     let mut full_map_canvas = Canvas::new(
         (1001 * DEM_RESOLUTION) as i32,
         (1001 * DEM_RESOLUTION) as i32,

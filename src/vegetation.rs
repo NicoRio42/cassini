@@ -8,6 +8,8 @@ use std::fs::File;
 use tiff::decoder::{Decoder, DecodingResult};
 
 pub fn render_vegetation() {
+    println!("Rendering vegetation");
+
     let forest_density_tif_file =
         File::open("./out/high-vegetation.tif").expect("Cannot find high vegetation tif image!");
 

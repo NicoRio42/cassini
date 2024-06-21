@@ -5,6 +5,8 @@ use crate::{
 use shapefile::dbase;
 
 pub fn render_contours_to_png() {
+    println!("Rendering contours");
+
     let contours = shapefile::read_as::<_, shapefile::Polyline, shapefile::dbase::Record>(
         "./out/contours.shp",
     )

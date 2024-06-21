@@ -475,6 +475,8 @@ dependencies = [
  "clap",
  "image",
  "imageproc",
+ "serde",
+ "serde_json",
  "shapefile",
  "skia-safe",
  "tiff",

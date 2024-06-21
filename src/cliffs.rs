@@ -6,6 +6,8 @@ use tiff::decoder::{Decoder, DecodingResult};
 use crate::constants::{BLACK, DEM_RESOLUTION, SLOPE_THRESHOLD, TRANSPARENT};
 
 pub fn render_cliffs() {
+    println!("Rendering cliffs");
+
     let slopes_tif_file = File::open("./out/slopes.tif").expect("Cannot find slopes tif image!");
 
     let mut slopes_img_decoder = Decoder::new(slopes_tif_file).expect("Cannot create decoder");

@@ -1,6 +1,9 @@
 [
   "in/tile.laz",
   {
+    "type": "filters.info"
+  },
+  {
     "type": "writers.gdal",
     "filename": "out/dem.tif",
     "window_size": 1,
