@@ -29,7 +29,14 @@ pub fn process_lidar() {
     println!("Generating countours shapefiles.");
 
     let gdal_contours_output = Command::new("gdal_contour")
-        .args(["-a", "elev", "out/dem.tif", "out/contours.shp", "-i", "2.5"])
+        .args([
+            "-a",
+            "elev",
+            "out/dem.tif",
+            "out/contours-raw.shp",
+            "-i",
+            "2.5",
+        ])
         .output()
         .expect("failed to execute gdal_contour command");
 
@@ -42,6 +49,30 @@ pub fn process_lidar() {
         println!(
             "{}",
             String::from_utf8(gdal_contours_output.stderr).unwrap()
+        );
+    }
+
+    println!("Simplifying countours shapefiles.");
+
+    let contours_simplify_output = Command::new("ogr2ogr")
+        .args([
+            "-simplify",
+            "0.5",
+            "out/contours.shp",
+            "out/contours-raw.shp",
+        ])
+        .output()
+        .expect("failed to execute ogr2ogr command");
+
+    if ExitStatus::success(&contours_simplify_output.status) {
+        println!(
+            "{}",
+            String::from_utf8(contours_simplify_output.stdout).unwrap()
+        );
+    } else {
+        println!(
+            "{}",
+            String::from_utf8(contours_simplify_output.stderr).unwrap()
         );
     }
 

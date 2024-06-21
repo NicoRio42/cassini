@@ -1,7 +1,11 @@
 use crate::{
     canvas::Canvas,
     config::Config,
-    constants::{BROWN, INCH},
+    constants::{
+        BROWN, CONTOUR_THICKNESS_MILLIMETTER, FORM_CONTOUR_DASH_INTERVAL_LENGTH,
+        FORM_CONTOUR_DASH_LENGTH, FORM_CONTOUR_THICKNESS_MILLIMETTER, INCH,
+        MASTER_CONTOUR_THICKNESS_MILLIMETTER,
+    },
     metadata::Metadata,
 };
 use shapefile::dbase;
@@ -33,6 +37,7 @@ pub fn render_contours_to_png(
         };
 
         let is_normal_contour = *elevation as i32 % 5 == 0;
+        let is_master_contour = *elevation as i32 % 25 == 0;
 
         for part in polyline.parts() {
             if part.len() < 2 {
@@ -51,11 +56,23 @@ pub fn render_contours_to_png(
             contours_layer_img.set_stroke_cap_round();
             contours_layer_img.set_color(BROWN);
 
-            if is_normal_contour {
-                contours_layer_img.set_line_width(2.0);
+            if is_master_contour {
+                contours_layer_img.set_line_width(
+                    MASTER_CONTOUR_THICKNESS_MILLIMETTER * config.dpi_resolution * 10.0 / INCH,
+                );
+            } else if is_normal_contour {
+                contours_layer_img.set_line_width(
+                    CONTOUR_THICKNESS_MILLIMETTER * config.dpi_resolution * 10.0 / INCH,
+                );
             } else {
-                contours_layer_img.set_line_width(1.3);
-                contours_layer_img.set_dash(20.0, 13.0)
+                contours_layer_img.set_line_width(
+                    FORM_CONTOUR_THICKNESS_MILLIMETTER * config.dpi_resolution * 10.0 / INCH,
+                );
+
+                contours_layer_img.set_dash(
+                    FORM_CONTOUR_DASH_LENGTH * config.dpi_resolution * 10.0 / INCH,
+                    FORM_CONTOUR_DASH_INTERVAL_LENGTH * config.dpi_resolution * 10.0 / INCH,
+                )
             }
 
             contours_layer_img.draw_polyline(&points);

@@ -18,7 +18,7 @@ impl Canvas {
         let path = Path::new();
         let mut paint = Paint::default();
         paint.set_color(Color::BLACK);
-        paint.set_anti_alias(false);
+        paint.set_anti_alias(true);
         paint.set_stroke_width(1.0);
         surface.canvas().clear(0x00000000);
         Canvas {
