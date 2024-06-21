@@ -9,7 +9,7 @@ use tiff::decoder::{Decoder, DecodingResult};
 
 pub fn render_vegetation() {
     let forest_density_tif_file =
-        File::open("../out/high-vegetation.tif").expect("Cannot find high vegetation tif image!");
+        File::open("./out/high-vegetation.tif").expect("Cannot find high vegetation tif image!");
 
     let mut forest_img_decoder =
         Decoder::new(forest_density_tif_file).expect("Cannot create decoder");
@@ -48,7 +48,7 @@ pub fn render_vegetation() {
         );
     }
 
-    let green_density_tif_file = File::open("../out/middle-vegetation.tif")
+    let green_density_tif_file = File::open("./out/middle-vegetation.tif")
         .expect("Cannot find middle vegetation tif image!");
 
     let mut green_img_decoder =
@@ -95,6 +95,6 @@ pub fn render_vegetation() {
     }
 
     vegetation_layer_img
-        .save("../out/vegetation.png")
+        .save("./out/vegetation.png")
         .expect("could not save output png");
 }

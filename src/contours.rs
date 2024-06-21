@@ -6,7 +6,7 @@ use shapefile::dbase;
 
 pub fn render_contours_to_png() {
     let contours = shapefile::read_as::<_, shapefile::Polyline, shapefile::dbase::Record>(
-        "../out/contours.shp",
+        "./out/contours.shp",
     )
     .expect("Could not open contours shapefile");
 
@@ -53,5 +53,5 @@ pub fn render_contours_to_png() {
         }
     }
 
-    contours_layer_img.save_as("../out/contours.png");
+    contours_layer_img.save_as("./out/contours.png");
 }

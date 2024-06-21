@@ -24,3 +24,9 @@ gdal_translate -of PNG -scale -ot byte out/dem.tif out/dem.png
 https://tmsw.no/mapping/basemap_generation.html
 https://geoservices.ign.fr/sites/default/files/2022-05/DT_LiDAR_HD_1-0.pdf
 https://github.com/mapbox/vector-tile-spec/tree/master/2.1
+
+## TODO
+
+- Guess extend and resolution
+- Batch mode
+- Config file

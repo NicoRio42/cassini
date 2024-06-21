@@ -6,7 +6,7 @@ use tiff::decoder::{Decoder, DecodingResult};
 use crate::constants::{BLACK, DEM_RESOLUTION, SLOPE_THRESHOLD, TRANSPARENT};
 
 pub fn render_cliffs() {
-    let slopes_tif_file = File::open("../out/slopes.tif").expect("Cannot find slopes tif image!");
+    let slopes_tif_file = File::open("./out/slopes.tif").expect("Cannot find slopes tif image!");
 
     let mut slopes_img_decoder = Decoder::new(slopes_tif_file).expect("Cannot create decoder");
     slopes_img_decoder = slopes_img_decoder.with_limits(tiff::decoder::Limits::unlimited());
@@ -46,6 +46,6 @@ pub fn render_cliffs() {
     }
 
     cliffs_layer_canvas
-        .save("../out/cliffs.png")
+        .save("./out/cliffs.png")
         .expect("could not save cliffs png");
 }
