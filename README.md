@@ -15,8 +15,16 @@ Creating contours with gdal_rasterize
 gdal_rasterize -burn 255 -burn 0 -burn 0 -at -ts 1024 1024 -tr 1 1 out/contours.shp out/contours.tif
 ```
 
+Translate tif to png
+
 ```sh
 gdal_translate -of PNG -scale -ot byte out/dem.tif out/dem.png
+```
+
+Translate osm to shapefile
+
+```sh
+ogr2ogr --config OSM_USE_CUSTOM_INDEXING NO -skipfailures -f "ESRI Shapefile" out/map.shp in/map.osm
 ```
 
 ## Sources
@@ -27,6 +35,24 @@ https://github.com/mapbox/vector-tile-spec/tree/master/2.1
 
 ## TODO
 
-- Guess extend and resolution
 - Batch mode
-- Config file
+- Vector data
+- Smooth contours
+- Formline algorithme
+
+## Mapant batch mode with downloading
+
+- Input is a geojson geometry
+- Tiles are processed one by one, laz files are downloaded when needed (as the downloading speed is the bottleneck, no need to process in parralel)
+- When starting processing a tile, we check if all surounded tiles are downloadded
+- Downloading should be anticipated so it happens during previous tile processing
+- tile is resized to add a buffer
+- Outputs are croped in the end
+- Output are uploaded to mapant server
+
+## Classic batch mode
+
+- All tiles are present in the "in" folder.
+- There is a tiling step at the begining of the PDAL pipeline to add a buffer to all tiles
+- Tiles should be processed in parallel
+- Outputs should be croped in the end

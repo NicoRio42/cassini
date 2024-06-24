@@ -84,7 +84,7 @@ impl Canvas {
     }
 
     #[inline]
-    pub fn draw_closed_polyline(&mut self, pts: &[(f32, f32)]) {
+    pub fn draw_bezier_curve_from_polyline(&mut self, pts: &[(f32, f32)]) {
         let new_path = Path::new();
         let _ = mem::replace(&mut self.path, new_path);
         self.paint.set_style(PaintStyle::Stroke);
@@ -97,7 +97,20 @@ impl Canvas {
     }
 
     #[inline]
-    pub fn draw_filled_polygon(&mut self, apts: &Vec<Vec<(f32, f32)>>) {
+    pub fn draw_filled_polygon(&mut self, pts: &[(f32, f32)]) {
+        let new_path = Path::new();
+        let _ = mem::replace(&mut self.path, new_path);
+        self.paint.set_style(PaintStyle::StrokeAndFill);
+        self.path.move_to((pts[0].0, pts[0].1));
+        for pt in pts.iter() {
+            self.path.line_to((pt.0, pt.1));
+        }
+        self.surface.canvas().draw_path(&self.path, &self.paint);
+        self.save();
+    }
+
+    #[inline]
+    pub fn draw_filled_polygons(&mut self, apts: &Vec<Vec<(f32, f32)>>) {
         let new_path = Path::new();
         let _ = mem::replace(&mut self.path, new_path);
         self.paint.set_stroke_width(1.0);

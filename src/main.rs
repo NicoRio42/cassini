@@ -8,6 +8,7 @@ mod full_map;
 mod lidar;
 mod metadata;
 mod utils;
+mod vectors;
 mod vegetation;
 
 use clap::Parser;
@@ -19,6 +20,7 @@ use contours::render_contours_to_png;
 use full_map::render_full_map_to_png;
 use lidar::process_lidar;
 use metadata::get_metadata;
+use vectors::render_vector_shapes;
 use vegetation::render_vegetation;
 
 fn main() {
@@ -46,5 +48,6 @@ fn main() {
     render_vegetation(image_width, image_height, &config);
     render_cliffs(image_width, image_height, &config);
     render_contours_to_png(image_width, image_height, &config, &metadata);
+    render_vector_shapes(image_width, image_height, &config, &metadata);
     render_full_map_to_png(image_width, image_height);
 }
