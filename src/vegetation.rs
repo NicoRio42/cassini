@@ -52,8 +52,8 @@ pub fn render_vegetation(image_width: u32, image_height: u32, config: &Config) {
         );
     }
 
-    let green_density_tif_file = File::open("./out/middle-vegetation.tif")
-        .expect("Cannot find middle vegetation tif image!");
+    let green_density_tif_file = File::open("./out/medium-vegetation.tif")
+        .expect("Cannot find medium vegetation tif image!");
 
     let mut green_img_decoder =
         Decoder::new(green_density_tif_file).expect("Cannot create decoder");

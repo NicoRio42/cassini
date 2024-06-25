@@ -27,6 +27,12 @@ Translate osm to shapefile
 ogr2ogr --config OSM_USE_CUSTOM_INDEXING NO -skipfailures -f "ESRI Shapefile" out/map.shp in/map.osm
 ```
 
+Create tile with buffer with las2las
+
+```sh
+las2las64 -lof file_list.txt -merged -o tile-with-buffer.laz -keep_xy 615800 6162800 617200 6164200
+```
+
 ## Sources
 
 https://tmsw.no/mapping/basemap_generation.html

@@ -41,8 +41,8 @@ pub fn render_cliffs(image_width: u32, image_height: u32, config: &Config) {
                 (x as f32 * dem_block_size_pixel) as i32,
                 (y as f32 * dem_block_size_pixel) as i32,
             ),
-            CLIFF_THICKNESS / 2,
-            CLIFF_THICKNESS / 2,
+            (CLIFF_THICKNESS * config.dpi_resolution * 10.0 / INCH / 2.0) as i32,
+            (CLIFF_THICKNESS * config.dpi_resolution * 10.0 / INCH / 2.0) as i32,
             BLACK,
         );
     }
