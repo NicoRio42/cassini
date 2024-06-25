@@ -1,6 +1,6 @@
 use image::RgbaImage;
 use imageproc::drawing::draw_filled_ellipse_mut;
-use std::fs::File;
+use std::{fs::File, path::PathBuf};
 use tiff::decoder::{Decoder, DecodingResult};
 
 use crate::{
@@ -8,12 +8,13 @@ use crate::{
     constants::{BLACK, CLIFF_THICKNESS, INCH, TRANSPARENT},
 };
 
-pub fn render_cliffs(image_width: u32, image_height: u32, config: &Config) {
+pub fn render_cliffs(image_width: u32, image_height: u32, config: &Config, out_dir: &PathBuf) {
     println!("Rendering cliffs");
 
-    let dem_block_size_pixel = (config.dem_block_size as f32 * config.dpi_resolution / INCH);
+    let dem_block_size_pixel = config.dem_block_size as f32 * config.dpi_resolution / INCH;
 
-    let slopes_tif_file = File::open("./out/slopes.tif").expect("Cannot find slopes tif image!");
+    let slopes_path = out_dir.join("slopes.tif");
+    let slopes_tif_file = File::open(slopes_path).expect("Cannot find slopes tif image!");
 
     let mut slopes_img_decoder = Decoder::new(slopes_tif_file).expect("Cannot create decoder");
     slopes_img_decoder = slopes_img_decoder.with_limits(tiff::decoder::Limits::unlimited());
@@ -47,7 +48,9 @@ pub fn render_cliffs(image_width: u32, image_height: u32, config: &Config) {
         );
     }
 
+    let cliffs_path = out_dir.join("cliffs.png");
+
     cliffs_layer_canvas
-        .save("./out/cliffs.png")
+        .save(cliffs_path)
         .expect("could not save cliffs png");
 }

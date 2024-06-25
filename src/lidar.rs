@@ -1,22 +1,13 @@
-use crate::utils::delete_dir_contents;
-use std::fs;
+use std::path::PathBuf;
 use std::process::{Command, ExitStatus};
 
-pub fn process_lidar() {
-    let out_dir = fs::read_dir("out");
-    delete_dir_contents(out_dir);
-
+pub fn process_lidar(out_dir: &PathBuf) {
     println!("Executing PDAL pipeline.");
 
+    let pipeline_path = out_dir.join("pipeline.json");
+
     let pdal_output = Command::new("pdal")
-        .args([
-            "-v",
-            "4",
-            "pipeline",
-            "./src/pipeline.json",
-            "--metadata",
-            "./out/metadata.json",
-        ])
+        .args(["-v", "4", "pipeline", &pipeline_path.to_str().unwrap()])
         .output()
         .expect("failed to execute pdal pipeline command");
 
@@ -28,12 +19,15 @@ pub fn process_lidar() {
 
     println!("Generating countours shapefiles.");
 
+    let dem_path = out_dir.join("dem.tif");
+    let contours_raw_path = out_dir.join("contours-raw.shp");
+
     let gdal_contours_output = Command::new("gdal_contour")
         .args([
             "-a",
             "elev",
-            "out/dem.tif",
-            "out/contours-raw.shp",
+            &dem_path.to_str().unwrap(),
+            &contours_raw_path.to_str().unwrap(),
             "-i",
             "2.5",
         ])
@@ -54,12 +48,14 @@ pub fn process_lidar() {
 
     println!("Simplifying countours shapefiles.");
 
+    let contours_path = out_dir.join("contours.shp");
+
     let contours_simplify_output = Command::new("ogr2ogr")
         .args([
             "-simplify",
             "0.5",
-            "out/contours.shp",
-            "out/contours-raw.shp",
+            &contours_path.to_str().unwrap(),
+            &contours_raw_path.to_str().unwrap(),
         ])
         .output()
         .expect("failed to execute ogr2ogr command");
@@ -78,8 +74,14 @@ pub fn process_lidar() {
 
     println!("Generating slopes tif image.");
 
+    let slopes_path = out_dir.join("slopes.tif");
+
     let gdaldem_output = Command::new("gdaldem")
-        .args(["slope", "out/dem.tif", "out/slopes.tif"])
+        .args([
+            "slope",
+            &dem_path.to_str().unwrap(),
+            &slopes_path.to_str().unwrap(),
+        ])
         .output()
         .expect("failed to execute gdaldem command");
 

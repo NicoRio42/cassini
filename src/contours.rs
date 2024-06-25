@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use crate::{
     canvas::Canvas,
     config::Config,
@@ -6,7 +8,6 @@ use crate::{
         FORM_CONTOUR_DASH_LENGTH, FORM_CONTOUR_THICKNESS_MILLIMETTER, INCH,
         MASTER_CONTOUR_THICKNESS_MILLIMETTER,
     },
-    metadata::Metadata,
 };
 use shapefile::dbase;
 
@@ -14,18 +15,18 @@ pub fn render_contours_to_png(
     image_width: u32,
     image_height: u32,
     config: &Config,
-    metadata: &Metadata,
+    min_x: u64,
+    min_y: u64,
+    out_dir: &PathBuf,
 ) {
     println!("Rendering contours");
 
     let scale_factor = config.dpi_resolution / INCH;
-    let min_x = metadata.stages.filters_info.bbox.minx.round() as i32;
-    let min_y = metadata.stages.filters_info.bbox.miny.round() as i32;
+    let contours_path = out_dir.join("contours.shp");
 
-    let contours = shapefile::read_as::<_, shapefile::Polyline, shapefile::dbase::Record>(
-        "./out/contours.shp",
-    )
-    .expect("Could not open contours shapefile");
+    let contours =
+        shapefile::read_as::<_, shapefile::Polyline, shapefile::dbase::Record>(contours_path)
+            .expect("Could not open contours shapefile");
 
     let mut contours_layer_img = Canvas::new(image_width as i32, image_height as i32);
 
@@ -48,8 +49,8 @@ pub fn render_contours_to_png(
 
             for point in part {
                 points.push((
-                    (point.x as i32 - min_x) as f32 * scale_factor,
-                    (image_height as f32 - ((point.y as i32 - min_y) as f32 * scale_factor)),
+                    (point.x as i64 - min_x as i64) as f32 * scale_factor,
+                    (image_height as f32 - ((point.y as i64 - min_y as i64) as f32 * scale_factor)),
                 ))
             }
 
@@ -80,5 +81,8 @@ pub fn render_contours_to_png(
         }
     }
 
-    contours_layer_img.save_as("./out/contours.png");
+    let contours_output_path = out_dir.join("contours.png");
+    let contours_output_path_str = contours_output_path.to_str().unwrap();
+
+    contours_layer_img.save_as(&contours_output_path_str);
 }

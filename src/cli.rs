@@ -4,5 +4,5 @@ use clap::Parser;
 #[command(version, about, long_about = None)]
 pub struct Args {
     #[arg(long)]
-    pub skip_lidar_processing: bool,
+    pub skip_lidar: bool,
 }

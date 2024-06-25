@@ -1,11 +1,18 @@
 use std::{
     fs,
-    fs::create_dir_all,
     path::{Path, PathBuf},
 };
 
-pub fn process_single_tile(min_x_tile: u64, min_y_tile: u64, max_x_tile: u64, max_y_tile: u64) {
-    // Generate PDAL pipeline
+pub fn process_single_tile(
+    min_x_tile: u64,
+    min_y_tile: u64,
+    max_x_tile: u64,
+    max_y_tile: u64,
+    buffer: u64,
+    out_dir: &PathBuf,
+) {
+    println!("Generating PDAL pipeline json file for tile");
+
     let mut tiles_paths: [PathBuf; 4] = core::array::from_fn(|_| PathBuf::new());
 
     if min_x_tile % 500 != 0
@@ -19,7 +26,7 @@ pub fn process_single_tile(min_x_tile: u64, min_y_tile: u64, max_x_tile: u64, ma
     let mut index = 0;
 
     for x in [min_x_tile / 1000, max_x_tile / 1000] {
-        for y in [min_y_tile / 1000, max_y_tile / 1000] {
+        for y in [min_y_tile / 1000 + 1, max_y_tile / 1000 + 1] {
             let file_name = format!("LHD_FXX_{:0>4}_{:0>4}_PTS_C_LAMB93_IGN69.copc.laz", x, y);
 
             let path = Path::new("in").join(&file_name);
@@ -34,13 +41,10 @@ pub fn process_single_tile(min_x_tile: u64, min_y_tile: u64, max_x_tile: u64, ma
         }
     }
 
-    let min_x_with_buffer = min_x_tile - 200;
-    let min_y_with_buffer = min_y_tile - 200;
-    let max_x_with_buffer = max_x_tile + 200;
-    let max_y_with_buffer = max_y_tile + 200;
-
-    let out_dir = Path::new("out").join(format!("{:0>7}_{:0>7}", min_x_tile, max_y_tile));
-    create_dir_all(&out_dir).expect("Could not create out dir");
+    let min_x_with_buffer = min_x_tile - buffer;
+    let min_y_with_buffer = min_y_tile - buffer;
+    let max_x_with_buffer = max_x_tile + buffer;
+    let max_y_with_buffer = max_y_tile + buffer;
 
     let dem_path = out_dir.join("dem.tif");
     let low_vegetation_path = out_dir.join("low-vegetation.tif");

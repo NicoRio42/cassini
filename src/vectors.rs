@@ -2,7 +2,10 @@ use shapefile::{
     dbase::{FieldValue, Record},
     read_as, Polygon, Polyline,
 };
-use std::process::{Command, ExitStatus};
+use std::{
+    path::{Path, PathBuf},
+    process::{Command, ExitStatus},
+};
 
 use crate::{
     canvas::Canvas,
@@ -11,20 +14,21 @@ use crate::{
         BLUE, FOOTPATH_DASH_INTERVAL_LENGTH, FOOTPATH_DASH_LENGTH, FOOTPATH_WIDTH, INCH,
         INCROSSABLE_BODY_OF_WATER_OUTLINE_WIDTH,
     },
-    metadata::Metadata,
 };
 
 pub fn render_vector_shapes(
     image_width: u32,
     image_height: u32,
     config: &Config,
-    metadata: &Metadata,
+    min_x: u64,
+    min_y: u64,
+    out_dir: &PathBuf,
+    osm_path: &PathBuf,
 ) {
     println!("Transforming osm file to shapefiles");
 
     let scale_factor = config.dpi_resolution / INCH;
-    let min_x = metadata.stages.filters_info.bbox.minx.round() as i32;
-    let min_y = metadata.stages.filters_info.bbox.miny.round() as i32;
+    let shapes_outlput_path = out_dir.join("shapes");
 
     let pdal_output = Command::new("ogr2ogr")
         .args([
@@ -34,8 +38,8 @@ pub fn render_vector_shapes(
             "-skipfailures",
             "-f",
             "ESRI Shapefile",
-            "out/shapes",
-            "in/map.osm",
+            &shapes_outlput_path.to_str().unwrap(),
+            &osm_path.to_str().unwrap(),
             "-t_srs",
             "EPSG:2154",
         ])
@@ -52,7 +56,8 @@ pub fn render_vector_shapes(
 
     let mut vectors_layer_img = Canvas::new(image_width as i32, image_height as i32);
 
-    let multipolygons = read_as::<_, Polygon, Record>("./out/shapes/multipolygons.shp")
+    let multipolygons_path = shapes_outlput_path.join("multipolygons.shp");
+    let multipolygons = read_as::<_, Polygon, Record>(multipolygons_path)
         .expect("Could not open multipolygons shapefile");
 
     for (polygon, record) in multipolygons {
@@ -71,8 +76,8 @@ pub fn render_vector_shapes(
 
             for point in ring.points().iter() {
                 points.push((
-                    (point.x as i32 - min_x) as f32 * scale_factor,
-                    (image_height as f32 - ((point.y as i32 - min_y) as f32 * scale_factor)),
+                    (point.x as i64 - min_x as i64) as f32 * scale_factor,
+                    (image_height as f32 - ((point.y as i64 - min_y as i64) as f32 * scale_factor)),
                 ))
             }
 
@@ -88,8 +93,8 @@ pub fn render_vector_shapes(
         }
     }
 
-    let lines = read_as::<_, Polyline, Record>("./out/shapes/lines.shp")
-        .expect("Could not open lines shapefile");
+    let lines_path = shapes_outlput_path.join("lines.shp");
+    let lines = read_as::<_, Polyline, Record>(lines_path).expect("Could not open lines shapefile");
 
     for (line, record) in lines {
         let highway = match record.get("highway") {
@@ -107,8 +112,8 @@ pub fn render_vector_shapes(
 
             for point in part {
                 points.push((
-                    (point.x as i32 - min_x) as f32 * scale_factor,
-                    (image_height as f32 - ((point.y as i32 - min_y) as f32 * scale_factor)),
+                    (point.x as i64 - min_x as i64) as f32 * scale_factor,
+                    (image_height as f32 - ((point.y as i64 - min_y as i64) as f32 * scale_factor)),
                 ))
             }
 
@@ -125,5 +130,6 @@ pub fn render_vector_shapes(
         }
     }
 
-    vectors_layer_img.save_as("./out/vectors.png");
+    let vectors_output_path = out_dir.join("vectors.png");
+    vectors_layer_img.save_as(&vectors_output_path.to_str().unwrap());
 }

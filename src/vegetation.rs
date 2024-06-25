@@ -4,18 +4,22 @@ use crate::{
 };
 use image::{Rgba, RgbaImage};
 use imageproc::{drawing::draw_filled_rect_mut, rect::Rect};
-use std::fs::File;
+use std::{fs::File, path::PathBuf};
 use tiff::decoder::{Decoder, DecodingResult};
 
-pub fn render_vegetation(image_width: u32, image_height: u32, config: &Config) {
+pub fn render_vegetation(image_width: u32, image_height: u32, config: &Config, out_dir: &PathBuf) {
     println!("Rendering vegetation");
 
     let vegetation_block_size_pixel =
         config.vegetation_block_size as f32 * config.dpi_resolution / INCH;
+
     let casted_vegetation_block_size_pixel = vegetation_block_size_pixel.ceil() as u32;
 
+    let medium_vegetation_path = out_dir.join("medium-vegetation.tif");
+    let high_vegetation_path = out_dir.join("high-vegetation.tif");
+
     let forest_density_tif_file =
-        File::open("./out/high-vegetation.tif").expect("Cannot find high vegetation tif image!");
+        File::open(high_vegetation_path).expect("Cannot find high vegetation tif image!");
 
     let mut forest_img_decoder =
         Decoder::new(forest_density_tif_file).expect("Cannot create decoder");
@@ -52,8 +56,8 @@ pub fn render_vegetation(image_width: u32, image_height: u32, config: &Config) {
         );
     }
 
-    let green_density_tif_file = File::open("./out/medium-vegetation.tif")
-        .expect("Cannot find medium vegetation tif image!");
+    let green_density_tif_file =
+        File::open(medium_vegetation_path).expect("Cannot find medium vegetation tif image!");
 
     let mut green_img_decoder =
         Decoder::new(green_density_tif_file).expect("Cannot create decoder");
@@ -101,7 +105,9 @@ pub fn render_vegetation(image_width: u32, image_height: u32, config: &Config) {
         }
     }
 
+    let vegetation_output_path = out_dir.join("vegetation.png");
+
     vegetation_layer_img
-        .save("./out/vegetation.png")
+        .save(vegetation_output_path)
         .expect("could not save output png");
 }
