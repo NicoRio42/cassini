@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub fn process_single_tile(
+pub fn generate_pipeline_for_single_tile(
     min_x_tile: u64,
     min_y_tile: u64,
     max_x_tile: u64,
