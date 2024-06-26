@@ -1,3 +1,4 @@
+mod bezier;
 mod canvas;
 mod cli;
 mod cliffs;
