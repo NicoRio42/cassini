@@ -16,6 +16,7 @@ pub fn download_laz_files_if_needed(
             let path = Path::new("in").join(&file_name);
 
             if path.exists() {
+                println!("{} already downloaded", file_name);
                 continue;
             }
 
@@ -36,13 +37,14 @@ pub fn download_laz_files_if_needed(
 }
 
 pub fn download_osm_file_if_needed(min_x: u64, min_y: u64, max_x: u64, max_y: u64) {
-    println!("Downloading osm file");
-
     let osm_file_path = Path::new("in").join(format!("{:0>7}_{:0>7}.osm", min_x, max_y));
 
     if osm_file_path.exists() {
+        println!("Osm file already downloaded");
         return;
     }
+
+    println!("Downloading osm file");
 
     let buffer = 300;
 

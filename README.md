@@ -48,7 +48,7 @@ https://github.com/mapbox/vector-tile-spec/tree/master/2.1
 
 ## Mapant batch mode with downloading
 
-- Input is a geojson geometry
+- Input is an extent
 - Tiles are processed one by one, laz files are downloaded when needed (as the downloading speed is the bottleneck, no need to process in parralel)
 - When starting processing a tile, we check if all surounded tiles are downloadded
 - Downloading should be anticipated so it happens during previous tile processing

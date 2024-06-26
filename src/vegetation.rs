@@ -7,7 +7,13 @@ use imageproc::{drawing::draw_filled_rect_mut, rect::Rect};
 use std::{fs::File, path::PathBuf};
 use tiff::decoder::{Decoder, DecodingResult};
 
-pub fn render_vegetation(image_width: u32, image_height: u32, config: &Config, out_dir: &PathBuf) {
+pub fn render_vegetation(
+    image_width: u32,
+    image_height: u32,
+    buffer: u64,
+    config: &Config,
+    out_dir: &PathBuf,
+) {
     println!("Rendering vegetation");
 
     let vegetation_block_size_pixel =
@@ -36,6 +42,17 @@ pub fn render_vegetation(image_width: u32, image_height: u32, config: &Config, o
         let x = index % usize::try_from(forest_width).unwrap();
         let y = index / usize::try_from(forest_width).unwrap();
 
+        let x_pixel = ((x as i64 - buffer as i64) as f32 * vegetation_block_size_pixel) as i32;
+        let y_pixel = ((y as i64 - buffer as i64) as f32 * vegetation_block_size_pixel) as i32;
+
+        if x_pixel < 0
+            || x_pixel > image_width as i32
+            || y_pixel < 0
+            || y_pixel > image_height as i32
+        {
+            continue;
+        }
+
         let forest_density = image_data[index];
 
         if forest_density > config.yellow_threshold {
@@ -44,11 +61,7 @@ pub fn render_vegetation(image_width: u32, image_height: u32, config: &Config, o
 
         draw_filled_rect_mut(
             &mut vegetation_layer_img,
-            Rect::at(
-                (x as f32 * vegetation_block_size_pixel) as i32,
-                (y as f32 * vegetation_block_size_pixel) as i32,
-            )
-            .of_size(
+            Rect::at(x_pixel, y_pixel).of_size(
                 casted_vegetation_block_size_pixel,
                 casted_vegetation_block_size_pixel,
             ),
@@ -74,6 +87,17 @@ pub fn render_vegetation(image_width: u32, image_height: u32, config: &Config, o
         let x = index % usize::try_from(green_width).unwrap();
         let y = index / usize::try_from(green_width).unwrap();
 
+        let x_pixel = ((x as i64 - buffer as i64) as f32 * vegetation_block_size_pixel) as i32;
+        let y_pixel = ((y as i64 - buffer as i64) as f32 * vegetation_block_size_pixel) as i32;
+
+        if x_pixel < 0
+            || x_pixel > image_width as i32
+            || y_pixel < 0
+            || y_pixel > image_height as i32
+        {
+            continue;
+        }
+
         let green_density = image_data[index];
 
         let mut green_color: Option<Rgba<u8>> = None;
@@ -90,11 +114,7 @@ pub fn render_vegetation(image_width: u32, image_height: u32, config: &Config, o
             Some(color) => {
                 draw_filled_rect_mut(
                     &mut vegetation_layer_img,
-                    Rect::at(
-                        (x as f32 * vegetation_block_size_pixel) as i32,
-                        (y as f32 * vegetation_block_size_pixel) as i32,
-                    )
-                    .of_size(
+                    Rect::at(x_pixel, y_pixel).of_size(
                         casted_vegetation_block_size_pixel,
                         casted_vegetation_block_size_pixel,
                     ),

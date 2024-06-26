@@ -52,12 +52,6 @@ fn main() {
 
 fn process_sigle_tile(min_x: u64, min_y: u64, max_x: u64, max_y: u64, skip_lidar: bool) {
     let buffer = 200;
-
-    let min_x_with_buffer = min_x - buffer;
-    let min_y_with_buffer = min_y - buffer;
-    let max_x_with_buffer = max_x + buffer;
-    let max_y_with_buffer = max_y + buffer;
-
     let out_dir = Path::new("out").join(format!("{:0>7}_{:0>7}", min_x, max_y));
 
     if !skip_lidar {
@@ -71,22 +65,13 @@ fn process_sigle_tile(min_x: u64, min_y: u64, max_x: u64, max_y: u64, skip_lidar
 
     let config = get_config();
 
-    let image_width =
-        ((max_x_with_buffer - min_x_with_buffer) as f32 * config.dpi_resolution / INCH) as u32;
-    let image_height =
-        ((max_y_with_buffer - min_y_with_buffer) as f32 * config.dpi_resolution / INCH) as u32;
+    let image_width = ((max_x - min_x) as f32 * config.dpi_resolution / INCH) as u32;
+    let image_height = ((max_y - min_y) as f32 * config.dpi_resolution / INCH) as u32;
 
-    render_vegetation(image_width, image_height, &config, &out_dir);
-    render_cliffs(image_width, image_height, &config, &out_dir);
+    render_vegetation(image_width, image_height, buffer, &config, &out_dir);
+    render_cliffs(image_width, image_height, buffer, &config, &out_dir);
 
-    render_contours_to_png(
-        image_width,
-        image_height,
-        &config,
-        min_x_with_buffer,
-        min_y_with_buffer,
-        &out_dir,
-    );
+    render_contours_to_png(image_width, image_height, &config, min_x, min_y, &out_dir);
 
     let osm_path = Path::new("in").join(format!("{:0>7}_{:0>7}.osm", min_x, max_y + 1000));
 
@@ -94,8 +79,8 @@ fn process_sigle_tile(min_x: u64, min_y: u64, max_x: u64, max_y: u64, skip_lidar
         image_width,
         image_height,
         &config,
-        min_x_with_buffer,
-        min_y_with_buffer,
+        min_x,
+        min_y,
         &out_dir,
         &osm_path,
     );
