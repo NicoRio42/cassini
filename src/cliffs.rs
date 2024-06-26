@@ -5,7 +5,7 @@ use tiff::decoder::{Decoder, DecodingResult};
 
 use crate::{
     config::Config,
-    constants::{BLACK, CLIFF_THICKNESS, INCH, TRANSPARENT},
+    constants::{BLACK, CLIFF_THICKNESS_1, CLIFF_THICKNESS_2, INCH, TRANSPARENT},
 };
 
 pub fn render_cliffs(
@@ -49,17 +49,26 @@ pub fn render_cliffs(
 
         let slope = image_data[index];
 
-        if slope < config.slope_threshold {
-            continue;
+        let mut cliff_thickness: Option<f32> = None;
+
+        if slope > config.slope_threshold_2 {
+            cliff_thickness = Some(CLIFF_THICKNESS_2);
+        } else if slope > config.slope_threshold_1 {
+            cliff_thickness = Some(CLIFF_THICKNESS_1);
         }
 
-        draw_filled_ellipse_mut(
-            &mut cliffs_layer_canvas,
-            (x_pixel, y_pixel),
-            (CLIFF_THICKNESS * config.dpi_resolution * 10.0 / INCH / 2.0) as i32,
-            (CLIFF_THICKNESS * config.dpi_resolution * 10.0 / INCH / 2.0) as i32,
-            BLACK,
-        );
+        match cliff_thickness {
+            Some(thickness) => {
+                draw_filled_ellipse_mut(
+                    &mut cliffs_layer_canvas,
+                    (x_pixel, y_pixel),
+                    (thickness * config.dpi_resolution * 10.0 / INCH / 2.0) as i32,
+                    (thickness * config.dpi_resolution * 10.0 / INCH / 2.0) as i32,
+                    BLACK,
+                );
+            }
+            _ => (),
+        }
     }
 
     let cliffs_path = out_dir.join("cliffs.png");

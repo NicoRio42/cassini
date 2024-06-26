@@ -12,7 +12,8 @@ pub const BLACK: Rgba<u8> = Rgba([0, 0, 0, 255]);
 pub const BROWN: (u8, u8, u8) = (209, 92, 0);
 pub const BLUE: (u8, u8, u8) = (0, 255, 255);
 
-pub const CLIFF_THICKNESS: f32 = 0.25;
+pub const CLIFF_THICKNESS_1: f32 = 0.25;
+pub const CLIFF_THICKNESS_2: f32 = 0.35;
 pub const CONTOUR_THICKNESS_MILLIMETTER: f32 = 0.14;
 pub const MASTER_CONTOUR_THICKNESS_MILLIMETTER: f32 = 0.25;
 pub const FORM_CONTOUR_THICKNESS_MILLIMETTER: f32 = 0.1;

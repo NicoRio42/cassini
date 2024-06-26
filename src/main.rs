@@ -26,6 +26,7 @@ use pipeline::generate_pipeline_for_single_tile;
 use std::{
     fs::{self, create_dir_all},
     path::Path,
+    time::Instant,
 };
 use tile_list::get_tile_list_from_extent;
 use utils::delete_dir_contents;
@@ -37,17 +38,15 @@ fn main() {
 
     let tile_list = get_tile_list_from_extent(990494, 6491962, 996450, 6495842);
 
+    // TODO: multithreading
     for (min_x, min_y, max_x, max_y) in tile_list {
+        let start = Instant::now();
         download_laz_files_if_needed(min_x, min_y, max_x, max_y, "RL".to_owned());
         download_osm_file_if_needed(min_x, min_y, max_x, max_y);
         process_sigle_tile(min_x, min_y, max_x, max_y, args.skip_lidar);
+        let duration = start.elapsed();
+        println!("Tile {} {} generated in {:.1?}", min_x, max_y, duration);
     }
-
-    // let min_x = 615500;
-    // let min_y = 6163500;
-    // let max_x = 616500;
-    // let max_y = 6164500;
-    // process_sigle_tile(min_x, min_y, max_x, max_y, args.skip_lidar)
 }
 
 fn process_sigle_tile(min_x: u64, min_y: u64, max_x: u64, max_y: u64, skip_lidar: bool) {
@@ -73,7 +72,7 @@ fn process_sigle_tile(min_x: u64, min_y: u64, max_x: u64, max_y: u64, skip_lidar
 
     render_contours_to_png(image_width, image_height, &config, min_x, min_y, &out_dir);
 
-    let osm_path = Path::new("in").join(format!("{:0>7}_{:0>7}.osm", min_x, max_y + 1000));
+    let osm_path = Path::new("in").join(format!("{:0>7}_{:0>7}.osm", min_x, max_y));
 
     render_vector_shapes(
         image_width,
