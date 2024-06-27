@@ -6,7 +6,7 @@ use std::fs::File;
 use std::io::Write;
 use std::mem;
 
-use crate::bezier::polyline_to_bezier_bis;
+use crate::bezier::polyline_to_bezier;
 
 pub struct Canvas {
     surface: Surface,
@@ -87,17 +87,27 @@ impl Canvas {
 
     #[inline]
     pub fn draw_bezier_curve_from_polyline(&mut self, pts: &[(f32, f32)]) {
+        if pts.len() == 0 {
+            return;
+        }
+
         let new_path = Path::new();
         let _ = mem::replace(&mut self.path, new_path);
         self.paint.set_style(PaintStyle::Stroke);
         self.path.move_to((pts[0].0, pts[0].1));
 
-        let bezier_curve = polyline_to_bezier_bis(pts);
+        if pts.len() == 1 {
+            return;
+        } else if pts.len() == 2 {
+            self.path.line_to((pts[1].0, pts[1].1));
+        }
+
+        let bezier_curve = polyline_to_bezier(pts);
         if bezier_curve.len() == 0 {
             return;
         }
 
-        for index in (0..(bezier_curve.len() - 1)).step_by(2) {
+        for index in (0..bezier_curve.len()).step_by(2) {
             let pt = bezier_curve[index];
             self.path.cubic_to(pt.1, pt.2, pt.3);
         }

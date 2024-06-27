@@ -1,4 +1,4 @@
-pub fn polyline_to_bezier_bis(
+pub fn polyline_to_bezier(
     polyline: &[(f32, f32)],
 ) -> Vec<((f32, f32), (f32, f32), (f32, f32), (f32, f32))> {
     let mut bezier_points: Vec<((f32, f32), (f32, f32), (f32, f32), (f32, f32))> = Vec::new();

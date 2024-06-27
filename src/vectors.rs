@@ -3,7 +3,7 @@ use shapefile::{
     read_as, Polygon, Polyline,
 };
 use std::{
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::{Command, ExitStatus},
 };
 

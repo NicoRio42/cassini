@@ -70,7 +70,6 @@ fn process_sigle_tile(min_x: u64, min_y: u64, max_x: u64, max_y: u64, skip_lidar
 
     render_vegetation(image_width, image_height, buffer, &config, &out_dir);
     render_cliffs(image_width, image_height, buffer, &config, &out_dir);
-
     render_contours_to_png(image_width, image_height, &config, min_x, min_y, &out_dir);
 
     let osm_path = Path::new("in").join(format!("{:0>7}_{:0>7}.osm", min_x, max_y));

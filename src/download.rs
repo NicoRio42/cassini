@@ -1,5 +1,5 @@
 use std::{
-    path::{Path, PathBuf},
+    path::Path,
     process::{Command, ExitStatus, Stdio},
 };
 
