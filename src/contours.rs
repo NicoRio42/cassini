@@ -140,6 +140,11 @@ fn draw_bezier_curve_from_polyline_on_image(
     image.draw_bezier_curve_from_polyline(&points);
 }
 
+struct TaggedPoint<'a> {
+    point: &'a Point,
+    should_be_kept: bool,
+}
+
 fn keep_relevant_form_contours(
     form_contour: &Contour,
     contours: &Vec<Contour>,
@@ -151,7 +156,7 @@ fn keep_relevant_form_contours(
     // }
     let mut above_adjacent_contours: Vec<&Vec<Point>> = vec![];
     let mut below_adjacent_contours: Vec<&Vec<Point>> = vec![];
-    let mut tagged_form_contour_polyline: Vec<(&Point, bool)> = vec![];
+    let mut tagged_form_line_polyline: Vec<TaggedPoint> = vec![];
 
     for contour in contours {
         if contour.elevation == form_contour.elevation + 2.5 {
@@ -211,71 +216,157 @@ fn keep_relevant_form_contours(
             || distance_to_above_adjacent_contours > config.form_lines.max_distance_to_contour
             || distance_to_below_adjacent_contours > config.form_lines.max_distance_to_contour;
 
-        tagged_form_contour_polyline.push((point, should_be_kept));
+        tagged_form_line_polyline.push(TaggedPoint {
+            point,
+            should_be_kept,
+        });
     }
 
+    tagged_form_line_polyline = remove_gaps_from_tagged_form_line_polyline(
+        tagged_form_line_polyline,
+        config.form_lines.min_gap_length,
+    );
+
+    tagged_form_line_polyline = add_tails_to_tagged_form_line_polyline(
+        tagged_form_line_polyline,
+        config.form_lines.additional_tail_length,
+    );
+
     let mut should_start_new_polyline = true;
-    let mut current_gap: Vec<Point> = vec![];
-    // Joining close polylines
-    // Removing too small
-    // adding offset
-    // Joining close polylines again
 
-    for index in 0..tagged_form_contour_polyline.len() {
-        let (point, should_be_kept) = tagged_form_contour_polyline[index];
-
-        let is_lonely_point_that_should_be_kept = should_be_kept
-            && index != 0
-            && index != tagged_form_contour_polyline.len() - 1
-            && !tagged_form_contour_polyline[index - 1].1
-            && !tagged_form_contour_polyline[index + 1].1;
-
-        if !should_be_kept || is_lonely_point_that_should_be_kept {
-            if index != 0 && current_gap.len() == 0 {
-                let (previous_point, _) = tagged_form_contour_polyline[index - 1];
-                current_gap.push(*previous_point);
-            }
-
-            current_gap.push(*point);
+    for tagged_point in tagged_form_line_polyline {
+        if !tagged_point.should_be_kept {
             should_start_new_polyline = true;
             continue;
         }
 
         if !should_start_new_polyline {
             let len = relevant_form_lines.len();
-
-            if len == 0 {
-                relevant_form_lines.push(vec![*point]);
-            } else {
-                relevant_form_lines[len - 1].push(*point);
-            }
-
+            relevant_form_lines[len - 1].push(*tagged_point.point);
             continue;
         }
 
-        current_gap.push(*point);
-        let gap_length = polyline_length(&current_gap);
-
-        if gap_length < config.form_lines.min_gap_length {
-            let mut len = relevant_form_lines.len();
-
-            if len == 0 {
-                relevant_form_lines.push(vec![]);
-                len = 1;
-            }
-
-            for gap_index in 1..current_gap.len() {
-                relevant_form_lines[len - 1].push(current_gap[gap_index]);
-            }
-        } else {
-            relevant_form_lines.push(vec![*point]);
-        }
-
+        relevant_form_lines.push(vec![*tagged_point.point]);
         should_start_new_polyline = false;
-        current_gap = vec![];
     }
 
     return relevant_form_lines;
+}
+
+fn remove_gaps_from_tagged_form_line_polyline(
+    mut tagged_form_line_polyline: Vec<TaggedPoint>,
+    min_gap_length: f64,
+) -> Vec<TaggedPoint> {
+    let mut current_gap_points_indexes: Vec<usize> = vec![];
+
+    for index in 0..tagged_form_line_polyline.len() {
+        let tagged_point = &tagged_form_line_polyline[index];
+
+        let is_lonely_point_that_should_be_kept = tagged_point.should_be_kept
+            && index != 0
+            && index != tagged_form_line_polyline.len() - 1
+            && !tagged_form_line_polyline[index - 1].should_be_kept
+            && !tagged_form_line_polyline[index + 1].should_be_kept;
+
+        if !tagged_point.should_be_kept || is_lonely_point_that_should_be_kept {
+            if index != 0 && current_gap_points_indexes.len() == 0 {
+                current_gap_points_indexes.push(index - 1);
+            }
+
+            current_gap_points_indexes.push(index);
+            continue;
+        }
+
+        current_gap_points_indexes.push(index);
+        let mut current_gap: Vec<Point> = vec![];
+
+        for current_gap_point_index in &current_gap_points_indexes {
+            current_gap.push(*tagged_form_line_polyline[*current_gap_point_index].point)
+        }
+
+        let gap_length = polyline_length(&current_gap);
+
+        if gap_length < min_gap_length {
+            for current_gap_point_index in current_gap_points_indexes {
+                tagged_form_line_polyline[current_gap_point_index].should_be_kept = true;
+            }
+        }
+
+        current_gap_points_indexes = vec![];
+    }
+
+    return tagged_form_line_polyline;
+}
+
+fn add_tails_to_tagged_form_line_polyline(
+    mut tagged_form_line_polyline: Vec<TaggedPoint>,
+    additional_tail_length: f64,
+) -> Vec<TaggedPoint> {
+    let mut start_edges_indexes: Vec<usize> = vec![];
+    let mut end_edges_indexes: Vec<usize> = vec![];
+
+    for index in 0..tagged_form_line_polyline.len() {
+        if !tagged_form_line_polyline[index].should_be_kept
+            || index == 0
+            || index == tagged_form_line_polyline.len() - 1
+        {
+            continue;
+        }
+
+        let previous_tagged_point = &tagged_form_line_polyline[index - 1];
+        let next_tagged_point = &tagged_form_line_polyline[index + 1];
+
+        if !previous_tagged_point.should_be_kept && next_tagged_point.should_be_kept {
+            start_edges_indexes.push(index);
+        }
+
+        if previous_tagged_point.should_be_kept && !next_tagged_point.should_be_kept {
+            end_edges_indexes.push(index);
+        }
+    }
+
+    for start_index in start_edges_indexes {
+        let mut index: usize = start_index - 1;
+        let mut tail: Vec<Point> = vec![*tagged_form_line_polyline[start_index].point];
+        let mut tail_indexes: Vec<usize> = vec![];
+
+        loop {
+            tail.push(*tagged_form_line_polyline[index].point);
+            tail_indexes.push(index);
+            let tail_length = polyline_length(&tail);
+            if index == 0 || tail_length > additional_tail_length {
+                break;
+            }
+            index -= 1;
+        }
+
+        for tail_index in tail_indexes {
+            tagged_form_line_polyline[tail_index].should_be_kept = true;
+        }
+    }
+
+    for end_index in end_edges_indexes {
+        let mut index = end_index + 1;
+        let mut tail: Vec<Point> = vec![*tagged_form_line_polyline[end_index].point];
+        let mut tail_indexes: Vec<usize> = vec![];
+
+        loop {
+            tail.push(*tagged_form_line_polyline[index].point);
+            tail_indexes.push(index);
+            let tail_length = polyline_length(&tail);
+            if index == tagged_form_line_polyline.len() - 1 || tail_length > additional_tail_length
+            {
+                break;
+            }
+            index += 1;
+        }
+
+        for tail_index in tail_indexes {
+            tagged_form_line_polyline[tail_index].should_be_kept = true;
+        }
+    }
+
+    return tagged_form_line_polyline;
 }
 
 fn distance_point_to_polyline(point: &Point, polyline: &Vec<Point>) -> f64 {
