@@ -6,7 +6,7 @@ A software to generate orienteering maps from [LiDAR](https://en.wikipedia.org/w
 
 This project is inspired by [karttapullautin](https://github.com/rphlo/karttapullautin/tree/master) and [this article from Terje Mathisen](https://tmsw.no/mapping/basemap_generation.html). Unlike them, it uses the [PDAL](https://pdal.io) and [GDAL](https://gdal.org) libraries to preprocess the LiDAR data.
 
-This project is still experimental very early stage. It is meant to be used for the [mapant.fr](https://mapant.fr) project, so it is for now very "France centric".
+This project is still experimental and very early stage. It is meant to be used for the [mapant.fr](https://mapant.fr) project, so it is for now very "France centric".
 
 Disclaimer: I am learning Rust along the way, so code quality is not guaranteed 😉
 
@@ -20,7 +20,7 @@ Create a virtual environment with PDAL and GDAL:
 
 ```sh
 # Replace myenv with a name for your environment
-conda create --yes --name myenv --channel conda-forge pdal
+conda create --yes --name myenv --channel conda-forge pdal gdal
 ```
 
 Activate the environment when you open a new terminal:
