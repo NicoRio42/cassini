@@ -331,12 +331,12 @@ fn add_tails_to_tagged_form_line_polyline(
         let mut tail_indexes: Vec<usize> = vec![];
 
         loop {
-            tail.push(*tagged_form_line_polyline[index].point);
-            tail_indexes.push(index);
             let tail_length = polyline_length(&tail);
             if index == 0 || tail_length > additional_tail_length {
                 break;
             }
+            tail.push(*tagged_form_line_polyline[index].point);
+            tail_indexes.push(index);
             index -= 1;
         }
 
@@ -351,13 +351,13 @@ fn add_tails_to_tagged_form_line_polyline(
         let mut tail_indexes: Vec<usize> = vec![];
 
         loop {
-            tail.push(*tagged_form_line_polyline[index].point);
-            tail_indexes.push(index);
             let tail_length = polyline_length(&tail);
             if index == tagged_form_line_polyline.len() - 1 || tail_length > additional_tail_length
             {
                 break;
             }
+            tail.push(*tagged_form_line_polyline[index].point);
+            tail_indexes.push(index);
             index += 1;
         }
 

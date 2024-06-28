@@ -1,12 +1,3 @@
-use shapefile::{
-    dbase::{FieldValue, Record},
-    read_as, Polygon, Polyline,
-};
-use std::{
-    path::PathBuf,
-    process::{Command, ExitStatus},
-};
-
 use crate::{
     canvas::Canvas,
     config::Config,
@@ -14,6 +5,14 @@ use crate::{
         BLUE, FOOTPATH_DASH_INTERVAL_LENGTH, FOOTPATH_DASH_LENGTH, FOOTPATH_WIDTH, INCH,
         INCROSSABLE_BODY_OF_WATER_OUTLINE_WIDTH,
     },
+};
+use shapefile::{
+    dbase::{FieldValue, Record},
+    read_as, Polygon, Polyline,
+};
+use std::{
+    path::PathBuf,
+    process::{Command, ExitStatus},
 };
 
 pub fn render_vector_shapes(

@@ -1,64 +1,43 @@
 # Orienteering map generator
 
-```sh
-conda activate lidar &&
-rm -rf out &&
-mkdir out &&
-pdal pipeline ./pipeline.json &&
-gdal_contour -a elev out/dem.tif out/contours.shp -i 2.5 &&
-gdaldem slope out/dem.tif out/slopes.tif
-```
+![A generated orienteering map](./exemple.png)
 
-Creating contours with gdal_rasterize
+A software to generate orienteering maps from [LiDAR](https://en.wikipedia.org/wiki/Lidar) data and shapefiles vector data.
 
-```sh
-gdal_rasterize -burn 255 -burn 0 -burn 0 -at -ts 1024 1024 -tr 1 1 out/contours.shp out/contours.tif
-```
+This project is inspired by [karttapullautin](https://github.com/rphlo/karttapullautin/tree/master) and [this article from Terje Mathisen](https://tmsw.no/mapping/basemap_generation.html). Unlike them, it uses the [PDAL](https://pdal.io) and [GDAL](https://gdal.org) libraries to preprocess the LiDAR data.
 
-Translate tif to png
+This project is still experimental very early stage. It is meant to be used for the [mapant.fr](https://mapant.fr) project, so it is for now very "France centric".
 
-```sh
-gdal_translate -of PNG -scale -ot byte out/dem.tif out/dem.png
-```
+Disclaimer: I am learning Rust along the way, so code quality is not guaranteed 😉
 
-Translate osm to shapefile
+## Getting started
+
+Set up a Rust environment on your machine if you do not have one: [rustup](https://rustup.rs/)
+
+Install `miniconda`: [miniconda](https://docs.anaconda.com/miniconda/#quick-command-line-install)
+
+Create a virtual environment with PDAL and GDAL:
 
 ```sh
-ogr2ogr --config OSM_USE_CUSTOM_INDEXING NO -skipfailures -f "ESRI Shapefile" out/map.shp in/map.osm
+# Replace myenv with a name for your environment
+conda create --yes --name myenv --channel conda-forge pdal
 ```
 
-Create tile with buffer with las2las
+Activate the environment when you open a new terminal:
 
 ```sh
-las2las64 -lof file_list.txt -merged -o tile-with-buffer.laz -keep_xy 615800 6162800 617200 6164200
+# Replace myenv with a name for your environment
+conda activate myenv
 ```
 
-## Sources
+Running the project:
 
-https://tmsw.no/mapping/basemap_generation.html
-https://geoservices.ign.fr/sites/default/files/2022-05/DT_LiDAR_HD_1-0.pdf
-https://github.com/mapbox/vector-tile-spec/tree/master/2.1
+```sh
+cargo run
+```
 
-## TODO
+Building the project:
 
-- Batch mode
-- Vector data
-- Smooth contours
-- Formline algorithme
-
-## Mapant batch mode with downloading
-
-- Input is an extent
-- Tiles are processed one by one, laz files are downloaded when needed (as the downloading speed is the bottleneck, no need to process in parralel)
-- When starting processing a tile, we check if all surounded tiles are downloadded
-- Downloading should be anticipated so it happens during previous tile processing
-- tile is resized to add a buffer
-- Outputs are croped in the end
-- Output are uploaded to mapant server
-
-## Classic batch mode
-
-- All tiles are present in the "in" folder.
-- There is a tiling step at the begining of the PDAL pipeline to add a buffer to all tiles
-- Tiles should be processed in parallel
-- Outputs should be croped in the end
+```sh
+cargo run
+```

@@ -37,12 +37,12 @@ use vegetation::render_vegetation;
 fn main() {
     let args = Args::parse();
 
-    let tile_list = get_tile_list_from_extent(990494, 6491962, 996450, 6495842);
+    let tile_list = get_tile_list_from_extent(616112, 6163204, 616692, 6163693);
 
     // TODO: multithreading
     for (min_x, min_y, max_x, max_y) in tile_list {
         let start = Instant::now();
-        download_laz_files_if_needed(min_x, min_y, max_x, max_y, "RL".to_owned());
+        download_laz_files_if_needed(min_x, min_y, max_x, max_y, "JS".to_owned());
         download_osm_file_if_needed(min_x, min_y, max_x, max_y);
         process_sigle_tile(min_x, min_y, max_x, max_y, args.skip_lidar);
         let duration = start.elapsed();
