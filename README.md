@@ -39,5 +39,5 @@ cargo run
 Building the project:
 
 ```sh
-cargo run
+cargo build
 ```
