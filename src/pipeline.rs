@@ -63,9 +63,6 @@ pub fn generate_pipeline_for_single_tile(
         "bounds":"([{},{}],[{},{}])"
     }},
     {{
-        "type": "filters.info"
-    }},
-    {{
         "type": "writers.gdal",
         "filename": {:?},
         "window_size": 1,
