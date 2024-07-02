@@ -16,7 +16,7 @@ struct Contour {
     polyline: Vec<Point>,
 }
 
-pub fn render_contours_to_png(tile: Tile, image_width: u32, image_height: u32, config: &Config) {
+pub fn render_contours_to_png(tile: &Tile, image_width: u32, image_height: u32, config: &Config) {
     println!("Rendering contours");
 
     let scale_factor = config.dpi_resolution / INCH;

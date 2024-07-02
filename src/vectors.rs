@@ -5,29 +5,23 @@ use crate::{
         BLUE, FOOTPATH_DASH_INTERVAL_LENGTH, FOOTPATH_DASH_LENGTH, FOOTPATH_WIDTH, INCH,
         INCROSSABLE_BODY_OF_WATER_OUTLINE_WIDTH,
     },
+    tile::Tile,
 };
 use shapefile::{
     dbase::{FieldValue, Record},
     read_as, Polygon, Polyline,
 };
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, ExitStatus},
 };
 
-pub fn render_vector_shapes(
-    image_width: u32,
-    image_height: u32,
-    config: &Config,
-    min_x: u64,
-    min_y: u64,
-    out_dir: &PathBuf,
-    osm_path: &PathBuf,
-) {
+pub fn render_vector_shapes(tile: &Tile, image_width: u32, image_height: u32, config: &Config) {
     println!("Transforming osm file to shapefiles");
 
     let scale_factor = config.dpi_resolution / INCH;
-    let shapes_outlput_path = out_dir.join("shapes");
+    let shapes_outlput_path = tile.dir_path.join("shapes");
+    let osm_path = Path::new("in").join(format!("{:0>7}_{:0>7}.osm", tile.min_x, tile.max_y));
 
     let pdal_output = Command::new("ogr2ogr")
         .args([
@@ -75,8 +69,8 @@ pub fn render_vector_shapes(
 
             for point in ring.points().iter() {
                 points.push((
-                    (point.x as i64 - min_x as i64) as f32 * scale_factor,
-                    (image_height as f32 - ((point.y as i64 - min_y as i64) as f32 * scale_factor)),
+                    (point.x as i64 - tile.min_x) as f32 * scale_factor,
+                    (image_height as f32 - ((point.y as i64 - tile.min_y) as f32 * scale_factor)),
                 ))
             }
 
@@ -111,8 +105,8 @@ pub fn render_vector_shapes(
 
             for point in part {
                 points.push((
-                    (point.x as i64 - min_x as i64) as f32 * scale_factor,
-                    (image_height as f32 - ((point.y as i64 - min_y as i64) as f32 * scale_factor)),
+                    (point.x as i64 - tile.min_x) as f32 * scale_factor,
+                    (image_height as f32 - ((point.y as i64 - tile.min_y) as f32 * scale_factor)),
                 ))
             }
 
@@ -129,6 +123,6 @@ pub fn render_vector_shapes(
         }
     }
 
-    let vectors_output_path = out_dir.join("vectors.png");
+    let vectors_output_path = tile.dir_path.join("vectors.png");
     vectors_layer_img.save_as(&vectors_output_path.to_str().unwrap());
 }

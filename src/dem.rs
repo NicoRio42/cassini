@@ -1,7 +1,11 @@
 use crate::tile::{NeighborTiles, Tile};
 use std::process::{Command, ExitStatus};
 
-pub fn create_dem_with_buffer(tile: &Tile, neighbor_tiles: &NeighborTiles, buffer: i64) {
+pub fn create_dem_with_buffer_contours_shapefiles_and_slopes_tiff(
+    tile: &Tile,
+    neighbor_tiles: &NeighborTiles,
+    buffer: i64,
+) {
     println!("Generating dem with buffer.");
 
     let dem_vrt_with_buffer_path = tile.dir_path.join("dem-with-buffer.vrt");
