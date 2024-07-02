@@ -1,11 +1,11 @@
-use las::{raw::Header, Read, Reader};
+use las::raw::Header;
 use std::fs::{create_dir_all, write, File};
 use std::path::PathBuf;
 use std::process::{Command, ExitStatus};
 
 pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
-    laz_path: PathBuf,
-    output_dir_path: PathBuf,
+    laz_path: &PathBuf,
+    output_dir_path: &PathBuf,
 ) {
     let mut file = File::open(&laz_path).unwrap();
     let header = Header::read_from(&mut file).unwrap();
@@ -13,8 +13,6 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
     let min_y = header.min_y;
     let max_x = header.max_x;
     let max_y = header.max_y;
-
-    println!("{} {} {} {}", min_x, min_y, max_x, max_y);
 
     println!("Generating PDAL pipeline json file for tile");
 

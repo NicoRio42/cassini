@@ -5,4 +5,6 @@ use clap::Parser;
 pub struct Args {
     #[arg(long)]
     pub skip_lidar: bool,
+    #[arg(long)]
+    pub batch: bool,
 }
