@@ -5,6 +5,7 @@ mod cliffs;
 mod config;
 mod constants;
 mod contours;
+mod dem;
 mod download;
 mod full_map;
 mod lidar;
@@ -21,6 +22,7 @@ use cliffs::render_cliffs;
 use config::get_config;
 use constants::INCH;
 use contours::render_contours_to_png;
+use dem::create_dem_with_buffer;
 use download::{download_laz_files_if_needed, download_osm_file_if_needed};
 use full_map::render_full_map_to_png;
 use lidar::{generate_dem_and_vegetation_density_tiff_images_from_laz_file, process_lidar};
@@ -28,6 +30,7 @@ use pipeline::generate_pipeline_for_single_tile;
 use std::{
     fs::{self, create_dir_all, File},
     path::{Path, PathBuf},
+    process::Command,
     thread,
     time::{Duration, Instant},
 };
@@ -154,13 +157,17 @@ fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
     let image_height = ((tile.max_y - tile.min_y) as f32 * config.dpi_resolution / INCH) as u32;
 
     render_vegetation(
-        tile,
-        neighbor_tiles,
+        &tile,
+        &neighbor_tiles,
         image_width,
         image_height,
         buffer,
         &config,
     );
+
+    create_dem_with_buffer(&tile, &neighbor_tiles, buffer as i64)
+
+    // render_contours_to_png(tile, neighbor_tiles, image_width, image_height, &config);
 }
 
 // fn process_sigle_tile(min_x: u64, min_y: u64, max_x: u64, max_y: u64, skip_lidar: bool) {

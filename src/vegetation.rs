@@ -5,12 +5,12 @@ use crate::{
 };
 use image::{Rgba, RgbaImage};
 use imageproc::{drawing::draw_filled_rect_mut, rect::Rect};
-use std::{fs::File, path::PathBuf};
+use std::{fs::File, path::PathBuf, time::Instant};
 use tiff::decoder::{Decoder, DecodingResult};
 
 pub fn render_vegetation(
-    tile: Tile,
-    neighbor_tiles: NeighborTiles,
+    tile: &Tile,
+    neighbor_tiles: &NeighborTiles,
     image_width: u32,
     image_height: u32,
     buffer: usize,

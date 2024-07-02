@@ -6,6 +6,7 @@ use crate::{
         FORM_CONTOUR_DASH_LENGTH, FORM_CONTOUR_THICKNESS_MILLIMETTER, INCH,
         MASTER_CONTOUR_THICKNESS_MILLIMETTER,
     },
+    tile::{NeighborTiles, Tile},
 };
 use shapefile::{dbase, Point};
 use std::path::PathBuf;
@@ -15,18 +16,11 @@ struct Contour {
     polyline: Vec<Point>,
 }
 
-pub fn render_contours_to_png(
-    image_width: u32,
-    image_height: u32,
-    config: &Config,
-    min_x: u64,
-    min_y: u64,
-    out_dir: &PathBuf,
-) {
+pub fn render_contours_to_png(tile: Tile, image_width: u32, image_height: u32, config: &Config) {
     println!("Rendering contours");
 
     let scale_factor = config.dpi_resolution / INCH;
-    let contours_path = out_dir.join("contours.shp");
+    let contours_path = tile.dir_path.join("contours.shp");
 
     let contours =
         shapefile::read_as::<_, shapefile::Polyline, shapefile::dbase::Record>(contours_path)
@@ -70,8 +64,8 @@ pub fn render_contours_to_png(
                 &contour.polyline,
                 &mut contours_layer_img,
                 scale_factor,
-                min_x,
-                min_y,
+                tile.min_x as u64,
+                tile.min_y as u64,
                 image_height,
             );
         } else if is_normal_contour {
@@ -83,8 +77,8 @@ pub fn render_contours_to_png(
                 &contour.polyline,
                 &mut contours_layer_img,
                 scale_factor,
-                min_x,
-                min_y,
+                tile.min_x as u64,
+                tile.min_y as u64,
                 image_height,
             );
         } else {
@@ -104,8 +98,8 @@ pub fn render_contours_to_png(
                     &relevant_form_contour,
                     &mut contours_layer_img,
                     scale_factor,
-                    min_x,
-                    min_y,
+                    tile.min_x as u64,
+                    tile.min_y as u64,
                     image_height,
                 );
             }
@@ -114,7 +108,7 @@ pub fn render_contours_to_png(
         }
     }
 
-    let contours_output_path = out_dir.join("contours.png");
+    let contours_output_path = tile.dir_path.join("contours.png");
     let contours_output_path_str = contours_output_path.to_str().unwrap();
 
     contours_layer_img.save_as(&contours_output_path_str);
