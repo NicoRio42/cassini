@@ -1,7 +1,7 @@
 use crate::INCH;
 use crate::{
     cliffs::render_cliffs,
-    config::Config,
+    config::get_config,
     contours::render_contours_to_png,
     dem::create_dem_with_buffer_contours_shapefiles_and_slopes_tiff,
     full_map::render_full_map_to_png,
@@ -12,8 +12,8 @@ use crate::{
 pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
     tile: Tile,
     neighbor_tiles: NeighborTiles,
-    config: &Config,
 ) {
+    let config = get_config();
     let buffer = 200;
     let image_width = ((tile.max_x - tile.min_x) as f32 * config.dpi_resolution / INCH) as u32;
     let image_height = ((tile.max_y - tile.min_y) as f32 * config.dpi_resolution / INCH) as u32;

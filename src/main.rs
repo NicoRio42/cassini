@@ -10,6 +10,7 @@ mod dem;
 mod download;
 mod full_map;
 mod lidar;
+mod merge;
 mod png;
 mod tile;
 mod utils;
@@ -105,7 +106,6 @@ fn main() {
             left: Some(get_tile_struct_from_lidar_hd_tile_filename(&left)),
             top_left: Some(get_tile_struct_from_lidar_hd_tile_filename(&top_left)),
         },
-        &config,
     );
 
     let duration = start.elapsed();

@@ -1,5 +1,7 @@
 use crate::{
     lidar::generate_dem_and_vegetation_density_tiff_images_from_laz_file,
+    merge::merge_maps,
+    png::generate_png_from_dem_vegetation_density_tiff_images_and_vector_file,
     tile::{NeighborTiles, Tile, TileWithNeighbors},
 };
 use las::raw::Header;
@@ -17,39 +19,9 @@ pub fn batch(number_of_threads: usize) {
     println!("Generating raw rasters for every tiles");
 
     let tiles = get_tiles_with_neighbors();
-    let tiles = Arc::new(tiles); // Wrap the tiles in an Arc
+    let tiles_arc = Arc::new(tiles.clone()); // Wrap the tiles in an Arc
 
-    // let tiles_chunks: Vec<Vec<TileWithNeighbors>> = tiles
-    //     .chunks(number_of_threads)
-    //     .map(|chunk| chunk.to_vec())
-    //     .collect();
-
-    // let mut handles: Vec<JoinHandle<()>> = Vec::with_capacity(number_of_threads);
-
-    // for chunk in tiles_chunks {
-    //     let chunk = Arc::new(chunk);
-
-    //     let spawned_thread = spawn(move || {
-    //         for tile in chunk.iter() {
-    //             println!("{:?}", tile.tile.dir_path);
-
-    //             generate_dem_and_vegetation_density_tiff_images_from_laz_file(
-    //                 &tile.tile.laz_path,
-    //                 &tile.tile.dir_path,
-    //             );
-    //         }
-
-    //         sleep(Duration::from_millis(1));
-    //     });
-
-    //     handles.push(spawned_thread);
-    // }
-
-    // for handle in handles {
-    //     handle.join().unwrap();
-    // }
-
-    let tiles_chunks: Vec<Vec<TileWithNeighbors>> = tiles
+    let tiles_chunks: Vec<Vec<TileWithNeighbors>> = tiles_arc
         .chunks(number_of_threads)
         .map(|chunk| chunk.to_vec())
         .collect();
@@ -78,6 +50,38 @@ pub fn batch(number_of_threads: usize) {
     for handle in handles {
         handle.join().unwrap();
     }
+
+    let tiles_chunks: Vec<Vec<TileWithNeighbors>> = tiles_arc
+        .chunks(number_of_threads)
+        .map(|chunk| chunk.to_vec())
+        .collect();
+
+    let mut handles: Vec<JoinHandle<()>> = Vec::with_capacity(number_of_threads);
+
+    for chunk in tiles_chunks {
+        let chunk = Arc::new(chunk);
+
+        let spawned_thread = spawn(move || {
+            for tile in chunk.iter() {
+                println!("{:?}", tile.tile.dir_path);
+
+                generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
+                    tile.tile.clone(),
+                    tile.neighbors.clone(),
+                );
+            }
+
+            sleep(Duration::from_millis(1));
+        });
+
+        handles.push(spawned_thread);
+    }
+
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
+    merge_maps(tiles);
 }
 
 pub fn get_tiles_with_neighbors() -> Vec<TileWithNeighbors> {
