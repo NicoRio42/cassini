@@ -14,41 +14,43 @@ use std::{
     time::Duration,
 };
 
-pub fn batch(number_of_threads: usize) {
+pub fn batch(number_of_threads: usize, skip_lidar: bool) {
     println!("Batch mode");
     println!("Generating raw rasters for every tiles");
 
     let tiles = get_tiles_with_neighbors();
     let tiles_arc = Arc::new(tiles.clone()); // Wrap the tiles in an Arc
 
-    let tiles_chunks: Vec<Vec<TileWithNeighbors>> = tiles_arc
-        .chunks(number_of_threads)
-        .map(|chunk| chunk.to_vec())
-        .collect();
+    if !skip_lidar {
+        let tiles_chunks: Vec<Vec<TileWithNeighbors>> = tiles_arc
+            .chunks(number_of_threads)
+            .map(|chunk| chunk.to_vec())
+            .collect();
 
-    let mut handles: Vec<JoinHandle<()>> = Vec::with_capacity(number_of_threads);
+        let mut handles: Vec<JoinHandle<()>> = Vec::with_capacity(number_of_threads);
 
-    for chunk in tiles_chunks {
-        let chunk = Arc::new(chunk);
+        for chunk in tiles_chunks {
+            let chunk = Arc::new(chunk);
 
-        let spawned_thread = spawn(move || {
-            for tile in chunk.iter() {
-                println!("{:?}", tile.tile.dir_path);
+            let spawned_thread = spawn(move || {
+                for tile in chunk.iter() {
+                    println!("{:?}", tile.tile.dir_path);
 
-                generate_dem_and_vegetation_density_tiff_images_from_laz_file(
-                    &tile.tile.laz_path,
-                    &tile.tile.dir_path,
-                );
-            }
+                    generate_dem_and_vegetation_density_tiff_images_from_laz_file(
+                        &tile.tile.laz_path,
+                        &tile.tile.dir_path,
+                    );
+                }
 
-            sleep(Duration::from_millis(1));
-        });
+                sleep(Duration::from_millis(1));
+            });
 
-        handles.push(spawned_thread);
-    }
+            handles.push(spawned_thread);
+        }
 
-    for handle in handles {
-        handle.join().unwrap();
+        for handle in handles {
+            handle.join().unwrap();
+        }
     }
 
     let tiles_chunks: Vec<Vec<TileWithNeighbors>> = tiles_arc

@@ -1,4 +1,7 @@
-use crate::tile::{NeighborTiles, Tile};
+use crate::{
+    buffer::create_tif_with_buffer,
+    tile::{NeighborTiles, Tile},
+};
 use std::process::{Command, ExitStatus};
 
 pub fn create_dem_with_buffer_contours_shapefiles_and_slopes_tiff(
@@ -8,81 +11,10 @@ pub fn create_dem_with_buffer_contours_shapefiles_and_slopes_tiff(
 ) {
     println!("Generating dem with buffer.");
 
-    let dem_vrt_with_buffer_path = tile.dir_path.join("dem-with-buffer.vrt");
     let dem_with_buffer_path = tile.dir_path.join("dem-with-buffer.tif");
-    let tile_dem_path = tile.dir_path.join("dem.tif");
+    create_tif_with_buffer(tile, neighbor_tiles, buffer, "dem");
 
-    let mut dems_paths: Vec<String> = vec![tile_dem_path
-        .to_str()
-        .expect("Failed to convert path to string")
-        .to_string()];
-
-    let neighbors = vec![
-        neighbor_tiles.top.as_ref(),
-        neighbor_tiles.top_right.as_ref(),
-        neighbor_tiles.right.as_ref(),
-        neighbor_tiles.bottom_right.as_ref(),
-        neighbor_tiles.bottom.as_ref(),
-        neighbor_tiles.bottom_left.as_ref(),
-        neighbor_tiles.left.as_ref(),
-        neighbor_tiles.top_left.as_ref(),
-    ];
-
-    for neighbor in neighbors {
-        if let Some(neighbor_tile) = neighbor {
-            let path = neighbor_tile.dir_path.join("dem.tif");
-            if let Some(path_str) = path.to_str() {
-                dems_paths.push(path_str.to_string());
-            } else {
-                eprintln!(
-                    "Failed to convert path to string for {:?}",
-                    neighbor_tile.dir_path
-                );
-            }
-        }
-    }
-
-    // First creating a GDAL Virtual Dataset
-    let gdalbuildvrt_output = Command::new("gdalbuildvrt")
-        .arg(&dem_vrt_with_buffer_path.to_str().unwrap())
-        .args(&dems_paths)
-        .output()
-        .expect("failed to execute gdal_contour command");
-
-    if ExitStatus::success(&gdalbuildvrt_output.status) {
-        println!("{}", String::from_utf8(gdalbuildvrt_output.stdout).unwrap());
-    } else {
-        println!("{}", String::from_utf8(gdalbuildvrt_output.stderr).unwrap());
-    }
-
-    // Then outpouting croped dem with buffer
-    let gdal_translate_output = Command::new("gdal_translate")
-        .args([
-            "-projwin",
-            &(tile.min_x - buffer).to_string(),
-            &(tile.max_y + buffer).to_string(),
-            &(tile.max_x + buffer).to_string(),
-            &(tile.min_y - buffer).to_string(),
-        ])
-        .args(["-of", "GTiff"])
-        .arg(&dem_vrt_with_buffer_path.to_str().unwrap())
-        .arg(&dem_with_buffer_path.to_str().unwrap())
-        .output()
-        .expect("failed to execute gdal_contour command");
-
-    if ExitStatus::success(&gdal_translate_output.status) {
-        println!(
-            "{}",
-            String::from_utf8(gdal_translate_output.stdout).unwrap()
-        );
-    } else {
-        println!(
-            "{}",
-            String::from_utf8(gdal_translate_output.stderr).unwrap()
-        );
-    }
-
-    // Then outpouting croped dem with buffer
+    // Filling holes
     let gdal_fillnodata_output = Command::new("gdal_fillnodata")
         .arg(&dem_with_buffer_path.to_str().unwrap())
         .arg(&dem_with_buffer_path.to_str().unwrap())
