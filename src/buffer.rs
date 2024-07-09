@@ -58,6 +58,7 @@ pub fn create_tif_with_buffer(
     let gdalbuildvrt_output = Command::new("gdalbuildvrt")
         .arg(&vrt_with_buffer_path.to_str().unwrap())
         .args(&rasters_paths)
+        .arg("--quiet")
         .output()
         .expect("failed to execute gdal_contour command");
 
@@ -79,6 +80,7 @@ pub fn create_tif_with_buffer(
         .args(["-of", "GTiff"])
         .arg(&vrt_with_buffer_path.to_str().unwrap())
         .arg(&raster_with_buffer_path.to_str().unwrap())
+        .arg("--quiet")
         .output()
         .expect("failed to execute gdal_contour command");
 

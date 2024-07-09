@@ -72,6 +72,7 @@ pub fn create_dem_with_buffer_contours_shapefiles_and_slopes_tiff(
             &contours_path.to_str().unwrap(),
             &contours_raw_path.to_str().unwrap(),
         ])
+        .arg("--quiet")
         .output()
         .expect("failed to execute ogr2ogr command");
 

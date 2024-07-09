@@ -1,7 +1,9 @@
 use las::raw::Header;
-use std::fs::{create_dir_all, write, File};
+use std::fs::{create_dir_all, read_dir, remove_dir_all, write, File};
 use std::path::PathBuf;
 use std::process::{Command, ExitStatus};
+
+use crate::utils::delete_dir_contents;
 
 pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
     laz_path: &PathBuf,
@@ -17,10 +19,12 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
     println!("Generating PDAL pipeline json file for tile");
 
     let dem_path = output_dir_path.join("dem.tif");
-    let low_vegetation_path = output_dir_path.join("low-vegetation.tif");
-    let medium_vegetation_path = output_dir_path.join("medium-vegetation.tif");
-    let high_vegetation_path = output_dir_path.join("high-vegetation.tif");
+    let vegetation_temp_path = output_dir_path.join("vegetation");
+    let low_vegetation_path = vegetation_temp_path.join("low-vegetation-#.tif");
+    let medium_vegetation_path = vegetation_temp_path.join("medium-vegetation-#.tif");
+    let high_vegetation_path = vegetation_temp_path.join("high-vegetation-#.tif");
     let pipeline_path = output_dir_path.join("pipeline.json");
+    create_dir_all(&output_dir_path.join("vegetation")).expect("Could not create out dir");
 
     let gdal_common_options = format!(
         r#""resolution": 1,
@@ -61,8 +65,16 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
     }},
     {{
         "type": "filters.assign",
-        "value": "Classification = 3",
+        "value": "Classification = 5",
         "where": "HeightAboveGround > 2 && HeightAboveGround <= 30"
+    }},
+    {{
+        "type":"filters.expression",
+        "expression":"ScanAngleRank > -12 && ScanAngleRank < 12"
+    }},
+    {{
+        "type":"filters.groupby",
+        "dimension":"PointSourceId"
     }},
     {{
         "type": "writers.gdal",
@@ -98,7 +110,6 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
         gdal_common_options,
     );
 
-    create_dir_all(&output_dir_path).expect("Could not create out dir");
     write(&pipeline_path, pdal_pipeline).expect("Unable to write pipeline file");
 
     println!("Executing PDAL pipeline.");
@@ -112,5 +123,54 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
         println!("{}", String::from_utf8(pdal_output.stdout).unwrap());
     } else {
         println!("{}", String::from_utf8(pdal_output.stderr).unwrap());
+    }
+
+    create_vegetation_rasters(&output_dir_path);
+    // delete_dir_contents(read_dir(&vegetation_temp_path));
+    // remove_dir_all(vegetation_temp_path).expect("Could not delete directory");
+}
+
+fn create_vegetation_rasters(output_dir_path: &PathBuf) {
+    for raster_name in ["low-vegetation", "medium-vegetation", "high-vegetation"] {
+        create_single_vegetation_raster(output_dir_path, raster_name);
+    }
+}
+
+fn create_single_vegetation_raster(output_dir_path: &PathBuf, raster_name: &str) {
+    let mut input_files_args: Vec<String> = vec![];
+    let paths = read_dir(output_dir_path.join("vegetation")).unwrap();
+
+    for path in paths {
+        let image_path = path.unwrap().path().to_str().unwrap().to_string();
+
+        if !image_path.contains(raster_name) {
+            continue;
+        }
+
+        input_files_args.push(image_path);
+    }
+
+    let mut binding = Command::new("gdal_calc");
+    let gdal_command = binding
+        .arg("-A")
+        .args(&input_files_args)
+        .args([
+            "--outfile",
+            output_dir_path
+                .join(format!("{}.tif", raster_name))
+                .to_str()
+                .unwrap(),
+        ])
+        .args(["--calc", "numpy.max(A,axis=0)"])
+        .arg("--quiet");
+
+    let gdal_output = gdal_command
+        .output()
+        .expect("failed to execute pdal pipeline command");
+
+    if ExitStatus::success(&gdal_output.status) {
+        println!("{}", String::from_utf8(gdal_output.stdout).unwrap());
+    } else {
+        println!("{}", String::from_utf8(gdal_output.stderr).unwrap());
     }
 }

@@ -19,15 +19,16 @@ pub fn batch(number_of_threads: usize, skip_lidar: bool) {
     println!("Generating raw rasters for every tiles");
 
     let tiles = get_tiles_with_neighbors();
-    let tiles_arc = Arc::new(tiles.clone()); // Wrap the tiles in an Arc
+    let chunk_size = tiles.len() / number_of_threads;
+    let tiles_arc = Arc::new(tiles.clone());
 
     if !skip_lidar {
         let tiles_chunks: Vec<Vec<TileWithNeighbors>> = tiles_arc
-            .chunks(number_of_threads)
+            .chunks(chunk_size)
             .map(|chunk| chunk.to_vec())
             .collect();
 
-        let mut handles: Vec<JoinHandle<()>> = Vec::with_capacity(number_of_threads);
+        let mut handles: Vec<JoinHandle<()>> = Vec::with_capacity(chunk_size);
 
         for chunk in tiles_chunks {
             let chunk = Arc::new(chunk);
@@ -54,11 +55,11 @@ pub fn batch(number_of_threads: usize, skip_lidar: bool) {
     }
 
     let tiles_chunks: Vec<Vec<TileWithNeighbors>> = tiles_arc
-        .chunks(number_of_threads)
+        .chunks(chunk_size)
         .map(|chunk| chunk.to_vec())
         .collect();
 
-    let mut handles: Vec<JoinHandle<()>> = Vec::with_capacity(number_of_threads);
+    let mut handles: Vec<JoinHandle<()>> = Vec::with_capacity(chunk_size);
 
     for chunk in tiles_chunks {
         let chunk = Arc::new(chunk);

@@ -23,7 +23,7 @@ pub fn render_vector_shapes(tile: &Tile, image_width: u32, image_height: u32, co
     let shapes_outlput_path = tile.dir_path.join("shapes");
     let osm_path = Path::new("in").join(format!("{:0>7}_{:0>7}.osm", tile.min_x, tile.max_y));
 
-    let pdal_output = Command::new("ogr2ogr")
+    let ogr2ogr_output = Command::new("ogr2ogr")
         .args([
             "--config",
             "OSM_USE_CUSTOM_INDEXING",
@@ -36,13 +36,14 @@ pub fn render_vector_shapes(tile: &Tile, image_width: u32, image_height: u32, co
             "-t_srs",
             "EPSG:2154",
         ])
+        .arg("--quiet")
         .output()
         .expect("failed to execute ogr2ogr command");
 
-    if ExitStatus::success(&pdal_output.status) {
-        println!("{}", String::from_utf8(pdal_output.stdout).unwrap());
+    if ExitStatus::success(&ogr2ogr_output.status) {
+        println!("{}", String::from_utf8(ogr2ogr_output.stdout).unwrap());
     } else {
-        println!("{}", String::from_utf8(pdal_output.stderr).unwrap());
+        println!("{}", String::from_utf8(ogr2ogr_output.stderr).unwrap());
     }
 
     println!("Rendering vectors");
