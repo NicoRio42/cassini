@@ -33,7 +33,7 @@ fn main() {
 
     if args.batch {
         let start = Instant::now();
-        let number_of_threads = args.threads.unwrap_or(1);
+        let number_of_threads = args.threads.unwrap_or(3);
         batch(number_of_threads, args.skip_lidar);
         let duration = start.elapsed();
         println!("Tiles generated in {:.1?}", duration);
@@ -72,5 +72,4 @@ fn main() {
 
     let duration = start.elapsed();
     println!("Tiles generated in {:.1?}", duration);
-    // TODO implement single tile
 }

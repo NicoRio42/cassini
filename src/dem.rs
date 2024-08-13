@@ -61,6 +61,7 @@ pub fn create_dem_with_buffer_contours_shapefiles_and_slopes_tiff(
         );
     }
 
+    // TODO: find a better simplifying solution
     println!("Simplifying countours shapefiles.");
 
     let contours_path = tile.dir_path.join("contours.shp");
@@ -68,7 +69,7 @@ pub fn create_dem_with_buffer_contours_shapefiles_and_slopes_tiff(
     let contours_simplify_output = Command::new("ogr2ogr")
         .args([
             "-simplify",
-            "0.5",
+            "2",
             &contours_path.to_str().unwrap(),
             &contours_raw_path.to_str().unwrap(),
         ])
