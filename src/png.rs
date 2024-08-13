@@ -1,4 +1,5 @@
 use crate::pullautin_raw_contours::xyz2contours;
+use crate::pullautin_smooth_contours::smoothjoin;
 use crate::INCH;
 use crate::{
     cliffs::render_cliffs,
@@ -35,6 +36,7 @@ pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
     );
 
     let _ = xyz2contours(&tile, buffer as i64);
+    let _ = smoothjoin(&tile, buffer as i64);
 
     // render_contours_to_png(&tile, image_width, image_height, &config);
     // render_cliffs(&tile, image_width, image_height, buffer as u64, &config);
