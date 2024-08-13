@@ -17,14 +17,14 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
     println!("Generating PDAL pipeline json file for tile");
 
     let dem_path = output_dir_path.join("dem.tif");
+    let dem_low_resolution_path = output_dir_path.join("dem-low-resolution.tif");
     let medium_vegetation_path = output_dir_path.join("medium-vegetation.tif");
     let high_vegetation_path = output_dir_path.join("high-vegetation.tif");
     let pipeline_path = output_dir_path.join("pipeline.json");
     create_dir_all(&output_dir_path.join("vegetation")).expect("Could not create out dir");
 
     let gdal_common_options = format!(
-        r#""resolution": 1,
-        "binmode": true,
+        r#""binmode": true,
         "origin_x": {},
         "origin_y": {},
         "width": {},
@@ -41,6 +41,15 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
     {{
         "type": "writers.gdal",
         "filename": {:?},
+        "resolution": 1,
+        {}
+        "where": "Classification == 2",
+        "output_type": "mean"
+    }},
+    {{
+        "type": "writers.gdal",
+        "filename": {:?},
+        "resolution": 2,
         {}
         "where": "Classification == 2",
         "output_type": "mean"
@@ -66,6 +75,7 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
     {{
         "type": "writers.gdal",
         "filename": {:?},
+        "resolution": 1,
         {}
         "where": "Classification == 4",
         "output_type": "count"
@@ -73,6 +83,7 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
     {{
         "type": "writers.gdal",
         "filename": {:?},
+        "resolution": 1,
         {}
         "where": "Classification == 5",
         "output_type": "count"
@@ -80,6 +91,8 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
 ]"#,
         laz_path,
         dem_path,
+        gdal_common_options,
+        dem_low_resolution_path,
         gdal_common_options,
         dem_path,
         medium_vegetation_path,

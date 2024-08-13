@@ -33,6 +33,29 @@ pub fn create_dem_with_buffer_contours_shapefiles_and_slopes_tiff(
         );
     }
 
+    let dem_low_resolution_with_buffer_path =
+        tile.dir_path.join("dem-low-resolution-with-buffer.tif");
+    create_tif_with_buffer(tile, neighbor_tiles, buffer, "dem-low-resolution");
+
+    // Filling holes
+    let gdal_fillnodata_output = Command::new("gdal_fillnodata")
+        .arg(&dem_low_resolution_with_buffer_path.to_str().unwrap())
+        .arg(&dem_low_resolution_with_buffer_path.to_str().unwrap())
+        .output()
+        .expect("failed to execute gdal_contour command");
+
+    if ExitStatus::success(&gdal_fillnodata_output.status) {
+        println!(
+            "{}",
+            String::from_utf8(gdal_fillnodata_output.stdout).unwrap()
+        );
+    } else {
+        println!(
+            "{}",
+            String::from_utf8(gdal_fillnodata_output.stderr).unwrap()
+        );
+    }
+
     println!("Generating countours shapefiles.");
 
     let contours_raw_path = tile.dir_path.join("contours-raw.shp");
@@ -41,7 +64,7 @@ pub fn create_dem_with_buffer_contours_shapefiles_and_slopes_tiff(
         .args([
             "-a",
             "elev",
-            &dem_with_buffer_path.to_str().unwrap(),
+            &dem_low_resolution_with_buffer_path.to_str().unwrap(),
             &contours_raw_path.to_str().unwrap(),
             "-i",
             "2.5",
@@ -96,7 +119,7 @@ pub fn create_dem_with_buffer_contours_shapefiles_and_slopes_tiff(
     let gdaldem_output = Command::new("gdaldem")
         .args([
             "slope",
-            &dem_with_buffer_path.to_str().unwrap(),
+            &dem_low_resolution_with_buffer_path.to_str().unwrap(),
             &slopes_path.to_str().unwrap(),
         ])
         .output()

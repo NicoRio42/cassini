@@ -13,6 +13,8 @@ mod full_map;
 mod lidar;
 mod merge;
 mod png;
+mod pullautin_helpers;
+mod pullautin_raw_contours;
 mod tile;
 mod utils;
 mod vectors;
@@ -44,31 +46,32 @@ fn main() {
     let laz_path = Path::new("in").join("LHD_FXX_0615_6163_PTS_C_LAMB93_IGN69.copc.laz");
     let dir_path = Path::new("out").join("test");
 
-    generate_dem_and_vegetation_density_tiff_images_from_laz_file(&laz_path, &dir_path);
+    // generate_dem_and_vegetation_density_tiff_images_from_laz_file(&laz_path, &dir_path);
 
     let mut file = File::open(&laz_path).expect("Cound not open laz file");
     let header = Header::read_from(&mut file).unwrap();
 
-    generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
-        Tile {
-            dir_path,
-            laz_path,
-            min_x: header.min_x as i64,
-            min_y: header.min_y as i64,
-            max_x: header.max_x as i64,
-            max_y: header.max_y as i64,
-        },
-        NeighborTiles {
-            top: None,
-            top_right: None,
-            right: None,
-            bottom_right: None,
-            bottom: None,
-            bottom_left: None,
-            left: None,
-            top_left: None,
-        },
-    );
+    let tile = Tile {
+        dir_path,
+        laz_path,
+        min_x: header.min_x as i64,
+        min_y: header.min_y as i64,
+        max_x: header.max_x as i64,
+        max_y: header.max_y as i64,
+    };
+
+    let neighbor_tiles = NeighborTiles {
+        top: None,
+        top_right: None,
+        right: None,
+        bottom_right: None,
+        bottom: None,
+        bottom_left: None,
+        left: None,
+        top_left: None,
+    };
+
+    generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(tile, neighbor_tiles);
 
     let duration = start.elapsed();
     println!("Tiles generated in {:.1?}", duration);
