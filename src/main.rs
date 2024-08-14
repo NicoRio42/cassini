@@ -45,10 +45,12 @@ fn main() {
     }
 
     let start = Instant::now();
-    let laz_path = Path::new("in").join("LHD_FXX_0615_6163_PTS_C_LAMB93_IGN69.copc.laz");
+    let laz_path = Path::new("in").join("LHD_FXX_0616_6163_PTS_C_LAMB93_IGN69.copc.laz");
     let dir_path = Path::new("out").join("test");
 
-    // generate_dem_and_vegetation_density_tiff_images_from_laz_file(&laz_path, &dir_path);
+    if !args.skip_lidar {
+        generate_dem_and_vegetation_density_tiff_images_from_laz_file(&laz_path, &dir_path);
+    }
 
     let mut file = File::open(&laz_path).expect("Cound not open laz file");
     let header = Header::read_from(&mut file).unwrap();

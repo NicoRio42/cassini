@@ -8,7 +8,7 @@ use tiff::decoder::{Decoder, DecodingResult};
 use crate::config::Config;
 use crate::constants::INCH;
 use crate::{
-    constants::{BROWN, PURPLE, TRANSPARENT},
+    constants::{BROWN, TRANSPARENT},
     tile::Tile,
 };
 
@@ -50,27 +50,6 @@ pub fn pullautin_render_contours(
             panic!("Cannot read band data")
         };
 
-        // let path = format!("{}/xyz2.xyz", tmpfolder);
-        // let xyz_file_in = Path::new(&path);
-
-        // if let Ok(lines) = read_lines(xyz_file_in) {
-        //     for (i, line) in lines.enumerate() {
-        //         let ip = line.unwrap_or(String::new());
-        //         let mut parts = ip.split(' ');
-        //         let x: f64 = parts.next().unwrap().parse::<f64>().unwrap();
-        //         let y: f64 = parts.next().unwrap().parse::<f64>().unwrap();
-
-        //         if i == 0 {
-        //             xstart = x;
-        //             ystart = y;
-        //         } else if i == 1 {
-        //             size = y - ystart;
-        //         } else {
-        //             break;
-        //         }
-        //     }
-        // }
-
         let sxmax: usize = (tile.max_x + buffer - xstart as i64) as usize;
         let symax: usize = (tile.max_y + buffer - ystart as i64) as usize;
         let mut xyz: HashMap<(usize, usize), f64> = HashMap::default();
@@ -86,31 +65,6 @@ pub fn pullautin_render_contours(
 
             xyz.insert((xx, yy), h);
         }
-
-        // let mut sxmax: usize = usize::MIN;
-        // let mut symax: usize = usize::MIN;
-
-        // let mut xyz: HashMap<(usize, usize), f64> = HashMap::default();
-
-        // read_lines_no_alloc(xyz_file_in, |line| {
-        //     let mut parts = line.split(' ');
-        //     let x: f64 = parts.next().unwrap().parse::<f64>().unwrap();
-        //     let y: f64 = parts.next().unwrap().parse::<f64>().unwrap();
-        //     let h: f64 = parts.next().unwrap().parse::<f64>().unwrap();
-
-        //     let xx = ((x - xstart) / size).floor() as usize;
-        //     let yy = ((y - ystart) / size).floor() as usize;
-
-        //     xyz.insert((xx, yy), h);
-
-        //     if sxmax < xx {
-        //         sxmax = xx;
-        //     }
-        //     if symax < yy {
-        //         symax = yy;
-        //     }
-        // })
-        // .expect("Unable to read file");
 
         for i in 6..(sxmax - 7) {
             for j in 6..(symax - 7) {
@@ -325,7 +279,8 @@ pub fn pullautin_render_contours(
                 }
             }
         }
-        let mut color = PURPLE; // purple
+        // let mut color = PURPLE; // purple
+        let mut color = BROWN; // purple
         if layer.contains("contour") {
             color = BROWN // brown
         }
@@ -634,39 +589,7 @@ pub fn pullautin_render_contours(
         fp.write_all(formline_out.as_bytes())
             .expect("Unable to write file");
     }
-    // // dotknolls----------
-    // let input_filename = &format!("{}/dotknolls.dxf", tmpfolder);
-    // let input = Path::new(input_filename);
-    // let data = fs::read_to_string(input).expect("Can not read input file");
-    // let data = data.split("POINT");
 
-    // for (j, rec) in data.enumerate() {
-    //     let mut x: f64 = 0.0;
-    //     let mut y: f64 = 0.0;
-    //     if j > 0 {
-    //         let val = rec.split('\n').collect::<Vec<&str>>();
-    //         let layer = val[2].trim();
-    //         for (i, v) in val.iter().enumerate() {
-    //             let vt = v.trim();
-    //             if vt == "10" {
-    //                 x = (val[i + 1].trim().parse::<f64>().unwrap() - x0) * 600.0
-    //                     / 254.0
-    //                     / scalefactor;
-    //             }
-    //             if vt == "20" {
-    //                 y = (y0 - val[i + 1].trim().parse::<f64>().unwrap()) * 600.0
-    //                     / 254.0
-    //                     / scalefactor;
-    //             }
-    //         }
-    //         if layer == "dotknoll" {
-    //             let color = Rgba([166, 85, 43, 255]);
-
-    //             draw_filled_circle_mut(&mut img, (x as i32, y as i32), 7, color)
-    //         }
-    //     }
-    // }
-
-    img.save(tile.dir_path.join("contours-kp.png"))
+    img.save(tile.dir_path.join("contours.png"))
         .expect("could not save output png");
 }

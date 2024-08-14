@@ -34,28 +34,9 @@ pub fn smoothjoin(tile: &Tile, buffer: i64) -> Result<(), Box<dyn Error>> {
         panic!("Cannot read band data")
     };
 
-    // let path = format!("{}/xyz_knolls.xyz", tmpfolder);
-    // let xyz_file_in = Path::new(&path);
     let size: f64 = 2.0;
     let xstart: f64 = (tile.min_x - buffer) as f64;
     let ystart: f64 = (tile.min_y - buffer) as f64;
-
-    // if let Ok(lines) = read_lines(xyz_file_in) {
-    //     for (i, line) in lines.enumerate() {
-    //         let ip = line.unwrap_or(String::new());
-    //         let mut parts = ip.split(' ');
-    //         let x: f64 = parts.next().unwrap().parse::<f64>().unwrap();
-    //         let y: f64 = parts.next().unwrap().parse::<f64>().unwrap();
-    //         if i == 0 {
-    //             xstart = x;
-    //             ystart = y;
-    //         } else if i == 1 {
-    //             size = y - ystart;
-    //         } else {
-    //             break;
-    //         }
-    //     }
-    // }
 
     let xmax: u64 = (tile.max_x + buffer - xstart as i64) as u64;
     let ymax: u64 = (tile.max_y + buffer - ystart as i64) as u64;
@@ -72,26 +53,6 @@ pub fn smoothjoin(tile: &Tile, buffer: i64) -> Result<(), Box<dyn Error>> {
 
         xyz.insert((xx, yy), h);
     }
-
-    // read_lines_no_alloc(xyz_file_in, |line| {
-    //     let mut parts = line.split(' ');
-    //     let x: f64 = parts.next().unwrap().parse::<f64>().unwrap();
-    //     let y: f64 = parts.next().unwrap().parse::<f64>().unwrap();
-    //     let h: f64 = parts.next().unwrap().parse::<f64>().unwrap();
-
-    //     let xx = ((x - xstart) / size).floor() as u64;
-    //     let yy = ((y - ystart) / size).floor() as u64;
-
-    //     xyz.insert((xx, yy), h);
-
-    //     if xmax < xx {
-    //         xmax = xx;
-    //     }
-    //     if ymax < yy {
-    //         ymax = yy;
-    //     }
-    // })
-    // .expect("error reading xyz file");
 
     let mut steepness = vec![vec![f64::NAN; (ymax + 1) as usize]; (xmax + 1) as usize];
     for i in 1..xmax {

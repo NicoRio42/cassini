@@ -21,7 +21,7 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
     let medium_vegetation_path = output_dir_path.join("medium-vegetation.tif");
     let high_vegetation_path = output_dir_path.join("high-vegetation.tif");
     let pipeline_path = output_dir_path.join("pipeline.json");
-    create_dir_all(&output_dir_path.join("vegetation")).expect("Could not create out dir");
+    create_dir_all(&output_dir_path).expect("Could not create out dir");
 
     let gdal_common_options = format!(
         r#""binmode": true,
