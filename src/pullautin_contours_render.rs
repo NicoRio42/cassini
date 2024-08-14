@@ -1,9 +1,9 @@
+use image::RgbaImage;
+use imageproc::drawing::draw_line_segment_mut;
 use rustc_hash::FxHashMap as HashMap;
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
-
-use image::RgbaImage;
-use imageproc::drawing::draw_line_segment_mut;
+use tiff::decoder::{Decoder, DecodingResult};
 
 use crate::config::Config;
 use crate::constants::{FORM_CONTOUR_DASH_INTERVAL_LENGTH, FORM_CONTOUR_DASH_LENGTH};
@@ -23,59 +23,89 @@ pub fn pullautin_render_contours(
     let nodepressions = false;
     let formline = 2.0;
     let mut img = RgbaImage::from_pixel(image_width, image_height, TRANSPARENT);
-    let mut formlinesteepness: f64 = 0.37;
+    let formlinesteepness: f64 = 0.37;
     let label_depressions = false;
 
-    let mut size: f64 = 0.0;
-    let mut xstart: f64 = 0.0;
-    let mut ystart: f64 = 0.0;
+    let size: f64 = 2.0;
+    let xstart: f64 = (tile.min_x - buffer) as f64;
+    let ystart: f64 = (tile.min_y - buffer) as f64;
     let mut steepness: HashMap<(usize, usize), f64> = HashMap::default();
+    let x0 = xstart as f64;
+    let y0 = ystart as f64;
+
     if formline > 0.0 {
-        let path = format!("{}/xyz2.xyz", tmpfolder);
-        let xyz_file_in = Path::new(&path);
+        let dem_path = tile.dir_path.join("dem-low-resolution-with-buffer.tif");
+        let dem_tif_file = File::open(dem_path).expect("Cannot find low resolution dem tif image!");
 
-        if let Ok(lines) = read_lines(xyz_file_in) {
-            for (i, line) in lines.enumerate() {
-                let ip = line.unwrap_or(String::new());
-                let mut parts = ip.split(' ');
-                let x: f64 = parts.next().unwrap().parse::<f64>().unwrap();
-                let y: f64 = parts.next().unwrap().parse::<f64>().unwrap();
+        let mut dem_img_decoder = Decoder::new(dem_tif_file).expect("Cannot create decoder");
+        dem_img_decoder = dem_img_decoder.with_limits(tiff::decoder::Limits::unlimited());
 
-                if i == 0 {
-                    xstart = x;
-                    ystart = y;
-                } else if i == 1 {
-                    size = y - ystart;
-                } else {
-                    break;
-                }
-            }
-        }
+        let (dem_width, dem_height) = dem_img_decoder.dimensions().unwrap();
+        let DecodingResult::F64(image_data) = dem_img_decoder.read_image().unwrap() else {
+            panic!("Cannot read band data")
+        };
 
-        let mut sxmax: usize = usize::MIN;
-        let mut symax: usize = usize::MIN;
+        // let path = format!("{}/xyz2.xyz", tmpfolder);
+        // let xyz_file_in = Path::new(&path);
 
+        // if let Ok(lines) = read_lines(xyz_file_in) {
+        //     for (i, line) in lines.enumerate() {
+        //         let ip = line.unwrap_or(String::new());
+        //         let mut parts = ip.split(' ');
+        //         let x: f64 = parts.next().unwrap().parse::<f64>().unwrap();
+        //         let y: f64 = parts.next().unwrap().parse::<f64>().unwrap();
+
+        //         if i == 0 {
+        //             xstart = x;
+        //             ystart = y;
+        //         } else if i == 1 {
+        //             size = y - ystart;
+        //         } else {
+        //             break;
+        //         }
+        //     }
+        // }
+
+        let sxmax: usize = (tile.max_x + buffer - xstart as i64) as usize;
+        let symax: usize = (tile.max_y + buffer - ystart as i64) as usize;
         let mut xyz: HashMap<(usize, usize), f64> = HashMap::default();
 
-        read_lines_no_alloc(xyz_file_in, |line| {
-            let mut parts = line.split(' ');
-            let x: f64 = parts.next().unwrap().parse::<f64>().unwrap();
-            let y: f64 = parts.next().unwrap().parse::<f64>().unwrap();
-            let h: f64 = parts.next().unwrap().parse::<f64>().unwrap();
+        for index in 0..image_data.len() {
+            let x = (index % usize::try_from(dem_width).unwrap()) as f64;
+            let y = (usize::try_from(dem_height).unwrap()
+                - index / usize::try_from(dem_height).unwrap()) as f64;
+            let h = image_data[index] as f64;
 
-            let xx = ((x - xstart) / size).floor() as usize;
-            let yy = ((y - ystart) / size).floor() as usize;
+            let xx = x.floor() as usize;
+            let yy = y.floor() as usize;
 
             xyz.insert((xx, yy), h);
+        }
 
-            if sxmax < xx {
-                sxmax = xx;
-            }
-            if symax < yy {
-                symax = yy;
-            }
-        })
-        .expect("Unable to read file");
+        // let mut sxmax: usize = usize::MIN;
+        // let mut symax: usize = usize::MIN;
+
+        // let mut xyz: HashMap<(usize, usize), f64> = HashMap::default();
+
+        // read_lines_no_alloc(xyz_file_in, |line| {
+        //     let mut parts = line.split(' ');
+        //     let x: f64 = parts.next().unwrap().parse::<f64>().unwrap();
+        //     let y: f64 = parts.next().unwrap().parse::<f64>().unwrap();
+        //     let h: f64 = parts.next().unwrap().parse::<f64>().unwrap();
+
+        //     let xx = ((x - xstart) / size).floor() as usize;
+        //     let yy = ((y - ystart) / size).floor() as usize;
+
+        //     xyz.insert((xx, yy), h);
+
+        //     if sxmax < xx {
+        //         sxmax = xx;
+        //     }
+        //     if symax < yy {
+        //         symax = yy;
+        //     }
+        // })
+        // .expect("Unable to read file");
 
         for i in 6..(sxmax - 7) {
             for j in 6..(symax - 7) {
@@ -616,4 +646,7 @@ pub fn pullautin_render_contours(
     //         }
     //     }
     // }
+
+    img.save(tile.dir_path.join("contours-kp.png"))
+        .expect("could not save output png");
 }

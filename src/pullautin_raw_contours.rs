@@ -57,7 +57,7 @@ pub fn xyz2contours(tile: &Tile, buffer: i64) -> Result<(), Box<dyn Error>> {
 
     for index in 0..image_data.len() {
         let x = index % usize::try_from(dem_width).unwrap();
-        let y = index / usize::try_from(dem_height).unwrap();
+        let y = usize::try_from(dem_height).unwrap() - index / usize::try_from(dem_height).unwrap();
         avg_alt[x][y] = image_data[index] as f64;
     }
 

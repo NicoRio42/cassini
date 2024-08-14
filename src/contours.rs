@@ -2,7 +2,7 @@ use crate::{
     canvas::Canvas,
     config::Config,
     constants::{
-        BROWN, CONTOUR_THICKNESS_MILLIMETTER, FORM_CONTOUR_DASH_INTERVAL_LENGTH,
+        BLUE, BROWN, CONTOUR_THICKNESS_MILLIMETTER, FORM_CONTOUR_DASH_INTERVAL_LENGTH,
         FORM_CONTOUR_DASH_LENGTH, FORM_CONTOUR_THICKNESS_MILLIMETTER, INCH,
         MASTER_CONTOUR_THICKNESS_MILLIMETTER,
     },
@@ -53,7 +53,7 @@ pub fn render_contours_to_png(tile: &Tile, image_width: u32, image_height: u32, 
         }
 
         contours_layer_img.set_stroke_cap_round();
-        contours_layer_img.set_color(BROWN);
+        contours_layer_img.set_color(BLUE);
 
         if is_master_contour {
             contours_layer_img.set_line_width(

@@ -63,7 +63,8 @@ pub fn smoothjoin(tile: &Tile, buffer: i64) -> Result<(), Box<dyn Error>> {
 
     for index in 0..image_data.len() {
         let x = (index % usize::try_from(dem_width).unwrap()) as f64;
-        let y = (index / usize::try_from(dem_height).unwrap()) as f64;
+        let y = (usize::try_from(dem_height).unwrap()
+            - index / usize::try_from(dem_height).unwrap()) as f64;
         let h = image_data[index] as f64;
 
         let xx = x.floor() as u64;
@@ -71,8 +72,6 @@ pub fn smoothjoin(tile: &Tile, buffer: i64) -> Result<(), Box<dyn Error>> {
 
         xyz.insert((xx, yy), h);
     }
-
-    println!("{} {}", xmax, ymax);
 
     // read_lines_no_alloc(xyz_file_in, |line| {
     //     let mut parts = line.split(' ');
