@@ -7,7 +7,7 @@ use rustc_hash::FxHashMap as HashMap;
 
 use crate::tile::Tile;
 
-pub fn smoothjoin(tile: &Tile, buffer: i64) -> Result<(), Box<dyn Error>> {
+pub fn smoothjoin(tile: &Tile, buffer: i64, avg_alt: Vec<Vec<f64>>) -> Result<(), Box<dyn Error>> {
     println!("Smooth curves...");
     let scalefactor: f64 = 1.0;
     let inidotknolls: f64 = 0.8;
@@ -23,45 +23,23 @@ pub fn smoothjoin(tile: &Tile, buffer: i64) -> Result<(), Box<dyn Error>> {
     }
     let interval = halfinterval;
 
-    let dem_path = tile.dir_path.join("dem-low-resolution-with-buffer.tif");
-    let dem_tif_file = File::open(dem_path).expect("Cannot find low resolution dem tif image!");
-
-    let mut dem_img_decoder = Decoder::new(dem_tif_file).expect("Cannot create decoder");
-    dem_img_decoder = dem_img_decoder.with_limits(tiff::decoder::Limits::unlimited());
-
-    let (dem_width, dem_height) = dem_img_decoder.dimensions().unwrap();
-    let DecodingResult::F64(image_data) = dem_img_decoder.read_image().unwrap() else {
-        panic!("Cannot read band data")
-    };
-
     let size: f64 = 2.0;
     let xstart: f64 = (tile.min_x - buffer) as f64;
     let ystart: f64 = (tile.min_y - buffer) as f64;
 
-    let xmax: u64 = (tile.max_x + buffer - xstart as i64) as u64;
-    let ymax: u64 = (tile.max_y + buffer - ystart as i64) as u64;
-    let mut xyz: HashMap<(u64, u64), f64> = HashMap::default();
-
-    for index in 0..image_data.len() {
-        let x = (index % usize::try_from(dem_width).unwrap()) as f64;
-        let y = (usize::try_from(dem_height).unwrap()
-            - index / usize::try_from(dem_height).unwrap()) as f64;
-        let h = image_data[index] as f64;
-
-        let xx = x.floor() as u64;
-        let yy = y.floor() as u64;
-
-        xyz.insert((xx, yy), h);
-    }
+    let xmax: u64 = (tile.max_x + buffer - xstart as i64) as u64 / 2;
+    let ymax: u64 = (tile.max_y + buffer - ystart as i64) as u64 / 2;
 
     let mut steepness = vec![vec![f64::NAN; (ymax + 1) as usize]; (xmax + 1) as usize];
+
     for i in 1..xmax {
         for j in 1..ymax {
             let mut low: f64 = f64::MAX;
             let mut high: f64 = f64::MIN;
             for ii in i - 1..i + 2 {
                 for jj in j - 1..j + 2 {
-                    let tmp = *xyz.get(&(ii, jj)).unwrap_or(&0.0);
+                    let tmp = avg_alt[ii as usize][jj as usize];
+
                     if tmp < low {
                         low = tmp;
                     }
@@ -70,6 +48,7 @@ pub fn smoothjoin(tile: &Tile, buffer: i64) -> Result<(), Box<dyn Error>> {
                     }
                 }
             }
+
             steepness[i as usize][j as usize] = high - low;
         }
     }
@@ -267,8 +246,8 @@ pub fn smoothjoin(tile: &Tile, buffer: i64) -> Result<(), Box<dyn Error>> {
                     if (xm - xstart) / size == ((xm - xstart) / size).floor() {
                         let xx = ((xm - xstart) / size).floor() as u64;
                         let yy = ((ym - ystart) / size).floor() as u64;
-                        let h1 = *xyz.get(&(xx, yy)).unwrap_or(&0.0);
-                        let h2 = *xyz.get(&(xx, yy + 1)).unwrap_or(&0.0);
+                        let h1 = avg_alt[xx as usize][yy as usize];
+                        let h2 = avg_alt[xx as usize][(yy + 1) as usize];
                         let h3 = h1 * (yy as f64 + 1.0 - (ym - ystart) / size)
                             + h2 * ((ym - ystart) / size - yy as f64);
                         h = (h3 / interval + 0.5).floor() * interval;
@@ -278,8 +257,8 @@ pub fn smoothjoin(tile: &Tile, buffer: i64) -> Result<(), Box<dyn Error>> {
                     {
                         let xx = ((xm - xstart) / size).floor() as u64;
                         let yy = ((ym - ystart) / size).floor() as u64;
-                        let h1 = *xyz.get(&(xx, yy)).unwrap_or(&0.0);
-                        let h2 = *xyz.get(&(xx + 1, yy)).unwrap_or(&0.0);
+                        let h1 = avg_alt[xx as usize][yy as usize];
+                        let h2 = avg_alt[(xx + 1) as usize][yy as usize];
                         let h3 = h1 * (xx as f64 + 1.0 - (xm - xstart) / size)
                             + h2 * ((xm - xstart) / size - xx as f64);
                         h = (h3 / interval + 0.5).floor() * interval;
@@ -319,7 +298,7 @@ pub fn smoothjoin(tile: &Tile, buffer: i64) -> Result<(), Box<dyn Error>> {
                 let foo_x = ((x_avg - xstart) / size).floor() as u64;
                 let foo_y = ((y_avg - ystart) / size).floor() as u64;
 
-                let h_center = *xyz.get(&(foo_x, foo_y)).unwrap_or(&0.0);
+                let h_center = avg_alt[foo_x as usize][foo_y as usize];
 
                 let mut hit = 0;
 

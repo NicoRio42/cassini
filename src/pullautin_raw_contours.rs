@@ -9,7 +9,7 @@ use tiff::decoder::{Decoder, DecodingResult};
 use crate::pullautin_helpers::read_lines_no_alloc;
 use crate::tile::Tile;
 
-pub fn xyz2contours(tile: &Tile, buffer: i64) -> Result<(), Box<dyn Error>> {
+pub fn xyz2contours(tile: &Tile, buffer: i64) -> Vec<Vec<f64>> {
     println!("Generating curves...");
 
     let dem_path = tile.dir_path.join("dem-low-resolution-with-buffer.tif");
@@ -39,8 +39,11 @@ pub fn xyz2contours(tile: &Tile, buffer: i64) -> Result<(), Box<dyn Error>> {
     let mut hmin: f64 = std::f64::MAX;
     let mut hmax: f64 = std::f64::MIN;
 
-    for z in &image_data {
-        let elevation = *z as f64;
+    for index in 0..image_data.len() {
+        let x = index % usize::try_from(dem_width).unwrap();
+        let y = usize::try_from(dem_height).unwrap() - index / usize::try_from(dem_height).unwrap();
+        let elevation = image_data[index] as f64;
+        avg_alt[x][y] = elevation;
 
         if elevation == -9999. {
             continue;
@@ -53,12 +56,6 @@ pub fn xyz2contours(tile: &Tile, buffer: i64) -> Result<(), Box<dyn Error>> {
         if elevation > hmax {
             hmax = elevation;
         }
-    }
-
-    for index in 0..image_data.len() {
-        let x = index % usize::try_from(dem_width).unwrap();
-        let y = usize::try_from(dem_height).unwrap() - index / usize::try_from(dem_height).unwrap();
-        avg_alt[x][y] = image_data[index] as f64;
     }
 
     for x in 0..w + 1 {
@@ -436,7 +433,8 @@ pub fn xyz2contours(tile: &Tile, buffer: i64) -> Result<(), Box<dyn Error>> {
     f.write_all("ENDSEC\r\n  0\r\nEOF\r\n".as_bytes())
         .expect("Cannot write dxf file");
     println!("Done");
-    Ok(())
+
+    return avg_alt;
 }
 
 fn check_obj_in(

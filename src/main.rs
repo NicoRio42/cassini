@@ -13,6 +13,7 @@ mod full_map;
 mod lidar;
 mod merge;
 mod png;
+mod pullautin_contours;
 mod pullautin_contours_render;
 mod pullautin_helpers;
 mod pullautin_raw_contours;
