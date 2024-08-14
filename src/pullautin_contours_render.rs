@@ -6,7 +6,7 @@ use std::io::{BufWriter, Write};
 use tiff::decoder::{Decoder, DecodingResult};
 
 use crate::config::Config;
-use crate::constants::{FORM_CONTOUR_DASH_INTERVAL_LENGTH, FORM_CONTOUR_DASH_LENGTH};
+use crate::constants::INCH;
 use crate::{
     constants::{BROWN, PURPLE, TRANSPARENT},
     tile::Tile,
@@ -22,9 +22,14 @@ pub fn pullautin_render_contours(
     let scalefactor = 1.0;
     let nodepressions = false;
     let formline = 2.0;
+    let formlineaddition: f64 = 17.;
+    let minimumgap: u32 = 30;
+    let dashlength: f64 = 60.;
+    let gaplength: f64 = 12.;
     let mut img = RgbaImage::from_pixel(image_width, image_height, TRANSPARENT);
     let formlinesteepness: f64 = 0.37;
     let label_depressions = false;
+    let buffer_in_pixels = buffer as f32 * (config.dpi_resolution / INCH) as f32;
 
     let size: f64 = 2.0;
     let xstart: f64 = (tile.min_x - buffer) as f64;
@@ -390,7 +395,7 @@ pub fn pullautin_render_contours(
                 let mut on = 0.0;
                 for i in 0..x.len() {
                     if help2[i] {
-                        on = config.form_lines.additional_tail_length
+                        on = formlineaddition
                     }
                     if on > 0.0 {
                         help2[i] = true;
@@ -409,7 +414,7 @@ pub fn pullautin_render_contours(
                 for i in 0..x.len() {
                     let ii = x.len() - i - 1;
                     if help2[ii] {
-                        on = config.form_lines.additional_tail_length
+                        on = formlineaddition
                     }
                     if on > 0.0 {
                         help2[ii] = true;
@@ -438,9 +443,7 @@ pub fn pullautin_render_contours(
                     let mut tester = 1;
                     for i in 1..x.len() {
                         if help2[i] {
-                            if tester < i
-                                && ((i - tester) as u32) < config.form_lines.min_gap_length as u32
-                            {
+                            if tester < i && ((i - tester) as u32) < minimumgap {
                                 for j in tester..(i + 1) {
                                     help2[j] = true;
                                 }
@@ -458,9 +461,7 @@ pub fn pullautin_render_contours(
                         while j > 1 && !help2[i] {
                             j -= 1
                         }
-                        if ((x.len() - j + i - 1) as u32) < config.form_lines.min_gap_length as u32
-                            && j > i
-                        {
+                        if ((x.len() - j + i - 1) as u32) < minimumgap && j > i {
                             for k in 0..(i + 1) {
                                 help2[k] = true
                             }
@@ -510,8 +511,7 @@ pub fn pullautin_render_contours(
                             linedist = 0.0
                         }
                         linedist += step;
-                        if linedist > FORM_CONTOUR_DASH_LENGTH as f64 && i > 10 && i < x.len() - 11
-                        {
+                        if linedist > dashlength && i > 10 && i < x.len() - 11 {
                             let mut sum = 0.0;
                             for k in (i - 4)..(i + 6) {
                                 sum +=
@@ -531,12 +531,12 @@ pub fn pullautin_render_contours(
                                     > sum
                             {
                                 linedist = 0.0;
-                                gap = FORM_CONTOUR_DASH_INTERVAL_LENGTH as f64;
+                                gap = gaplength;
                                 onegapdone = true;
                             }
                         }
                         if !onegapdone && (i < x.len() - 9) && i > 6 {
-                            gap = FORM_CONTOUR_DASH_INTERVAL_LENGTH as f64 * 0.82;
+                            gap = gaplength * 0.82;
                             onegapdone = true;
                             linedist = 0.0
                         }
@@ -547,17 +547,25 @@ pub fn pullautin_render_contours(
                                 while n < curvew + 0.5 {
                                     let mut m = -curvew - 0.5;
                                     while m < curvew + 0.5 {
-                                        draw_line_segment_mut(
-                                            &mut img,
-                                            (
-                                                ((-x[i - 1] * gap + (step + gap) * x[i]) / step + n)
+                                        let start = (
+                                            ((-x[i - 1] * gap + (step + gap) * x[i]) / step + n)
+                                                as f32
+                                                - buffer_in_pixels,
+                                            image_height as f32
+                                                + buffer_in_pixels
+                                                + ((-y[i - 1] * gap + (step + gap) * y[i]) / step
+                                                    + m)
                                                     as f32,
-                                                ((-y[i - 1] * gap + (step + gap) * y[i]) / step + m)
-                                                    as f32,
-                                            ),
-                                            ((x[i] + n) as f32, (y[i] + m) as f32),
-                                            color,
                                         );
+
+                                        let end = (
+                                            (x[i] + n) as f32 - buffer_in_pixels,
+                                            image_height as f32
+                                                + buffer_in_pixels
+                                                + (y[i] + m) as f32,
+                                        );
+
+                                        draw_line_segment_mut(&mut img, start, end, color);
                                         m += 1.0;
                                     }
                                     n += 1.0;
@@ -569,12 +577,19 @@ pub fn pullautin_render_contours(
                             while n < curvew + 0.5 {
                                 let mut m = -curvew - 0.5;
                                 while m < curvew + 0.5 {
-                                    draw_line_segment_mut(
-                                        &mut img,
-                                        ((x[i - 1] + n) as f32, (y[i - 1] + m) as f32),
-                                        ((x[i] + n) as f32, (y[i] + m) as f32),
-                                        color,
+                                    let start = (
+                                        (x[i - 1] + n) as f32 - buffer_in_pixels,
+                                        image_height as f32
+                                            + buffer_in_pixels
+                                            + (y[i - 1] + m) as f32,
                                     );
+
+                                    let end = (
+                                        (x[i] + n) as f32 - buffer_in_pixels,
+                                        image_height as f32 + buffer_in_pixels + (y[i] + m) as f32,
+                                    );
+
+                                    draw_line_segment_mut(&mut img, start, end, color);
                                     m += 1.0;
                                 }
                                 n += 1.0;
@@ -585,12 +600,17 @@ pub fn pullautin_render_contours(
                         while n < curvew {
                             let mut m = -curvew;
                             while m < curvew {
-                                draw_line_segment_mut(
-                                    &mut img,
-                                    ((x[i - 1] + n) as f32, (y[i - 1] + m) as f32),
-                                    ((x[i] + n) as f32, (y[i] + m) as f32),
-                                    color,
+                                let start = (
+                                    (x[i - 1] + n) as f32 - buffer_in_pixels,
+                                    image_height as f32 + buffer_in_pixels + (y[i - 1] + m) as f32,
                                 );
+
+                                let end = (
+                                    (x[i] + n) as f32 - buffer_in_pixels,
+                                    image_height as f32 + buffer_in_pixels + (y[i] + m) as f32,
+                                );
+
+                                draw_line_segment_mut(&mut img, start, end, color);
                                 m += 1.0;
                             }
                             n += 1.0;
