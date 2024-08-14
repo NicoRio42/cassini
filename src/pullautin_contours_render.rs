@@ -3,7 +3,6 @@ use imageproc::drawing::draw_line_segment_mut;
 use rustc_hash::FxHashMap as HashMap;
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
-use tiff::decoder::{Decoder, DecodingResult};
 
 use crate::config::Config;
 use crate::constants::INCH;
@@ -18,6 +17,7 @@ pub fn pullautin_render_contours(
     image_height: u32,
     buffer: i64,
     config: &Config,
+    avg_alt: Vec<Vec<f64>>,
 ) {
     let scalefactor = 1.0;
     let nodepressions = false;
@@ -38,55 +38,30 @@ pub fn pullautin_render_contours(
     let x0 = xstart as f64;
     let y0 = ystart as f64;
 
-    let dem_path = tile.dir_path.join("dem-low-resolution-with-buffer.tif");
-    let dem_tif_file = File::open(dem_path).expect("Cannot find low resolution dem tif image!");
+    let sxmax: usize = (tile.max_x + buffer - xstart as i64) as usize / 2;
+    let symax: usize = (tile.max_y + buffer - ystart as i64) as usize / 2;
 
-    let mut dem_img_decoder = Decoder::new(dem_tif_file).expect("Cannot create decoder");
-    dem_img_decoder = dem_img_decoder.with_limits(tiff::decoder::Limits::unlimited());
-
-    let (dem_width, dem_height) = dem_img_decoder.dimensions().unwrap();
-    let DecodingResult::F64(image_data) = dem_img_decoder.read_image().unwrap() else {
-        panic!("Cannot read band data")
-    };
-
-    let sxmax: usize = (tile.max_x + buffer - xstart as i64) as usize;
-    let symax: usize = (tile.max_y + buffer - ystart as i64) as usize;
-    let mut xyz = vec![vec![0.0f64; symax]; sxmax];
-
-    for index in 0..image_data.len() {
-        let x = (index % usize::try_from(dem_width).unwrap()) as f64;
-        let y = (usize::try_from(dem_height).unwrap()
-            - index / usize::try_from(dem_height).unwrap()) as f64;
-        let h = image_data[index] as f64;
-
-        let xx = x.floor() as usize;
-        let yy = y.floor() as usize;
-
-        xyz[xx][yy] = h;
-    }
-
-    // TODO optimise this loop
     for i in 6..(sxmax - 7) {
         for j in 6..(symax - 7) {
             let mut det: f64 = 0.0;
             let mut high: f64 = f64::MIN;
 
-            let xyz_i_m4_j = xyz[i - 4][j];
-            let xyz_i_j = xyz[i][j];
-            let xyz_i_4_j = xyz[i + 4][j];
-            let xyz_i_j_m4 = xyz[i][j - 4];
-            let xyz_i_j_4 = xyz[i][j + 4];
-            let xyz_i_m4_j_m4 = xyz[i - 4][j - 4];
-            let xyz_i_4_j_4 = xyz[i + 4][j + 4];
-            let xyz_i_m4_j_4 = xyz[i - 4][j + 4];
-            let xyz_i_4_j_m4 = xyz[i + 4][j - 4];
+            let xyz_i_m4_j = avg_alt[i - 4][j];
+            let xyz_i_j = avg_alt[i][j];
+            let xyz_i_4_j = avg_alt[i + 4][j];
+            let xyz_i_j_m4 = avg_alt[i][j - 4];
+            let xyz_i_j_4 = avg_alt[i][j + 4];
+            let xyz_i_m4_j_m4 = avg_alt[i - 4][j - 4];
+            let xyz_i_4_j_4 = avg_alt[i + 4][j + 4];
+            let xyz_i_m4_j_4 = avg_alt[i - 4][j + 4];
+            let xyz_i_4_j_m4 = avg_alt[i + 4][j - 4];
 
             let mut temp = (xyz_i_m4_j - xyz_i_j).abs() / 4.0;
             let temp2 = (xyz_i_j - xyz_i_4_j).abs() / 4.0;
             let det2 = (xyz_i_j - 0.5 * (xyz_i_m4_j + xyz_i_4_j)).abs()
                 - 0.05 * (xyz_i_m4_j - xyz_i_4_j).abs();
-            let mut porr = (((xyz[i - 6][j] - xyz[i + 6][j]) / 12.0).abs()
-                - ((xyz[i - 3][j] - xyz[i + 3][j]) / 6.0).abs())
+            let mut porr = (((avg_alt[i - 6][j] - avg_alt[i + 6][j]) / 12.0).abs()
+                - ((avg_alt[i - 3][j] - avg_alt[i + 3][j]) / 6.0).abs())
             .abs();
 
             if det2 > det {
@@ -103,8 +78,8 @@ pub fn pullautin_render_contours(
             let temp2 = (xyz_i_j - xyz_i_j_m4).abs() / 4.0;
             let det2 = (xyz_i_j - 0.5 * (xyz_i_j_m4 + xyz_i_j_4)).abs()
                 - 0.05 * (xyz_i_j_m4 - xyz_i_j_4).abs();
-            let porr2 = (((xyz[i][j - 6] - xyz[i][j + 6]) / 12.0).abs()
-                - ((xyz[i][j - 3] - xyz[i][j + 3]) / 6.0).abs())
+            let porr2 = (((avg_alt[i][j - 6] - avg_alt[i][j + 6]) / 12.0).abs()
+                - ((avg_alt[i][j - 3] - avg_alt[i][j + 3]) / 6.0).abs())
             .abs();
 
             if porr2 > porr {
@@ -124,8 +99,8 @@ pub fn pullautin_render_contours(
             let temp2 = (xyz_i_j - xyz_i_4_j_4).abs() / 5.6;
             let det2 = (xyz_i_j - 0.5 * (xyz_i_m4_j_m4 + xyz_i_4_j_4)).abs()
                 - 0.05 * (xyz_i_m4_j_m4 - xyz_i_4_j_4).abs();
-            let porr2 = (((xyz[i - 6][j - 6] - xyz[i + 6][j + 6]) / 17.0).abs()
-                - ((xyz[i - 3][j - 3] - xyz[i + 3][j + 3]) / 8.5).abs())
+            let porr2 = (((avg_alt[i - 6][j - 6] - avg_alt[i + 6][j + 6]) / 17.0).abs()
+                - ((avg_alt[i - 3][j - 3] - avg_alt[i + 3][j + 3]) / 8.5).abs())
             .abs();
 
             if porr2 > porr {
@@ -145,8 +120,8 @@ pub fn pullautin_render_contours(
             let temp2 = (xyz_i_j - xyz_i_4_j_m4).abs() / 5.6;
             let det2 = (xyz_i_j - 0.5 * (xyz_i_4_j_m4 + xyz_i_m4_j_4)).abs()
                 - 0.05 * (xyz_i_4_j_m4 - xyz_i_m4_j_4).abs();
-            let porr2 = (((xyz[i + 6][j - 6] - xyz[i - 6][j + 6]) / 17.0).abs()
-                - ((xyz[i + 3][j - 3] - xyz[i - 3][j + 3]) / 8.5).abs())
+            let porr2 = (((avg_alt[i + 6][j - 6] - avg_alt[i - 6][j + 6]) / 17.0).abs()
+                - ((avg_alt[i + 3][j - 3] - avg_alt[i - 3][j + 3]) / 8.5).abs())
             .abs();
 
             if porr2 > porr {

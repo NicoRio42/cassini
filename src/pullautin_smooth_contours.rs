@@ -1,13 +1,11 @@
-use std::error::Error;
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
-use tiff::decoder::{Decoder, DecodingResult};
 
 use rustc_hash::FxHashMap as HashMap;
 
 use crate::tile::Tile;
 
-pub fn smoothjoin(tile: &Tile, buffer: i64, avg_alt: Vec<Vec<f64>>) -> Result<(), Box<dyn Error>> {
+pub fn smoothjoin(tile: &Tile, buffer: i64, avg_alt: Vec<Vec<f64>>) -> Vec<Vec<f64>> {
     println!("Smooth curves...");
     let scalefactor: f64 = 1.0;
     let inidotknolls: f64 = 0.8;
@@ -594,5 +592,6 @@ pub fn smoothjoin(tile: &Tile, buffer: i64, avg_alt: Vec<Vec<f64>>) -> Result<()
     let mut fp = BufWriter::new(fp);
     fp.write_all(out.as_bytes()).expect("Unable to write file");
     println!("Done");
-    Ok(())
+
+    return avg_alt;
 }

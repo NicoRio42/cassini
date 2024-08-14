@@ -11,6 +11,14 @@ pub fn generate_contours_with_pullautin_algorithme(
     config: &Config,
 ) {
     let avg_alt = xyz2contours(&tile, buffer as i64);
-    let _ = smoothjoin(&tile, buffer as i64, avg_alt);
-    pullautin_render_contours(&tile, image_width, image_height, buffer as i64, &config);
+    let avg_alt = smoothjoin(&tile, buffer as i64, avg_alt);
+
+    pullautin_render_contours(
+        &tile,
+        image_width,
+        image_height,
+        buffer as i64,
+        &config,
+        avg_alt,
+    );
 }
