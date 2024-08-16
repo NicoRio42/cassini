@@ -41,7 +41,7 @@ impl Canvas {
     }
 
     #[inline]
-    pub fn _set_transparent_color(&mut self) {
+    pub fn set_transparent_color(&mut self) {
         self.paint.set_blend_mode(skia_safe::BlendMode::SrcIn);
         self.paint.set_color(Color::TRANSPARENT);
     }
