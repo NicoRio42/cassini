@@ -1,7 +1,6 @@
 // Trying to extract Karttapullautin's countours generation logic
 
 use rustc_hash::FxHashMap as HashMap;
-use std::error::Error;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use tiff::decoder::{Decoder, DecodingResult};
@@ -437,6 +436,7 @@ pub fn xyz2contours(tile: &Tile, buffer: i64) -> Vec<Vec<f64>> {
     return avg_alt;
 }
 
+// TODO: optimize this function
 fn check_obj_in(
     obj: &mut Vec<(i64, i64, u8)>,
     curves: &mut HashMap<(i64, i64, u8), (i64, i64)>,

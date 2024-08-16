@@ -493,6 +493,7 @@ pub fn pullautin_render_contours(
             }
         }
     }
+
     if formline == 2.0 && !nodepressions {
         formline_out.push_str("ENDSEC\r\n  0\r\nEOF\r\n");
         let output = tile.dir_path.join("formlines.dxf");
@@ -502,6 +503,7 @@ pub fn pullautin_render_contours(
             .expect("Unable to write file");
     }
 
+    // TODO: img.save takes 8 seconds, maybe mutualize with other images saving
     img.save(tile.dir_path.join("contours.png"))
         .expect("could not save output png");
 }
