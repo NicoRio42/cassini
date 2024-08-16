@@ -3,9 +3,10 @@ use std::io::{BufWriter, Write};
 
 use rustc_hash::FxHashMap as HashMap;
 
+use crate::constants::BUFFER;
 use crate::tile::Tile;
 
-pub fn smoothjoin(tile: &Tile, buffer: i64, avg_alt: Vec<Vec<f64>>) -> Vec<Vec<f64>> {
+pub fn smoothjoin(tile: &Tile, avg_alt: Vec<Vec<f64>>) -> Vec<Vec<f64>> {
     println!("Smooth curves...");
     let scalefactor: f64 = 1.0;
     let inidotknolls: f64 = 0.8;
@@ -22,11 +23,11 @@ pub fn smoothjoin(tile: &Tile, buffer: i64, avg_alt: Vec<Vec<f64>>) -> Vec<Vec<f
     let interval = halfinterval;
 
     let size: f64 = 2.0;
-    let xstart: f64 = (tile.min_x - buffer) as f64;
-    let ystart: f64 = (tile.min_y - buffer) as f64;
+    let xstart: f64 = (tile.min_x - BUFFER as i64) as f64;
+    let ystart: f64 = (tile.min_y - BUFFER as i64) as f64;
 
-    let xmax: u64 = (tile.max_x + buffer - xstart as i64) as u64 / 2;
-    let ymax: u64 = (tile.max_y + buffer - ystart as i64) as u64 / 2;
+    let xmax: u64 = (tile.max_x + BUFFER as i64 - xstart as i64) as u64 / 2;
+    let ymax: u64 = (tile.max_y + BUFFER as i64 - ystart as i64) as u64 / 2;
 
     let mut steepness = vec![vec![f64::NAN; (ymax + 1) as usize]; (xmax + 1) as usize];
 

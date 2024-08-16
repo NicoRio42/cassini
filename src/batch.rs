@@ -1,4 +1,5 @@
 use crate::{
+    download::download_osm_files_for_all_tiles_if_needed,
     lidar::generate_dem_and_vegetation_density_tiff_images_from_laz_file,
     merge::merge_maps,
     png::generate_png_from_dem_vegetation_density_tiff_images_and_vector_file,
@@ -53,6 +54,8 @@ pub fn batch(number_of_threads: usize, skip_lidar: bool) {
             handle.join().unwrap();
         }
     }
+
+    download_osm_files_for_all_tiles_if_needed(&tiles);
 
     let tiles_chunks: Vec<Vec<TileWithNeighbors>> = tiles_arc
         .chunks(chunk_size)

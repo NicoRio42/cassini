@@ -1,4 +1,4 @@
-pub fn polyline_to_bezier(
+pub fn _polyline_to_bezier(
     polyline: &[(f32, f32)],
 ) -> Vec<((f32, f32), (f32, f32), (f32, f32), (f32, f32))> {
     let mut bezier_points: Vec<((f32, f32), (f32, f32), (f32, f32), (f32, f32))> = Vec::new();
@@ -8,7 +8,7 @@ pub fn polyline_to_bezier(
         let p1 = polyline[i + 1];
         let p2 = polyline[i + 2];
 
-        let (c1, c2) = calculate_control_points(p0, p1, p2);
+        let (c1, c2) = _calculate_control_points(p0, p1, p2);
 
         bezier_points.push((p0, c1, c2, p2))
     }
@@ -16,7 +16,7 @@ pub fn polyline_to_bezier(
     bezier_points
 }
 
-fn calculate_control_points(
+fn _calculate_control_points(
     p0: (f32, f32),
     p1: (f32, f32),
     p2: (f32, f32),

@@ -42,6 +42,7 @@ fn main() {
         batch(number_of_threads, args.skip_lidar);
         let duration = start.elapsed();
         println!("Tiles generated in {:.1?}", duration);
+
         return;
     }
 

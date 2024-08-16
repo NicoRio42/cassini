@@ -1,21 +1,15 @@
 use image::RgbaImage;
 use imageproc::drawing::draw_filled_ellipse_mut;
-use std::{fs::File, path::PathBuf};
+use std::fs::File;
 use tiff::decoder::{Decoder, DecodingResult};
 
 use crate::{
     config::Config,
-    constants::{BLACK, CLIFF_THICKNESS_1, CLIFF_THICKNESS_2, INCH, TRANSPARENT},
+    constants::{BLACK, BUFFER, CLIFF_THICKNESS_1, CLIFF_THICKNESS_2, INCH, TRANSPARENT},
     tile::Tile,
 };
 
-pub fn render_cliffs(
-    tile: &Tile,
-    image_width: u32,
-    image_height: u32,
-    buffer: u64,
-    config: &Config,
-) {
+pub fn render_cliffs(tile: &Tile, image_width: u32, image_height: u32, config: &Config) {
     println!("Rendering cliffs");
 
     let dem_block_size_pixel = config.dem_block_size as f32 * config.dpi_resolution / INCH;
@@ -37,8 +31,8 @@ pub fn render_cliffs(
         let x = index % usize::try_from(slopes_width).unwrap();
         let y = index / usize::try_from(slopes_height).unwrap();
 
-        let x_pixel = ((x as i64 - buffer as i64) as f32 * dem_block_size_pixel) as i32;
-        let y_pixel = ((y as i64 - buffer as i64) as f32 * dem_block_size_pixel) as i32;
+        let x_pixel = ((x as i64 - BUFFER as i64) as f32 * dem_block_size_pixel) as i32;
+        let y_pixel = ((y as i64 - BUFFER as i64) as f32 * dem_block_size_pixel) as i32;
 
         if x_pixel < 0
             || x_pixel > image_width as i32

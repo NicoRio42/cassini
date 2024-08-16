@@ -3,7 +3,9 @@ use std::{
     process::{Command, ExitStatus, Stdio},
 };
 
-pub fn download_laz_files_if_needed(
+use crate::{constants::BUFFER, tile::TileWithNeighbors};
+
+pub fn _download_laz_files_if_needed(
     min_x: u64,
     min_y: u64,
     max_x: u64,
@@ -36,7 +38,18 @@ pub fn download_laz_files_if_needed(
     }
 }
 
-pub fn download_osm_file_if_needed(min_x: u64, min_y: u64, max_x: u64, max_y: u64) {
+pub fn download_osm_files_for_all_tiles_if_needed(tiles: &Vec<TileWithNeighbors>) {
+    for tile in tiles {
+        download_osm_file_if_needed(
+            tile.tile.min_x,
+            tile.tile.min_y,
+            tile.tile.max_x,
+            tile.tile.max_y,
+        );
+    }
+}
+
+pub fn download_osm_file_if_needed(min_x: i64, min_y: i64, max_x: i64, max_y: i64) {
     let osm_file_path = Path::new("in").join(format!("{:0>7}_{:0>7}.osm", min_x, max_y));
 
     if osm_file_path.exists() {
@@ -46,13 +59,15 @@ pub fn download_osm_file_if_needed(min_x: u64, min_y: u64, max_x: u64, max_y: u6
 
     println!("Downloading osm file");
 
-    let buffer = 300;
+    let (min_lon, min_lat) = convert_coords_from_lambert_93_to_gps(
+        (min_x - BUFFER as i64) as f64,
+        (min_y - BUFFER as i64) as f64,
+    );
 
-    let (min_lon, min_lat) =
-        convert_coords_from_lambert_93_to_gps((min_x - buffer) as f64, (min_y - buffer) as f64);
-
-    let (max_lon, max_lat) =
-        convert_coords_from_lambert_93_to_gps((max_x + buffer) as f64, (max_y + buffer) as f64);
+    let (max_lon, max_lat) = convert_coords_from_lambert_93_to_gps(
+        (max_x + BUFFER as i64) as f64,
+        (max_y + BUFFER as i64) as f64,
+    );
 
     let download_output = Command::new("wget")
         .args([

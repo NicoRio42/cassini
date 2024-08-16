@@ -5,7 +5,7 @@ use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 
 use crate::config::Config;
-use crate::constants::INCH;
+use crate::constants::{BUFFER, INCH};
 use crate::{
     constants::{BROWN, TRANSPARENT},
     tile::Tile,
@@ -15,7 +15,6 @@ pub fn pullautin_render_contours(
     tile: &Tile,
     image_width: u32,
     image_height: u32,
-    buffer: i64,
     config: &Config,
     avg_alt: Vec<Vec<f64>>,
 ) {
@@ -29,17 +28,17 @@ pub fn pullautin_render_contours(
     let mut img = RgbaImage::from_pixel(image_width, image_height, TRANSPARENT);
     let formlinesteepness: f64 = 0.37;
     let label_depressions = false;
-    let buffer_in_pixels = buffer as f32 * (config.dpi_resolution / INCH) as f32;
+    let buffer_in_pixels = BUFFER as f32 * (config.dpi_resolution / INCH) as f32;
 
     let size: f64 = 2.0;
-    let xstart: f64 = (tile.min_x - buffer) as f64;
-    let ystart: f64 = (tile.min_y - buffer) as f64;
+    let xstart: f64 = (tile.min_x - BUFFER as i64) as f64;
+    let ystart: f64 = (tile.min_y - BUFFER as i64) as f64;
     let mut steepness: HashMap<(usize, usize), f64> = HashMap::default();
     let x0 = xstart as f64;
     let y0 = ystart as f64;
 
-    let sxmax: usize = (tile.max_x + buffer - xstart as i64) as usize / 2;
-    let symax: usize = (tile.max_y + buffer - ystart as i64) as usize / 2;
+    let sxmax: usize = (tile.max_x + BUFFER as i64 - xstart as i64) as usize / 2;
+    let symax: usize = (tile.max_y + BUFFER as i64 - ystart as i64) as usize / 2;
 
     for i in 6..(sxmax - 7) {
         for j in 6..(symax - 7) {
@@ -216,6 +215,7 @@ pub fn pullautin_render_contours(
             let mut smallringtest = false;
             let mut help = vec![false; x.len()];
             let mut help2 = vec![false; x.len()];
+
             if curvew == 1.5 {
                 for i in 0..x.len() {
                     help[i] = false;

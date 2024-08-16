@@ -2,21 +2,24 @@ use crate::{
     canvas::Canvas,
     config::Config,
     constants::{
-        BLUE, FOOTPATH_DASH_INTERVAL_LENGTH, FOOTPATH_DASH_LENGTH, FOOTPATH_WIDTH, INCH,
-        INCROSSABLE_BODY_OF_WATER_OUTLINE_WIDTH,
+        BUILDING_OUTLINE_WIDTH, CROSSABLE_WATERCOURSE_WIDTH, FOOTPATH_DASH_INTERVAL_LENGTH,
+        FOOTPATH_DASH_LENGTH, FOOTPATH_WIDTH, INCH, INCROSSABLE_BODY_OF_WATER_OUTLINE_WIDTH,
+        VECTOR_BLACK, VECTOR_BLUE, VECTOR_BUILDING_GRAY,
     },
     tile::Tile,
 };
 use shapefile::{
     dbase::{FieldValue, Record},
-    read_as, Polygon, Polyline,
+    read_as,
+    record::{polygon::GenericPolygon, polyline::GenericPolyline},
+    Point, Polygon, Polyline,
 };
 use std::{
-    path::{Path, PathBuf},
+    path::Path,
     process::{Command, ExitStatus},
 };
 
-pub fn render_vector_shapes(tile: &Tile, image_width: u32, image_height: u32, config: &Config) {
+pub fn render_osm_vector_shapes(tile: &Tile, image_width: u32, image_height: u32, config: &Config) {
     println!("Transforming osm file to shapefiles");
 
     let scale_factor = config.dpi_resolution / INCH;
@@ -61,29 +64,44 @@ pub fn render_vector_shapes(tile: &Tile, image_width: u32, image_height: u32, co
             None => panic!("Field 'natural' is not within polygon-dataset"),
         };
 
-        if natural != "water" {
+        // 301 uncrossable body of water
+        if natural == "water" {
+            vectors_layer_img = draw_multipolygon(
+                polygon,
+                vectors_layer_img,
+                VECTOR_BLUE,
+                VECTOR_BLACK,
+                INCROSSABLE_BODY_OF_WATER_OUTLINE_WIDTH * config.dpi_resolution * 10.0 / INCH,
+                tile.min_x,
+                tile.min_y,
+                image_height,
+                scale_factor,
+            );
+
             continue;
         }
 
-        for ring in polygon.rings().iter() {
-            let mut points: Vec<(f32, f32)> = vec![];
+        let building = match record.get("building") {
+            Some(FieldValue::Character(Some(x))) => x,
+            Some(_) => "",
+            None => panic!("Field 'natural' is not within polygon-dataset"),
+        };
 
-            for point in ring.points().iter() {
-                points.push((
-                    (point.x as i64 - tile.min_x) as f32 * scale_factor,
-                    (image_height as f32 - ((point.y as i64 - tile.min_y) as f32 * scale_factor)),
-                ))
-            }
-
-            vectors_layer_img.set_color(BLUE);
-            vectors_layer_img.draw_filled_polygon(&points);
-
-            vectors_layer_img.set_line_width(
-                INCROSSABLE_BODY_OF_WATER_OUTLINE_WIDTH * config.dpi_resolution * 10.0 / INCH,
+        // 521 building
+        if building == "yes" {
+            vectors_layer_img = draw_multipolygon(
+                polygon,
+                vectors_layer_img,
+                VECTOR_BUILDING_GRAY,
+                VECTOR_BLACK,
+                BUILDING_OUTLINE_WIDTH * config.dpi_resolution * 10.0 / INCH,
+                tile.min_x,
+                tile.min_y,
+                image_height,
+                scale_factor,
             );
 
-            vectors_layer_img.set_color((0, 0, 0));
-            vectors_layer_img.draw_polyline(&points);
+            continue;
         }
     }
 
@@ -97,33 +115,144 @@ pub fn render_vector_shapes(tile: &Tile, image_width: u32, image_height: u32, co
             None => panic!("Field 'highway' is not within polygon-dataset"),
         };
 
-        if highway != "path" {
+        // 505 footpath
+        if highway == "path" {
+            vectors_layer_img = draw_dashed_line(
+                line,
+                vectors_layer_img,
+                VECTOR_BLACK,
+                FOOTPATH_WIDTH * config.dpi_resolution * 10.0 / INCH,
+                FOOTPATH_DASH_LENGTH * config.dpi_resolution * 10.0 / INCH,
+                FOOTPATH_DASH_INTERVAL_LENGTH * config.dpi_resolution * 10.0 / INCH,
+                tile.min_x,
+                tile.min_y,
+                image_height,
+                scale_factor,
+            );
+
             continue;
         }
 
-        for part in line.parts() {
-            let mut points: Vec<(f32, f32)> = vec![];
+        let waterway = match record.get("waterway") {
+            Some(FieldValue::Character(Some(x))) => x,
+            Some(_) => "",
+            None => panic!("Field 'waterway' is not within polygon-dataset"),
+        };
 
-            for point in part {
-                points.push((
-                    (point.x as i64 - tile.min_x) as f32 * scale_factor,
-                    (image_height as f32 - ((point.y as i64 - tile.min_y) as f32 * scale_factor)),
-                ))
-            }
-
-            vectors_layer_img.set_color((0, 0, 0));
-
-            vectors_layer_img.set_line_width(FOOTPATH_WIDTH * config.dpi_resolution * 10.0 / INCH);
-
-            vectors_layer_img.set_dash(
-                FOOTPATH_DASH_LENGTH * config.dpi_resolution * 10.0 / INCH,
-                FOOTPATH_DASH_INTERVAL_LENGTH * config.dpi_resolution * 10.0 / INCH,
+        // 304 crossable watercourse
+        if waterway == "stream" {
+            vectors_layer_img = draw_line(
+                line,
+                vectors_layer_img,
+                VECTOR_BLUE,
+                CROSSABLE_WATERCOURSE_WIDTH * config.dpi_resolution * 10.0 / INCH,
+                tile.min_x,
+                tile.min_y,
+                image_height,
+                scale_factor,
             );
 
-            vectors_layer_img.draw_polyline(&points);
+            continue;
         }
     }
 
     let vectors_output_path = tile.dir_path.join("vectors.png");
     vectors_layer_img.save_as(&vectors_output_path.to_str().unwrap());
+}
+
+fn draw_multipolygon(
+    polygon: GenericPolygon<Point>,
+    mut img: Canvas,
+    fill_color: (u8, u8, u8),
+    stroke_color: (u8, u8, u8),
+    stroke_width: f32,
+    min_x: i64,
+    min_y: i64,
+    image_height: u32,
+    scale_factor: f32,
+) -> Canvas {
+    for ring in polygon.rings().iter() {
+        let mut points: Vec<(f32, f32)> = vec![];
+
+        for point in ring.points().iter() {
+            points.push((
+                (point.x as i64 - min_x) as f32 * scale_factor,
+                (image_height as f32 - ((point.y as i64 - min_y) as f32 * scale_factor)),
+            ))
+        }
+
+        img.set_color(fill_color);
+        img.draw_filled_polygon(&points);
+        img.set_line_width(stroke_width);
+        img.set_color(stroke_color);
+        img.draw_polyline(&points);
+    }
+
+    return img;
+}
+
+fn draw_line(
+    line: GenericPolyline<Point>,
+    mut img: Canvas,
+    stroke_color: (u8, u8, u8),
+    stroke_width: f32,
+    min_x: i64,
+    min_y: i64,
+    image_height: u32,
+    scale_factor: f32,
+) -> Canvas {
+    for part in line.parts() {
+        let mut points: Vec<(f32, f32)> = vec![];
+
+        for point in part {
+            points.push((
+                (point.x as i64 - min_x) as f32 * scale_factor,
+                (image_height as f32 - ((point.y as i64 - min_y) as f32 * scale_factor)),
+            ))
+        }
+
+        img.set_color(stroke_color);
+        img.set_line_width(stroke_width);
+
+        // img.set_dash(
+        //     FOOTPATH_DASH_LENGTH * config.dpi_resolution * 10.0 / INCH,
+        //     FOOTPATH_DASH_INTERVAL_LENGTH * config.dpi_resolution * 10.0 / INCH,
+        // );
+
+        img.draw_polyline(&points);
+    }
+
+    return img;
+}
+
+fn draw_dashed_line(
+    line: GenericPolyline<Point>,
+    mut img: Canvas,
+    stroke_color: (u8, u8, u8),
+    stroke_width: f32,
+    interval_on: f32,
+    interval_off: f32,
+    min_x: i64,
+    min_y: i64,
+    image_height: u32,
+    scale_factor: f32,
+) -> Canvas {
+    for part in line.parts() {
+        let mut points: Vec<(f32, f32)> = vec![];
+
+        for point in part {
+            points.push((
+                (point.x as i64 - min_x) as f32 * scale_factor,
+                (image_height as f32 - ((point.y as i64 - min_y) as f32 * scale_factor)),
+            ))
+        }
+
+        img.set_color(stroke_color);
+        img.set_line_width(stroke_width);
+        img.set_dash(interval_on, interval_off);
+        img.draw_polyline(&points);
+        img.unset_dash();
+    }
+
+    return img;
 }

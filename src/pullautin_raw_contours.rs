@@ -5,10 +5,11 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use tiff::decoder::{Decoder, DecodingResult};
 
+use crate::constants::BUFFER;
 use crate::pullautin_helpers::read_lines_no_alloc;
 use crate::tile::Tile;
 
-pub fn xyz2contours(tile: &Tile, buffer: i64) -> Vec<Vec<f64>> {
+pub fn xyz2contours(tile: &Tile) -> Vec<Vec<f64>> {
     println!("Generating curves...");
 
     let dem_path = tile.dir_path.join("dem-low-resolution-with-buffer.tif");
@@ -21,11 +22,11 @@ pub fn xyz2contours(tile: &Tile, buffer: i64) -> Vec<Vec<f64>> {
 
     let cinterval = 2.5;
 
-    let mut xmin = (tile.min_x - buffer) as f64;
-    let xmax = (tile.max_x + buffer) as f64;
+    let mut xmin = (tile.min_x - BUFFER as i64) as f64;
+    let xmax = (tile.max_x + BUFFER as i64) as f64;
 
-    let mut ymin = (tile.min_y - buffer) as f64;
-    let ymax = (tile.max_y + buffer) as f64;
+    let mut ymin = (tile.min_y - BUFFER as i64) as f64;
+    let ymax = (tile.max_y + BUFFER as i64) as f64;
 
     let w: usize = dem_width as usize;
     let h: usize = dem_height as usize;

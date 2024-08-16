@@ -1,7 +1,7 @@
 use crate::{
     buffer::create_tif_with_buffer,
     config::Config,
-    constants::{GREEN_1, GREEN_2, GREEN_3, INCH, WHITE, YELLOW},
+    constants::{BUFFER, GREEN_1, GREEN_2, GREEN_3, INCH, WHITE, YELLOW},
     tile::{NeighborTiles, Tile},
 };
 use image::{Rgba, RgbaImage};
@@ -14,7 +14,6 @@ pub fn render_vegetation(
     neighbor_tiles: &NeighborTiles,
     image_width: u32,
     image_height: u32,
-    buffer: usize,
     config: &Config,
 ) {
     println!("Rendering vegetation");
@@ -24,8 +23,8 @@ pub fn render_vegetation(
 
     let casted_vegetation_block_size_pixel = vegetation_block_size_pixel.ceil() as u32;
 
-    create_tif_with_buffer(tile, neighbor_tiles, buffer as i64, "high-vegetation");
-    create_tif_with_buffer(tile, neighbor_tiles, buffer as i64, "medium-vegetation");
+    create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "high-vegetation");
+    create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "medium-vegetation");
 
     let high_vegetation =
         get_image_data_from_tif(&tile.dir_path.join("high-vegetation-with-buffer.tif"));
@@ -34,10 +33,10 @@ pub fn render_vegetation(
 
     let mut vegetation_layer_img = RgbaImage::from_pixel(image_width, image_height, WHITE);
 
-    for x_index in buffer..((tile.max_x + buffer as i64 - tile.min_x) as usize) {
-        for y_index in buffer..((tile.max_y + buffer as i64 - tile.min_y) as usize) {
-            let x_pixel = ((x_index - buffer) as f32 * vegetation_block_size_pixel) as i32;
-            let y_pixel = ((y_index - buffer) as f32 * vegetation_block_size_pixel) as i32;
+    for x_index in BUFFER..((tile.max_x + BUFFER as i64 - tile.min_x) as usize) {
+        for y_index in BUFFER..((tile.max_y + BUFFER as i64 - tile.min_y) as usize) {
+            let x_pixel = ((x_index - BUFFER) as f32 * vegetation_block_size_pixel) as i32;
+            let y_pixel = ((y_index - BUFFER) as f32 * vegetation_block_size_pixel) as i32;
 
             let high_vegetation_density =
                 get_average_pixel_value(&high_vegetation, x_index, y_index, 3);

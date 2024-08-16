@@ -1,18 +1,15 @@
 use crate::{
     buffer::create_tif_with_buffer,
+    constants::BUFFER,
     tile::{NeighborTiles, Tile},
 };
 use std::process::{Command, ExitStatus};
 
-pub fn create_dem_with_buffer_contours_shapefiles_and_slopes_tiff(
-    tile: &Tile,
-    neighbor_tiles: &NeighborTiles,
-    buffer: i64,
-) {
+pub fn create_dem_with_buffer_and_slopes_tiff(tile: &Tile, neighbor_tiles: &NeighborTiles) {
     println!("Generating dem with buffer.");
 
     let dem_with_buffer_path = tile.dir_path.join("dem-with-buffer.tif");
-    create_tif_with_buffer(tile, neighbor_tiles, buffer, "dem");
+    create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "dem");
 
     // Filling holes
     let gdal_fillnodata_output = Command::new("gdal_fillnodata")
@@ -35,7 +32,8 @@ pub fn create_dem_with_buffer_contours_shapefiles_and_slopes_tiff(
 
     let dem_low_resolution_with_buffer_path =
         tile.dir_path.join("dem-low-resolution-with-buffer.tif");
-    create_tif_with_buffer(tile, neighbor_tiles, buffer, "dem-low-resolution");
+
+    create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "dem-low-resolution");
 
     // Filling holes
     let gdal_fillnodata_output = Command::new("gdal_fillnodata")
