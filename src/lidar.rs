@@ -9,10 +9,10 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
 ) {
     let mut file = File::open(&laz_path).unwrap();
     let header = Header::read_from(&mut file).unwrap();
-    let min_x = header.min_x;
-    let min_y = header.min_y;
-    let max_x = header.max_x;
-    let max_y = header.max_y;
+    let min_x = header.min_x.round() as i64;
+    let min_y = header.min_y.round() as i64;
+    let max_x = header.max_x.round() as i64;
+    let max_y = header.max_y.round() as i64;
 
     println!("Generating PDAL pipeline json file for tile");
 

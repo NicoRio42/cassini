@@ -4,7 +4,8 @@ use crate::{
     constants::{
         BUILDING_OUTLINE_WIDTH, CROSSABLE_WATERCOURSE_WIDTH, FOOTPATH_DASH_INTERVAL_LENGTH,
         FOOTPATH_DASH_LENGTH, FOOTPATH_WIDTH, INCH, INCROSSABLE_BODY_OF_WATER_OUTLINE_WIDTH,
-        MARSH_LINE_SPACING, MARSH_LINE_WIDTH, VECTOR_BLACK, VECTOR_BLUE, VECTOR_BUILDING_GRAY,
+        MARSH_LINE_SPACING, MARSH_LINE_WIDTH, ROAD_WIDTH, VECTOR_BLACK, VECTOR_BLUE,
+        VECTOR_BUILDING_GRAY,
     },
     tile::Tile,
 };
@@ -128,6 +129,12 @@ pub fn render_osm_vector_shapes(tile: &Tile, image_width: u32, image_height: u32
                 FOOTPATH_DASH_INTERVAL_LENGTH,
             );
 
+            continue;
+        }
+
+        // 503 road
+        if highway == "track" {
+            map_renderer = map_renderer.draw_line(line, VECTOR_BLACK, ROAD_WIDTH);
             continue;
         }
 

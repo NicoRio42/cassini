@@ -109,10 +109,10 @@ pub fn get_tiles_with_neighbors() -> Vec<TileWithNeighbors> {
 
                 tiles_map.insert(
                     (
-                        header.min_x as i64,
-                        header.min_y as i64,
-                        header.max_x as i64,
-                        header.max_y as i64,
+                        header.min_x.round() as i64,
+                        header.min_y.round() as i64,
+                        header.max_x.round() as i64,
+                        header.max_y.round() as i64,
                     ),
                     path,
                 );

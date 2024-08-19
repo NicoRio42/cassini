@@ -337,7 +337,9 @@ pub fn smoothjoin(tile: &Tile, avg_alt: Vec<Vec<f64>>) -> Vec<Vec<f64>> {
                     for k in 0..(el_x_len - 1) {
                         let xx = ((el_x[l][k] - xstart) / size + 0.5).floor() as usize;
                         let yy = ((el_y[l][k] - ystart) / size + 0.5).floor() as usize;
+
                         let ss = steepness[xx][yy];
+
                         if minele > h - 0.5 * ss {
                             minele = h - 0.5 * ss;
                         }
@@ -391,6 +393,7 @@ pub fn smoothjoin(tile: &Tile, avg_alt: Vec<Vec<f64>>) -> Vec<Vec<f64>> {
                 // not skipped, lets save first coordinate pair for later form line knoll PIP analysis
                 write!(&mut knollhead_fp, "{} {}\r\n", el_x[l][0], el_y[l][0])
                     .expect("Unable to write to file");
+
                 // adaptive generalization
                 if el_x_len > 101 {
                     let mut newx: Vec<f64> = vec![];
@@ -404,6 +407,7 @@ pub fn smoothjoin(tile: &Tile, avg_alt: Vec<Vec<f64>>) -> Vec<Vec<f64>> {
                     for k in 1..(el_x_len - 1) {
                         let xx = ((el_x[l][k] - xstart) / size + 0.5).floor() as usize;
                         let yy = ((el_y[l][k] - ystart) / size + 0.5).floor() as usize;
+
                         let ss = steepness[xx][yy];
                         if ss.is_nan() || ss < 0.5 {
                             if ((xpre - el_x[l][k]).powi(2) + (ypre - el_y[l][k]).powi(2)).sqrt()
