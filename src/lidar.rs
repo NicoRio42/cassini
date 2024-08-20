@@ -65,12 +65,12 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
     {{
         "type": "filters.assign",
         "value": "Classification = 4",
-        "where": "HeightAboveGround > 0.3 && HeightAboveGround <= 4"
+        "where": "Classification != 2 && HeightAboveGround > 0.3 && HeightAboveGround <= 4"
     }},
     {{
         "type": "filters.assign",
         "value": "Classification = 5",
-        "where": "HeightAboveGround > 4 && HeightAboveGround <= 30"
+        "where": "Classification != 2 && HeightAboveGround > 4 && HeightAboveGround <= 30"
     }},
     {{
         "type": "writers.gdal",

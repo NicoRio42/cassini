@@ -15,8 +15,6 @@ mod merge;
 mod png;
 mod pullautin_contours;
 mod pullautin_contours_render;
-mod pullautin_helpers;
-mod pullautin_raw_contours;
 mod pullautin_smooth_contours;
 mod tile;
 mod utils;
