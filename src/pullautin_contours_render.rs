@@ -40,6 +40,7 @@ pub fn pullautin_render_contours(
     let sxmax: usize = (tile.max_x + BUFFER as i64 - xstart as i64) as usize / 2;
     let symax: usize = (tile.max_y + BUFFER as i64 - ystart as i64) as usize / 2;
 
+    // Building a more complex steepness matrix
     for i in 6..(sxmax - 7) {
         for j in 6..(symax - 7) {
             let mut det: f64 = 0.0;

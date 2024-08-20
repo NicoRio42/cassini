@@ -54,6 +54,34 @@ pub fn create_dem_with_buffer_and_slopes_tiff(tile: &Tile, neighbor_tiles: &Neig
         );
     }
 
+    // println!("Generating countours shapefiles.");
+
+    // let contours_raw_path = tile.dir_path.join("contours-raw.shp");
+
+    // let gdal_contours_output = Command::new("gdal_contour")
+    //     .args([
+    //         "-a",
+    //         "elev",
+    //         &dem_low_resolution_with_buffer_path.to_str().unwrap(),
+    //         &contours_raw_path.to_str().unwrap(),
+    //         "-i",
+    //         "2.5",
+    //     ])
+    //     .output()
+    //     .expect("failed to execute gdal_contour command");
+
+    // if ExitStatus::success(&gdal_contours_output.status) {
+    //     println!(
+    //         "{}",
+    //         String::from_utf8(gdal_contours_output.stdout).unwrap()
+    //     );
+    // } else {
+    //     println!(
+    //         "{}",
+    //         String::from_utf8(gdal_contours_output.stderr).unwrap()
+    //     );
+    // }
+
     println!("Generating slopes tif image.");
 
     let slopes_path = tile.dir_path.join("slopes.tif");

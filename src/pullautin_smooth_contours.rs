@@ -12,15 +12,10 @@ pub fn smoothjoin(tile: &Tile, avg_alt: Vec<Vec<f64>>) -> Vec<Vec<f64>> {
     let inidotknolls: f64 = 0.8;
     let smoothing: f64 = 0.7;
     let curviness: f64 = 1.1;
-    let mut indexcontours: f64 = 12.5;
-    let formline: f64 = 2.0;
+    let indexcontours: f64 = 25.;
     let contour_interval: f64 = 5.0;
     let depression_length: usize = 181;
     let halfinterval = contour_interval / 2.0 * scalefactor;
-    if formline > 0.0 {
-        indexcontours = 5.0 * contour_interval;
-    }
-    let interval = halfinterval;
 
     let size: f64 = 2.0;
     let xstart: f64 = (tile.min_x - BUFFER as i64) as f64;
@@ -31,6 +26,7 @@ pub fn smoothjoin(tile: &Tile, avg_alt: Vec<Vec<f64>>) -> Vec<Vec<f64>> {
 
     let mut steepness = vec![vec![f64::NAN; (ymax + 1) as usize]; (xmax + 1) as usize];
 
+    // Computing a basic steepness matrix
     for i in 1..xmax {
         for j in 1..ymax {
             let mut low: f64 = f64::MAX;
@@ -82,20 +78,26 @@ pub fn smoothjoin(tile: &Tile, avg_alt: Vec<Vec<f64>>) -> Vec<Vec<f64>> {
     let mut tails = Vec::<String>::new();
     let mut el_x = Vec::<Vec<f64>>::new();
     let mut el_y = Vec::<Vec<f64>>::new();
+    let mut elevations = Vec::<f64>::new();
     el_x.push(vec![]);
     el_y.push(vec![]);
     heads.push(String::from("-"));
     tails.push(String::from("-"));
 
+    // Parsing contours-raw.dxf and storing x and y coordinates in in two different vectors (of vectors) => el_x and el_y
+    // Also storing "heads" (first point of polyline) and "tails" (last point) for further merging
     for (j, rec) in data.iter().enumerate() {
         let mut x = Vec::<f64>::new();
         let mut y = Vec::<f64>::new();
         let mut xline = 0;
         let mut yline = 0;
+        let mut hline = 0;
+
         if j > 0 {
             let r = rec.split("VERTEX").collect::<Vec<&str>>();
             let apu = r[1];
             let val = apu.split('\n').collect::<Vec<&str>>();
+
             for (i, v) in val.iter().enumerate() {
                 let vt = v.trim();
                 if vt == "10" {
@@ -104,14 +106,24 @@ pub fn smoothjoin(tile: &Tile, avg_alt: Vec<Vec<f64>>) -> Vec<Vec<f64>> {
                 if vt == "20" {
                     yline = i + 1;
                 }
+                if vt == "30" {
+                    hline = i + 1;
+                }
             }
+
+            let mut elevation: f64 = 0.;
+
             for (i, v) in r.iter().enumerate() {
                 if i > 0 {
                     let val = v.trim_end().split('\n').collect::<Vec<&str>>();
                     x.push(val[xline].trim().parse::<f64>().unwrap());
                     y.push(val[yline].trim().parse::<f64>().unwrap());
+                    if i == 1 {
+                        elevation = val[hline].trim().parse::<f64>().unwrap();
+                    }
                 }
             }
+
             let x0 = x.first().unwrap();
             let xl = x.last().unwrap();
             let y0 = y.first().unwrap();
@@ -126,11 +138,14 @@ pub fn smoothjoin(tile: &Tile, avg_alt: Vec<Vec<f64>>) -> Vec<Vec<f64>> {
             let tail = format!("{}x{}", xl, yl);
             el_x.push(x);
             el_y.push(y);
+            elevations.push(elevation);
+
             if *heads1.get(&head).unwrap_or(&0) == 0 {
                 heads1.insert(head, j);
             } else {
                 heads2.insert(head, j);
             }
+
             if *heads1.get(&tail).unwrap_or(&0) == 0 {
                 heads1.insert(tail, j);
             } else {
@@ -139,6 +154,8 @@ pub fn smoothjoin(tile: &Tile, avg_alt: Vec<Vec<f64>>) -> Vec<Vec<f64>> {
         }
     }
 
+    // Merging polylines together
+    // This results in some vectors of el_x and el_y being empty
     for l in 0..data.len() {
         let mut to_join = 0;
         if !el_x[l].is_empty() {
@@ -165,6 +182,7 @@ pub fn smoothjoin(tile: &Tile, avg_alt: Vec<Vec<f64>>) -> Vec<Vec<f64>> {
                         }
                     }
                 }
+
                 if !end_loop {
                     if tails[l] == heads[to_join] {
                         let tmp = tails[l].to_string();
@@ -223,50 +241,63 @@ pub fn smoothjoin(tile: &Tile, avg_alt: Vec<Vec<f64>>) -> Vec<Vec<f64>> {
             }
         }
     }
+
+    println!("{} {} {}", el_x.len(), el_y.len(), elevations.len());
+
+    // Smoothing merged contours
     for l in 0..data.len() {
         let mut el_x_len = el_x[l].len();
+
+        // Skiping empty polylines that have been merged and flushed
         if el_x_len > 0 {
             let mut skip = false;
             let mut depression = 1;
+
             if el_x_len < 3 {
                 skip = true;
                 el_x[l].clear();
             }
-            let mut h = f64::NAN;
-            if !skip {
-                let mut mm: isize = (((el_x_len - 1) as f64) / 3.0).floor() as isize - 1;
-                if mm < 0 {
-                    mm = 0;
-                }
-                let mut m = mm as usize;
-                while m < el_x_len {
-                    let xm = el_x[l][m];
-                    let ym = el_y[l][m];
-                    if (xm - xstart) / size == ((xm - xstart) / size).floor() {
-                        let xx = ((xm - xstart) / size).floor() as u64;
-                        let yy = ((ym - ystart) / size).floor() as u64;
-                        let h1 = avg_alt[xx as usize][yy as usize];
-                        let h2 = avg_alt[xx as usize][(yy + 1) as usize];
-                        let h3 = h1 * (yy as f64 + 1.0 - (ym - ystart) / size)
-                            + h2 * ((ym - ystart) / size - yy as f64);
-                        h = (h3 / interval + 0.5).floor() * interval;
-                        m += el_x_len;
-                    } else if m < el_x_len - 1
-                        && (el_y[l][m] - ystart) / size == ((el_y[l][m] - ystart) / size).floor()
-                    {
-                        let xx = ((xm - xstart) / size).floor() as u64;
-                        let yy = ((ym - ystart) / size).floor() as u64;
-                        let h1 = avg_alt[xx as usize][yy as usize];
-                        let h2 = avg_alt[(xx + 1) as usize][yy as usize];
-                        let h3 = h1 * (xx as f64 + 1.0 - (xm - xstart) / size)
-                            + h2 * ((xm - xstart) / size - xx as f64);
-                        h = (h3 / interval + 0.5).floor() * interval;
-                        m += el_x_len;
-                    } else {
-                        m += 1;
-                    }
-                }
-            }
+
+            let height = elevations[l - 1];
+
+            // Finding back the elevation of the polyline, as the information was known during the previous step but lost
+            // if !skip {
+            //     let mut m = 0usize;
+
+            //     while m < el_x_len {
+            //         let xm = el_x[l][m];
+            //         let ym = el_y[l][m];
+
+            //         if (xm - xstart) / size == ((xm - xstart) / size).floor() {
+            //             let xx = ((xm - xstart) / size).floor() as u64;
+            //             let yy = ((ym - ystart) / size).floor() as u64;
+            //             let h1 = avg_alt[xx as usize][yy as usize];
+            //             let h2 = avg_alt[xx as usize][(yy + 1) as usize];
+
+            //             let h3 = h1 * (yy as f64 + 1.0 - (ym - ystart) / size)
+            //                 + h2 * ((ym - ystart) / size - yy as f64);
+
+            //             height = (h3 / interval + 0.5).floor() * interval;
+            //             m += el_x_len;
+            //         } else if m < el_x_len - 1
+            //             && (ym - ystart) / size == ((ym - ystart) / size).floor()
+            //         {
+            //             let xx = ((xm - xstart) / size).floor() as u64;
+            //             let yy = ((ym - ystart) / size).floor() as u64;
+            //             let h1 = avg_alt[xx as usize][yy as usize];
+            //             let h2 = avg_alt[(xx + 1) as usize][yy as usize];
+
+            //             let h3 = h1 * (xx as f64 + 1.0 - (xm - xstart) / size)
+            //                 + h2 * ((xm - xstart) / size - xx as f64);
+
+            //             height = (h3 / interval + 0.5).floor() * interval;
+            //             m += el_x_len;
+            //         } else {
+            //             m += 1;
+            //         }
+            //     }
+            // }
+
             if !skip
                 && el_x_len < depression_length
                 && el_x[l].first() == el_x[l].last()
@@ -294,6 +325,7 @@ pub fn smoothjoin(tile: &Tile, avg_alt: Vec<Vec<f64>>) -> Vec<Vec<f64>> {
                     }
                     m += 1;
                 }
+
                 let foo_x = ((x_avg - xstart) / size).floor() as u64;
                 let foo_y = ((y_avg - ystart) / size).floor() as u64;
 
@@ -318,8 +350,10 @@ pub fn smoothjoin(tile: &Tile, avg_alt: Vec<Vec<f64>>) -> Vec<Vec<f64>> {
                     x0 = x1;
                     y0 = y1;
                 }
+
                 depression = 1;
-                if (h_center < h && hit % 2 == 1) || (h_center > h && hit % 2 != 1) {
+
+                if (h_center < height && hit % 2 == 1) || (h_center > height && hit % 2 != 1) {
                     depression = -1;
                     write!(&mut depr_fp, "{},{}", el_x[l][0], el_y[l][0])
                         .expect("Unable to write file");
@@ -329,6 +363,7 @@ pub fn smoothjoin(tile: &Tile, avg_alt: Vec<Vec<f64>>) -> Vec<Vec<f64>> {
                     }
                     writeln!(&mut depr_fp).expect("Unable to write file");
                 }
+
                 if !skip {
                     // Check if knoll is distinct enough
                     let mut steepcounter = 0;
@@ -340,11 +375,11 @@ pub fn smoothjoin(tile: &Tile, avg_alt: Vec<Vec<f64>>) -> Vec<Vec<f64>> {
 
                         let ss = steepness[xx][yy];
 
-                        if minele > h - 0.5 * ss {
-                            minele = h - 0.5 * ss;
+                        if minele > height - 0.5 * ss {
+                            minele = height - 0.5 * ss;
                         }
-                        if maxele < h + 0.5 * ss {
-                            maxele = h + 0.5 * ss;
+                        if maxele < height + 0.5 * ss {
+                            maxele = height + 0.5 * ss;
                         }
                         if ss > 1.0 {
                             steepcounter += 1;
@@ -389,6 +424,7 @@ pub fn smoothjoin(tile: &Tile, avg_alt: Vec<Vec<f64>>) -> Vec<Vec<f64>> {
                 skip = true;
             }
 
+            // Smoothing contours, differenciating between index, normal and formline countours and writing it to contours.dxf
             if !skip {
                 // not skipped, lets save first coordinate pair for later form line knoll PIP analysis
                 write!(&mut knollhead_fp, "{} {}\r\n", el_x[l][0], el_y[l][0])
@@ -554,43 +590,42 @@ pub fn smoothjoin(tile: &Tile, avg_alt: Vec<Vec<f64>>) -> Vec<Vec<f64>> {
                 }
 
                 let mut layer = String::from("contour");
+
                 if depression == -1 {
                     layer = String::from("depression");
                 }
-                if indexcontours != 0.0
-                    && (((h / interval + 0.5).floor() * interval) / indexcontours).floor()
-                        - ((h / interval + 0.5).floor() * interval) / indexcontours
-                        == 0.0
-                {
+
+                if height.round() as isize % indexcontours as isize == 0 {
                     layer.push_str("_index");
-                }
-                if formline > 0.0
-                    && (((h / interval + 0.5).floor() * interval) / (2.0 * interval)).floor()
-                        - ((h / interval + 0.5).floor() * interval) / (2.0 * interval)
-                        != 0.0
+                } else if height.round() as isize % contour_interval as isize != 0
+                    && (height * 2.).round() as isize % (halfinterval * 2.).round() as isize == 0
                 {
                     layer.push_str("_intermed");
                 }
+
                 out.push_str(
                     format!(
                         "POLYLINE\r\n 66\r\n1\r\n  8\r\n{}\r\n 38\r\n{}\r\n  0\r\n",
-                        layer, h
+                        layer, height
                     )
                     .as_str(),
                 );
+
                 for k in 0..el_x_len {
                     out.push_str(
                         format!(
                             "VERTEX\r\n  8\r\n{}\r\n 10\r\n{}\r\n 20\r\n{}\r\n 30\r\n{}\r\n  0\r\n",
-                            layer, el_x[l][k], el_y[l][k], h
+                            layer, el_x[l][k], el_y[l][k], height
                         )
                         .as_str(),
                     );
                 }
+
                 out.push_str("SEQEND\r\n  0\r\n");
-            } // -- if not dotkoll
+            }
         }
     }
+
     out.push_str("ENDSEC\r\n  0\r\nEOF\r\n");
     let output = tile.dir_path.join("contours.dxf");
     let fp = File::create(output).expect("Unable to create file");

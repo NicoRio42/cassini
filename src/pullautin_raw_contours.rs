@@ -20,7 +20,7 @@ pub fn xyz2contours(tile: &Tile) -> Vec<Vec<f64>> {
 
     let (dem_width, dem_height) = dem_img_decoder.dimensions().unwrap();
 
-    let cinterval = 2.5;
+    let countours_interval = 2.5;
 
     let mut xmin = (tile.min_x - BUFFER as i64) as f64;
     let xmax = (tile.max_x + BUFFER as i64) as f64;
@@ -39,6 +39,7 @@ pub fn xyz2contours(tile: &Tile) -> Vec<Vec<f64>> {
     let mut hmin: f64 = std::f64::MAX;
     let mut hmax: f64 = std::f64::MIN;
 
+    // Building avg_alt matrix and defining hmin and hmax
     for index in 0..image_data.len() {
         let x = index % usize::try_from(dem_width).unwrap();
         let y = usize::try_from(dem_height).unwrap() - index / usize::try_from(dem_height).unwrap();
@@ -58,6 +59,7 @@ pub fn xyz2contours(tile: &Tile) -> Vec<Vec<f64>> {
         }
     }
 
+    // Filling holes in avg_alt matrix
     for x in 0..w + 1 {
         for y in 0..h + 1 {
             if avg_alt[x][y].is_nan() {
@@ -108,6 +110,7 @@ pub fn xyz2contours(tile: &Tile) -> Vec<Vec<f64>> {
         }
     }
 
+    // Filling holes in avg_alt matrix
     for x in 0..w + 1 {
         for y in 0..h + 1 {
             if avg_alt[x][y].is_nan() {
@@ -135,6 +138,7 @@ pub fn xyz2contours(tile: &Tile) -> Vec<Vec<f64>> {
         }
     }
 
+    // Filling holes in avg_alt matrix
     for x in 0..w + 1 {
         for y in 1..h + 1 {
             if avg_alt[x][y].is_nan() {
@@ -152,10 +156,11 @@ pub fn xyz2contours(tile: &Tile) -> Vec<Vec<f64>> {
     xmin += 1.0;
     ymin += 1.0;
 
+    // Don't know what it's doing
     for x in 0..w + 1 {
         for y in 0..h + 1 {
             let mut ele = avg_alt[x][y];
-            let temp: f64 = (ele / cinterval + 0.5).floor() * cinterval;
+            let temp: f64 = (ele / countours_interval + 0.5).floor() * countours_interval;
             if (ele - temp).abs() < 0.02 {
                 if ele - temp < 0.0 {
                     ele = temp - 0.02;
@@ -167,14 +172,13 @@ pub fn xyz2contours(tile: &Tile) -> Vec<Vec<f64>> {
         }
     }
 
-    let v = cinterval;
+    let mut level: f64 = (hmin / countours_interval).floor() * countours_interval;
+    let temp_polyline_path = tile.dir_path.join("temp_polylines.txt");
 
-    let mut level: f64 = (hmin / v).floor() * v;
-    let polyline_out = tile.dir_path.join("temp_polylines.txt");
+    let mut temp_polyline_file_writer =
+        BufWriter::new(File::create(&temp_polyline_path).expect("Unable to create file"));
 
-    let f = File::create(&polyline_out).expect("Unable to create file");
-    let mut f = BufWriter::new(f);
-
+    // Computing contours and storing it in temp_polylines.txt
     loop {
         if level >= hmax {
             break;
@@ -195,7 +199,7 @@ pub fn xyz2contours(tile: &Tile) -> Vec<Vec<f64>> {
                 {
                     // skip
                 } else {
-                    let temp: f64 = (a / v + 0.5).floor() * v;
+                    let temp: f64 = (a / countours_interval + 0.5).floor() * countours_interval;
                     if (a - temp).abs() < 0.05 {
                         if a - temp < 0.0 {
                             a = temp - 0.05;
@@ -204,7 +208,7 @@ pub fn xyz2contours(tile: &Tile) -> Vec<Vec<f64>> {
                         }
                     }
 
-                    let temp: f64 = (b / v + 0.5).floor() * v;
+                    let temp: f64 = (b / countours_interval + 0.5).floor() * countours_interval;
                     if (b - temp).abs() < 0.05 {
                         if b - temp < 0.0 {
                             b = temp - 0.05;
@@ -213,7 +217,7 @@ pub fn xyz2contours(tile: &Tile) -> Vec<Vec<f64>> {
                         }
                     }
 
-                    let temp: f64 = (c / v + 0.5).floor() * v;
+                    let temp: f64 = (c / countours_interval + 0.5).floor() * countours_interval;
                     if (c - temp).abs() < 0.05 {
                         if c - temp < 0.0 {
                             c = temp - 0.05;
@@ -222,7 +226,7 @@ pub fn xyz2contours(tile: &Tile) -> Vec<Vec<f64>> {
                         }
                     }
 
-                    let temp: f64 = (d / v + 0.5).floor() * v;
+                    let temp: f64 = (d / countours_interval + 0.5).floor() * countours_interval;
                     if (d - temp).abs() < 0.05 {
                         if d - temp < 0.0 {
                             d = temp - 0.05;
@@ -333,13 +337,25 @@ pub fn xyz2contours(tile: &Tile) -> Vec<Vec<f64>> {
         for k in obj.iter() {
             if curves.contains_key(k) {
                 let (x, y, _) = *k;
-                write!(&mut f, "{},{};", x as f64 / 100.0, y as f64 / 100.0)
-                    .expect("Cannot write to output file");
+                write!(
+                    &mut temp_polyline_file_writer,
+                    "{},{},{};",
+                    x as f64 / 100.0,
+                    y as f64 / 100.0,
+                    level
+                )
+                .expect("Cannot write to output file");
                 let mut res = (x, y);
 
                 let (x, y) = *curves.get(&k).unwrap();
-                write!(&mut f, "{},{};", x as f64 / 100.0, y as f64 / 100.0)
-                    .expect("Cannot write to output file");
+                write!(
+                    &mut temp_polyline_file_writer,
+                    "{},{},{};",
+                    x as f64 / 100.0,
+                    y as f64 / 100.0,
+                    level
+                )
+                .expect("Cannot write to output file");
                 curves.remove(&k);
 
                 let mut head = (x, y);
@@ -355,8 +371,14 @@ pub fn xyz2contours(tile: &Tile) -> Vec<Vec<f64>> {
                         res = head;
 
                         let (x, y) = *curves.get(&(head.0, head.1, 1)).unwrap();
-                        write!(&mut f, "{},{};", x as f64 / 100.0, y as f64 / 100.0)
-                            .expect("Cannot write to output file");
+                        write!(
+                            &mut temp_polyline_file_writer,
+                            "{},{},{};",
+                            x as f64 / 100.0,
+                            y as f64 / 100.0,
+                            level
+                        )
+                        .expect("Cannot write to output file");
                         curves.remove(&(head.0, head.1, 1));
 
                         head = (x, y);
@@ -370,8 +392,14 @@ pub fn xyz2contours(tile: &Tile) -> Vec<Vec<f64>> {
                         res = head;
 
                         let (x, y) = *curves.get(&(head.0, head.1, 2)).unwrap();
-                        write!(&mut f, "{},{};", x as f64 / 100.0, y as f64 / 100.0)
-                            .expect("Cannot write to output file");
+                        write!(
+                            &mut temp_polyline_file_writer,
+                            "{},{},{};",
+                            x as f64 / 100.0,
+                            y as f64 / 100.0,
+                            level
+                        )
+                        .expect("Cannot write to output file");
                         curves.remove(&(head.0, head.1, 2));
 
                         head = (x, y);
@@ -382,17 +410,19 @@ pub fn xyz2contours(tile: &Tile) -> Vec<Vec<f64>> {
                             curves.remove(&(head.0, head.1, 2));
                         }
                     } else {
-                        f.write_all("\r\n".as_bytes())
+                        temp_polyline_file_writer
+                            .write_all("\r\n".as_bytes())
                             .expect("Cannot write to output file");
                         break;
                     }
                 }
             }
         }
-        level += v;
+
+        level += countours_interval;
     }
     // explicitly flush and drop to close the file
-    drop(f);
+    drop(temp_polyline_file_writer);
 
     let f = File::create(tile.dir_path.join("contours-raw.dxf")).expect("Unable to create file");
     let mut f = BufWriter::new(f);
@@ -403,11 +433,16 @@ pub fn xyz2contours(tile: &Tile) -> Vec<Vec<f64>> {
             xmin, ymin, xmax, ymax,
         ).expect("Cannot write dxf file");
 
-    read_lines_no_alloc(&polyline_out, |line| {
+    // Looping on temp_polylines.txt and writing contours-raw.dxf
+    // Somehow contours of same altitudes are splitted in several different parts
+    // They are merged back together during the smoothing part
+    read_lines_no_alloc(&temp_polyline_path, |line| {
         let parts = line.trim().split(';');
         let r = parts.collect::<Vec<&str>>();
+
         f.write_all("POLYLINE\r\n 66\r\n1\r\n  8\r\ncont\r\n  0\r\n".as_bytes())
             .expect("Cannot write dxf file");
+
         for (i, d) in r.iter().enumerate() {
             if d != &"" {
                 let ii = i + 1;
@@ -418,10 +453,11 @@ pub fn xyz2contours(tile: &Tile) -> Vec<Vec<f64>> {
                 let mut xy_raw = d.split(',');
                 let x: f64 = xy_raw.next().unwrap().parse::<f64>().unwrap() * 2.0 + xmin;
                 let y: f64 = xy_raw.next().unwrap().parse::<f64>().unwrap() * 2.0 + ymin;
+                let level: f64 = xy_raw.next().unwrap().parse::<f64>().unwrap();
                 write!(
                     &mut f,
-                    "VERTEX\r\n  8\r\ncont\r\n 10\r\n{}\r\n 20\r\n{}\r\n  0\r\n",
-                    x, y
+                    "VERTEX\r\n  8\r\ncont\r\n 10\r\n{}\r\n 20\r\n{}\r\n 30\r\n{}\r\n  0\r\n",
+                    x, y, level
                 )
                 .expect("Cannot write dxf file");
             }
@@ -430,8 +466,10 @@ pub fn xyz2contours(tile: &Tile) -> Vec<Vec<f64>> {
             .expect("Cannot write dxf file");
     })
     .expect("Cannot read file");
+
     f.write_all("ENDSEC\r\n  0\r\nEOF\r\n".as_bytes())
         .expect("Cannot write dxf file");
+
     println!("Done");
 
     return avg_alt;
