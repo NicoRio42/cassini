@@ -9,6 +9,13 @@ pub fn generate_contours_with_pullautin_algorithme(
     image_height: u32,
     config: &Config,
 ) {
-    let avg_alt = pullautin_smooth_contours(&tile);
-    pullautin_render_contours(&tile, image_width, image_height, &config, avg_alt);
+    let (avg_alt, smoothed_contours) = pullautin_smooth_contours(&tile);
+    pullautin_render_contours(
+        &tile,
+        image_width,
+        image_height,
+        &config,
+        avg_alt,
+        smoothed_contours,
+    );
 }

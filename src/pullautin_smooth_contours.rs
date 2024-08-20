@@ -1,15 +1,17 @@
 use core::f64;
+use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufWriter, Write};
+use std::io::{BufReader, BufWriter, Write};
 
-use shapefile::dbase::{FieldValue, Record};
-use shapefile::{read_as, Polyline};
+use shapefile::dbase::{FieldValue, Record, WritableRecord};
+use shapefile::record::polyline::GenericPolyline;
+use shapefile::{read_as, Point, Polyline, Reader};
 use tiff::decoder::{Decoder, DecodingResult};
 
 use crate::constants::BUFFER;
 use crate::tile::Tile;
 
-pub fn pullautin_smooth_contours(tile: &Tile) -> Vec<Vec<f64>> {
+pub fn pullautin_smooth_contours(tile: &Tile) -> (Vec<Vec<f64>>, Vec<(Vec<f64>, Vec<f64>, f64)>) {
     println!("Smooth curves...");
     let scalefactor: f64 = 1.0;
     let smoothing: f64 = 0.7;
@@ -27,6 +29,7 @@ pub fn pullautin_smooth_contours(tile: &Tile) -> Vec<Vec<f64>> {
 
     let avg_alt = get_elevation_matrix_from_dem(tile);
     let mut steepness = vec![vec![f64::NAN; (ymax + 2) as usize]; (xmax + 2) as usize];
+    let mut smoothed_contours: Vec<(Vec<f64>, Vec<f64>, f64)> = vec![];
 
     // Computing a basic steepness matrix
     for i in 1..xmax {
@@ -50,25 +53,28 @@ pub fn pullautin_smooth_contours(tile: &Tile) -> Vec<Vec<f64>> {
         }
     }
 
-    let dxfheadtmp = format!("\r\n  9\r\n$EXTMIN\r\n 10\r\n{}\r\n 20\r\n{}\r\n  9\r\n$EXTMAX\r\n 10\r\n{}\r\n 20\r\n{}\r\n  0\r\n", xstart, ystart, xmax, ymax);
-    let dxfhead = &format!("HEADER{}ENDSEC", dxfheadtmp);
-    let mut out = String::new();
-    out.push_str("  0\r\nSECTION\r\n  2\r\n");
-    out.push_str(dxfhead);
-    out.push_str("\r\n  0\r\nSECTION\r\n  2\r\nENTITIES\r\n  0\r\n");
-
-    let mut el_x = Vec::<Vec<f64>>::new();
-    let mut el_y = Vec::<Vec<f64>>::new();
-    let mut elevations = Vec::<f64>::new();
-
     let contours_polylines_path = tile.dir_path.join("contours-raw.shp");
-    let contours_polylines = read_as::<_, Polyline, Record>(contours_polylines_path)
-        .expect("Could not open contours_polylines shapefile");
 
-    for (line, record) in contours_polylines {
+    let mut contours_polylines_reader: shapefile::Reader<BufReader<File>, BufReader<File>> =
+        Reader::from_path(&contours_polylines_path).unwrap();
+
+    let contours_polylines_reader_for_table_info: shapefile::Reader<
+        BufReader<File>,
+        BufReader<File>,
+    > = Reader::from_path(&contours_polylines_path).unwrap();
+
+    let table_info = contours_polylines_reader_for_table_info.into_table_info();
+
+    let mut writer =
+        shapefile::Writer::from_path_with_info(tile.dir_path.join("contours.shp"), table_info)
+            .unwrap();
+
+    for shape_record in contours_polylines_reader.iter_shapes_and_records_as::<Polyline, Record>() {
+        let (line, record) = shape_record.unwrap();
         let mut x_array = Vec::<f64>::new();
         let mut y_array = Vec::<f64>::new();
 
+        // Assuming line.parts().len() == 1
         for part in line.parts() {
             for point in part {
                 x_array.push(point.x);
@@ -82,109 +88,100 @@ pub fn pullautin_smooth_contours(tile: &Tile) -> Vec<Vec<f64>> {
             None => panic!("Field 'elev' is not within polygon-dataset"),
         };
 
-        el_x.push(x_array);
-        el_y.push(y_array);
-        elevations.push(*elevation);
-    }
-
-    // Smoothing merged contours
-    for l in 0..el_x.len() {
-        let mut el_x_len = el_x[l].len();
+        let mut el_x_len = x_array.len();
 
         if el_x_len < 15 {
             continue;
         }
 
-        let height = elevations[l];
+        let height = *elevation;
 
-        // Smoothing contours, differenciating between index, normal and formline countours and writing it to contours.dxf
-        // adaptive generalization
         if el_x_len > 101 {
             let mut newx: Vec<f64> = vec![];
             let mut newy: Vec<f64> = vec![];
-            let mut xpre = el_x[l][0];
-            let mut ypre = el_y[l][0];
+            let mut xpre = x_array[0];
+            let mut ypre = y_array[0];
 
-            newx.push(el_x[l][0]);
-            newy.push(el_y[l][0]);
+            newx.push(x_array[0]);
+            newy.push(y_array[0]);
 
             for k in 1..(el_x_len - 1) {
-                let xx = ((el_x[l][k] - xstart) / size + 0.5).floor() as usize;
-                let yy = ((el_y[l][k] - ystart) / size + 0.5).floor() as usize;
+                let xx = ((x_array[k] - xstart) / size + 0.5).floor() as usize;
+                let yy = ((y_array[k] - ystart) / size + 0.5).floor() as usize;
 
                 let ss = steepness[xx][yy];
                 if ss.is_nan() || ss < 0.5 {
-                    if ((xpre - el_x[l][k]).powi(2) + (ypre - el_y[l][k]).powi(2)).sqrt() >= 4.0 {
-                        newx.push(el_x[l][k]);
-                        newy.push(el_y[l][k]);
-                        xpre = el_x[l][k];
-                        ypre = el_y[l][k];
+                    if ((xpre - x_array[k]).powi(2) + (ypre - y_array[k]).powi(2)).sqrt() >= 4.0 {
+                        newx.push(x_array[k]);
+                        newy.push(y_array[k]);
+                        xpre = x_array[k];
+                        ypre = y_array[k];
                     }
                 } else {
-                    newx.push(el_x[l][k]);
-                    newy.push(el_y[l][k]);
-                    xpre = el_x[l][k];
-                    ypre = el_y[l][k];
+                    newx.push(x_array[k]);
+                    newy.push(y_array[k]);
+                    xpre = x_array[k];
+                    ypre = y_array[k];
                 }
             }
-            newx.push(el_x[l][el_x_len - 1]);
-            newy.push(el_y[l][el_x_len - 1]);
+            newx.push(x_array[el_x_len - 1]);
+            newy.push(y_array[el_x_len - 1]);
 
-            el_x[l].clear();
-            el_x[l].append(&mut newx);
-            el_y[l].clear();
-            el_y[l].append(&mut newy);
-            el_x_len = el_x[l].len();
+            x_array.clear();
+            x_array.append(&mut newx);
+            y_array.clear();
+            y_array.append(&mut newy);
+            el_x_len = x_array.len();
         }
         // Smoothing
         let mut dx: Vec<f64> = vec![f64::NAN; el_x_len];
         let mut dy: Vec<f64> = vec![f64::NAN; el_x_len];
 
         for k in 2..(el_x_len - 3) {
-            dx[k] = (el_x[l][k - 2]
-                + el_x[l][k - 1]
-                + el_x[l][k]
-                + el_x[l][k + 1]
-                + el_x[l][k + 2]
-                + el_x[l][k + 3])
+            dx[k] = (x_array[k - 2]
+                + x_array[k - 1]
+                + x_array[k]
+                + x_array[k + 1]
+                + x_array[k + 2]
+                + x_array[k + 3])
                 / 6.0;
-            dy[k] = (el_y[l][k - 2]
-                + el_y[l][k - 1]
-                + el_y[l][k]
-                + el_y[l][k + 1]
-                + el_y[l][k + 2]
-                + el_y[l][k + 3])
+            dy[k] = (y_array[k - 2]
+                + y_array[k - 1]
+                + y_array[k]
+                + y_array[k + 1]
+                + y_array[k + 2]
+                + y_array[k + 3])
                 / 6.0;
         }
 
         let mut xa: Vec<f64> = vec![f64::NAN; el_x_len];
         let mut ya: Vec<f64> = vec![f64::NAN; el_x_len];
         for k in 1..(el_x_len - 1) {
-            xa[k] = (el_x[l][k - 1] + el_x[l][k] / (0.01 + smoothing) + el_x[l][k + 1])
+            xa[k] = (x_array[k - 1] + x_array[k] / (0.01 + smoothing) + x_array[k + 1])
                 / (2.0 + 1.0 / (0.01 + smoothing));
-            ya[k] = (el_y[l][k - 1] + el_y[l][k] / (0.01 + smoothing) + el_y[l][k + 1])
+            ya[k] = (y_array[k - 1] + y_array[k] / (0.01 + smoothing) + y_array[k + 1])
                 / (2.0 + 1.0 / (0.01 + smoothing));
         }
 
-        if el_x[l].first() == el_x[l].last() && el_y[l].first() == el_y[l].last() {
-            let vx = (el_x[l][1] + el_x[l][0] / (0.01 + smoothing) + el_x[l][el_x_len - 2])
+        if x_array.first() == x_array.last() && y_array.first() == y_array.last() {
+            let vx = (x_array[1] + x_array[0] / (0.01 + smoothing) + x_array[el_x_len - 2])
                 / (2.0 + 1.0 / (0.01 + smoothing));
-            let vy = (el_y[l][1] + el_y[l][0] / (0.01 + smoothing) + el_y[l][el_x_len - 2])
+            let vy = (y_array[1] + y_array[0] / (0.01 + smoothing) + y_array[el_x_len - 2])
                 / (2.0 + 1.0 / (0.01 + smoothing));
             xa[0] = vx;
             ya[0] = vy;
             xa[el_x_len - 1] = vx;
             ya[el_x_len - 1] = vy;
         } else {
-            xa[0] = el_x[l][0];
-            ya[0] = el_y[l][0];
-            xa[el_x_len - 1] = el_x[l][el_x_len - 1];
-            ya[el_x_len - 1] = el_y[l][el_x_len - 1];
+            xa[0] = x_array[0];
+            ya[0] = y_array[0];
+            xa[el_x_len - 1] = x_array[el_x_len - 1];
+            ya[el_x_len - 1] = y_array[el_x_len - 1];
         }
         for k in 1..(el_x_len - 1) {
-            el_x[l][k] = (xa[k - 1] + xa[k] / (0.01 + smoothing) + xa[k + 1])
+            x_array[k] = (xa[k - 1] + xa[k] / (0.01 + smoothing) + xa[k + 1])
                 / (2.0 + 1.0 / (0.01 + smoothing));
-            el_y[l][k] = (ya[k - 1] + ya[k] / (0.01 + smoothing) + ya[k + 1])
+            y_array[k] = (ya[k - 1] + ya[k] / (0.01 + smoothing) + ya[k + 1])
                 / (2.0 + 1.0 / (0.01 + smoothing));
         }
         if xa.first() == xa.last() && ya.first() == ya.last() {
@@ -192,108 +189,87 @@ pub fn pullautin_smooth_contours(tile: &Tile) -> Vec<Vec<f64>> {
                 / (2.0 + 1.0 / (0.01 + smoothing));
             let vy = (ya[1] + ya[0] / (0.01 + smoothing) + ya[el_x_len - 2])
                 / (2.0 + 1.0 / (0.01 + smoothing));
-            el_x[l][0] = vx;
-            el_y[l][0] = vy;
-            el_x[l][el_x_len - 1] = vx;
-            el_y[l][el_x_len - 1] = vy;
+            x_array[0] = vx;
+            y_array[0] = vy;
+            x_array[el_x_len - 1] = vx;
+            y_array[el_x_len - 1] = vy;
         } else {
-            el_x[l][0] = xa[0];
-            el_y[l][0] = ya[0];
-            el_x[l][el_x_len - 1] = xa[el_x_len - 1];
-            el_y[l][el_x_len - 1] = ya[el_x_len - 1];
+            x_array[0] = xa[0];
+            y_array[0] = ya[0];
+            x_array[el_x_len - 1] = xa[el_x_len - 1];
+            y_array[el_x_len - 1] = ya[el_x_len - 1];
         }
 
         for k in 1..(el_x_len - 1) {
-            xa[k] = (el_x[l][k - 1] + el_x[l][k] / (0.01 + smoothing) + el_x[l][k + 1])
+            xa[k] = (x_array[k - 1] + x_array[k] / (0.01 + smoothing) + x_array[k + 1])
                 / (2.0 + 1.0 / (0.01 + smoothing));
-            ya[k] = (el_y[l][k - 1] + el_y[l][k] / (0.01 + smoothing) + el_y[l][k + 1])
+            ya[k] = (y_array[k - 1] + y_array[k] / (0.01 + smoothing) + y_array[k + 1])
                 / (2.0 + 1.0 / (0.01 + smoothing));
         }
 
-        if el_x[l].first() == el_x[l].last() && el_y[l].first() == el_y[l].last() {
-            let vx = (el_x[l][1] + el_x[l][0] / (0.01 + smoothing) + el_x[l][el_x_len - 2])
+        if x_array.first() == x_array.last() && y_array.first() == y_array.last() {
+            let vx = (x_array[1] + x_array[0] / (0.01 + smoothing) + x_array[el_x_len - 2])
                 / (2.0 + 1.0 / (0.01 + smoothing));
-            let vy = (el_y[l][1] + el_y[l][0] / (0.01 + smoothing) + el_y[l][el_x_len - 2])
+            let vy = (y_array[1] + y_array[0] / (0.01 + smoothing) + y_array[el_x_len - 2])
                 / (2.0 + 1.0 / (0.01 + smoothing));
             xa[0] = vx;
             ya[0] = vy;
             xa[el_x_len - 1] = vx;
             ya[el_x_len - 1] = vy;
         } else {
-            xa[0] = el_x[l][0];
-            ya[0] = el_y[l][0];
-            xa[el_x_len - 1] = el_x[l][el_x_len - 1];
-            ya[el_x_len - 1] = el_y[l][el_x_len - 1];
+            xa[0] = x_array[0];
+            ya[0] = y_array[0];
+            xa[el_x_len - 1] = x_array[el_x_len - 1];
+            ya[el_x_len - 1] = y_array[el_x_len - 1];
         }
         for k in 0..el_x_len {
-            el_x[l][k] = xa[k];
-            el_y[l][k] = ya[k];
+            x_array[k] = xa[k];
+            y_array[k] = ya[k];
         }
 
         let mut dx2: Vec<f64> = vec![f64::NAN; el_x_len];
         let mut dy2: Vec<f64> = vec![f64::NAN; el_x_len];
         for k in 2..(el_x_len - 3) {
-            dx2[k] = (el_x[l][k - 2]
-                + el_x[l][k - 1]
-                + el_x[l][k]
-                + el_x[l][k + 1]
-                + el_x[l][k + 2]
-                + el_x[l][k + 3])
+            dx2[k] = (x_array[k - 2]
+                + x_array[k - 1]
+                + x_array[k]
+                + x_array[k + 1]
+                + x_array[k + 2]
+                + x_array[k + 3])
                 / 6.0;
-            dy2[k] = (el_y[l][k - 2]
-                + el_y[l][k - 1]
-                + el_y[l][k]
-                + el_y[l][k + 1]
-                + el_y[l][k + 2]
-                + el_y[l][k + 3])
+            dy2[k] = (y_array[k - 2]
+                + y_array[k - 1]
+                + y_array[k]
+                + y_array[k + 1]
+                + y_array[k + 2]
+                + y_array[k + 3])
                 / 6.0;
         }
+
         for k in 3..(el_x_len - 3) {
-            let vx = el_x[l][k] + (dx[k] - dx2[k]) * curviness;
-            let vy = el_y[l][k] + (dy[k] - dy2[k]) * curviness;
-            el_x[l][k] = vx;
-            el_y[l][k] = vy;
+            let vx = x_array[k] + (dx[k] - dx2[k]) * curviness;
+            let vy = y_array[k] + (dy[k] - dy2[k]) * curviness;
+            x_array[k] = vx;
+            y_array[k] = vy;
         }
 
-        let mut layer = String::from("contour");
-
-        if height.round() as isize % indexcontours as isize == 0 {
-            layer.push_str("_index");
-        } else if height.round() as isize % contour_interval as isize != 0
-            && (height * 2.).round() as isize % (halfinterval * 2.).round() as isize == 0
-        {
-            layer.push_str("_intermed");
-        }
-
-        out.push_str(
-            format!(
-                "POLYLINE\r\n 66\r\n1\r\n  8\r\n{}\r\n 38\r\n{}\r\n  0\r\n",
-                layer, height
-            )
-            .as_str(),
-        );
+        let mut points: Vec<Point> = vec![];
 
         for k in 0..el_x_len {
-            out.push_str(
-                format!(
-                    "VERTEX\r\n  8\r\n{}\r\n 10\r\n{}\r\n 20\r\n{}\r\n 30\r\n{}\r\n  0\r\n",
-                    layer, el_x[l][k], el_y[l][k], height
-                )
-                .as_str(),
-            );
+            points.push(Point {
+                x: x_array[k],
+                y: y_array[k],
+            });
         }
 
-        out.push_str("SEQEND\r\n  0\r\n");
+        let smoothed_polyline = GenericPolyline::new(points);
+        let _ = writer.write_shape_and_record(&smoothed_polyline, &record);
+        smoothed_contours.push((x_array, y_array, height));
     }
 
-    out.push_str("ENDSEC\r\n  0\r\nEOF\r\n");
-    let output = tile.dir_path.join("contours.dxf");
-    let fp = File::create(output).expect("Unable to create file");
-    let mut fp = BufWriter::new(fp);
-    fp.write_all(out.as_bytes()).expect("Unable to write file");
     println!("Done");
 
-    return avg_alt;
+    return (avg_alt, smoothed_contours);
 }
 
 fn get_elevation_matrix_from_dem(tile: &Tile) -> Vec<Vec<f64>> {
