@@ -1,7 +1,10 @@
+use core::f64;
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 
 use rustc_hash::FxHashMap as HashMap;
+use shapefile::dbase::{FieldValue, Record};
+use shapefile::{read_as, Polyline};
 
 use crate::constants::BUFFER;
 use crate::tile::Tile;
@@ -79,173 +82,203 @@ pub fn smoothjoin(tile: &Tile, avg_alt: Vec<Vec<f64>>) -> Vec<Vec<f64>> {
     let mut el_x = Vec::<Vec<f64>>::new();
     let mut el_y = Vec::<Vec<f64>>::new();
     let mut elevations = Vec::<f64>::new();
-    el_x.push(vec![]);
-    el_y.push(vec![]);
+    // el_x.push(vec![]);
+    // el_y.push(vec![]);
+    // elevations.push(f64::NAN);
     heads.push(String::from("-"));
     tails.push(String::from("-"));
 
-    // Parsing contours-raw.dxf and storing x and y coordinates in in two different vectors (of vectors) => el_x and el_y
-    // Also storing "heads" (first point of polyline) and "tails" (last point) for further merging
-    for (j, rec) in data.iter().enumerate() {
-        let mut x = Vec::<f64>::new();
-        let mut y = Vec::<f64>::new();
-        let mut xline = 0;
-        let mut yline = 0;
-        let mut hline = 0;
+    // WITH SHP
 
-        if j > 0 {
-            let r = rec.split("VERTEX").collect::<Vec<&str>>();
-            let apu = r[1];
-            let val = apu.split('\n').collect::<Vec<&str>>();
+    let contours_polylines_path = tile.dir_path.join("contours-raw.shp");
+    let contours_polylines = read_as::<_, Polyline, Record>(contours_polylines_path)
+        .expect("Could not open contours_polylines shapefile");
 
-            for (i, v) in val.iter().enumerate() {
-                let vt = v.trim();
-                if vt == "10" {
-                    xline = i + 1;
-                }
-                if vt == "20" {
-                    yline = i + 1;
-                }
-                if vt == "30" {
-                    hline = i + 1;
-                }
-            }
+    for (line, record) in contours_polylines {
+        let mut x_array = Vec::<f64>::new();
+        let mut y_array = Vec::<f64>::new();
 
-            let mut elevation: f64 = 0.;
-
-            for (i, v) in r.iter().enumerate() {
-                if i > 0 {
-                    let val = v.trim_end().split('\n').collect::<Vec<&str>>();
-                    x.push(val[xline].trim().parse::<f64>().unwrap());
-                    y.push(val[yline].trim().parse::<f64>().unwrap());
-                    if i == 1 {
-                        elevation = val[hline].trim().parse::<f64>().unwrap();
-                    }
-                }
-            }
-
-            let x0 = x.first().unwrap();
-            let xl = x.last().unwrap();
-            let y0 = y.first().unwrap();
-            let yl = y.last().unwrap();
-            let head = format!("{}x{}", x0, y0);
-            let tail = format!("{}x{}", xl, yl);
-
-            heads.push(head);
-            tails.push(tail);
-
-            let head = format!("{}x{}", x0, y0);
-            let tail = format!("{}x{}", xl, yl);
-            el_x.push(x);
-            el_y.push(y);
-            elevations.push(elevation);
-
-            if *heads1.get(&head).unwrap_or(&0) == 0 {
-                heads1.insert(head, j);
-            } else {
-                heads2.insert(head, j);
-            }
-
-            if *heads1.get(&tail).unwrap_or(&0) == 0 {
-                heads1.insert(tail, j);
-            } else {
-                heads2.insert(tail, j);
+        for part in line.parts() {
+            for point in part {
+                x_array.push(point.x);
+                y_array.push(point.y);
             }
         }
+
+        let elevation = match record.get("elev") {
+            Some(FieldValue::Numeric(Some(x))) => x,
+            Some(_) => &f64::NAN,
+            None => panic!("Field 'elev' is not within polygon-dataset"),
+        };
+
+        el_x.push(x_array);
+        el_y.push(y_array);
+        elevations.push(*elevation);
     }
+    // END WITH SHP
 
-    // Merging polylines together
-    // This results in some vectors of el_x and el_y being empty
-    for l in 0..data.len() {
-        let mut to_join = 0;
-        if !el_x[l].is_empty() {
-            let mut end_loop = false;
-            while !end_loop {
-                let tmp = *heads1.get(&heads[l]).unwrap_or(&0);
-                if tmp != 0 && tmp != l && !el_x[tmp].is_empty() {
-                    to_join = tmp;
-                } else {
-                    let tmp = *heads2.get(&heads[l]).unwrap_or(&0);
-                    if tmp != 0 && tmp != l && !el_x[tmp].is_empty() {
-                        to_join = tmp;
-                    } else {
-                        let tmp = *heads2.get(&tails[l]).unwrap_or(&0);
-                        if tmp != 0 && tmp != l && !el_x[tmp].is_empty() {
-                            to_join = tmp;
-                        } else {
-                            let tmp = *heads1.get(&tails[l]).unwrap_or(&0);
-                            if tmp != 0 && tmp != l && !el_x[tmp].is_empty() {
-                                to_join = tmp;
-                            } else {
-                                end_loop = true;
-                            }
-                        }
-                    }
-                }
+    // // Parsing contours-raw.dxf and storing x and y coordinates in in two different vectors (of vectors) => el_x and el_y
+    // // Also storing "heads" (first point of polyline) and "tails" (last point) for further merging
+    // for (j, rec) in data.iter().enumerate() {
+    //     let mut x = Vec::<f64>::new();
+    //     let mut y = Vec::<f64>::new();
+    //     let mut xline = 0;
+    //     let mut yline = 0;
+    //     let mut hline = 0;
 
-                if !end_loop {
-                    if tails[l] == heads[to_join] {
-                        let tmp = tails[l].to_string();
-                        heads2.insert(tmp, 0);
-                        let tmp = tails[l].to_string();
-                        heads1.insert(tmp, 0);
-                        let mut to_append = el_x[to_join].to_vec();
-                        el_x[l].append(&mut to_append);
-                        let mut to_append = el_y[to_join].to_vec();
-                        el_y[l].append(&mut to_append);
-                        let tmp = tails[to_join].to_string();
-                        tails[l] = tmp;
-                        el_x[to_join].clear();
-                    } else if tails[l] == tails[to_join] {
-                        let tmp = tails[l].to_string();
-                        heads2.insert(tmp, 0);
-                        let tmp = tails[l].to_string();
-                        heads1.insert(tmp, 0);
-                        let mut to_append = el_x[to_join].to_vec();
-                        to_append.reverse();
-                        el_x[l].append(&mut to_append);
-                        let mut to_append = el_y[to_join].to_vec();
-                        to_append.reverse();
-                        el_y[l].append(&mut to_append);
-                        let tmp = heads[to_join].to_string();
-                        tails[l] = tmp;
-                        el_x[to_join].clear();
-                    } else if heads[l] == tails[to_join] {
-                        let tmp = heads[l].to_string();
-                        heads2.insert(tmp, 0);
-                        let tmp = heads[l].to_string();
-                        heads1.insert(tmp, 0);
-                        let to_append = el_x[to_join].to_vec();
-                        el_x[l].splice(0..0, to_append);
-                        let to_append = el_y[to_join].to_vec();
-                        el_y[l].splice(0..0, to_append);
-                        let tmp = heads[to_join].to_string();
-                        heads[l] = tmp;
-                        el_x[to_join].clear();
-                    } else if heads[l] == heads[to_join] {
-                        let tmp = heads[l].to_string();
-                        heads2.insert(tmp, 0);
-                        let tmp = heads[l].to_string();
-                        heads1.insert(tmp, 0);
-                        let mut to_append = el_x[to_join].to_vec();
-                        to_append.reverse();
-                        el_x[l].splice(0..0, to_append);
-                        let mut to_append = el_y[to_join].to_vec();
-                        to_append.reverse();
-                        el_y[l].splice(0..0, to_append);
-                        let tmp = tails[to_join].to_string();
-                        heads[l] = tmp;
-                        el_x[to_join].clear();
-                    }
-                }
-            }
-        }
-    }
+    //     if j > 0 {
+    //         let r = rec.split("VERTEX").collect::<Vec<&str>>();
+    //         let apu = r[1];
+    //         let val = apu.split('\n').collect::<Vec<&str>>();
 
-    println!("{} {} {}", el_x.len(), el_y.len(), elevations.len());
+    //         for (i, v) in val.iter().enumerate() {
+    //             let vt = v.trim();
+    //             if vt == "10" {
+    //                 xline = i + 1;
+    //             }
+    //             if vt == "20" {
+    //                 yline = i + 1;
+    //             }
+    //             if vt == "30" {
+    //                 hline = i + 1;
+    //             }
+    //         }
+
+    //         let mut elevation: f64 = 0.;
+
+    //         for (i, v) in r.iter().enumerate() {
+    //             if i > 0 {
+    //                 let val = v.trim_end().split('\n').collect::<Vec<&str>>();
+    //                 x.push(val[xline].trim().parse::<f64>().unwrap());
+    //                 y.push(val[yline].trim().parse::<f64>().unwrap());
+    //                 if i == 1 {
+    //                     elevation = val[hline].trim().parse::<f64>().unwrap();
+    //                 }
+    //             }
+    //         }
+
+    //         let x0 = x.first().unwrap();
+    //         let xl = x.last().unwrap();
+    //         let y0 = y.first().unwrap();
+    //         let yl = y.last().unwrap();
+    //         let head = format!("{}x{}", x0, y0);
+    //         let tail = format!("{}x{}", xl, yl);
+
+    //         heads.push(head);
+    //         tails.push(tail);
+
+    //         let head = format!("{}x{}", x0, y0);
+    //         let tail = format!("{}x{}", xl, yl);
+    //         el_x.push(x);
+    //         el_y.push(y);
+    //         elevations.push(elevation);
+
+    //         if *heads1.get(&head).unwrap_or(&0) == 0 {
+    //             heads1.insert(head, j);
+    //         } else {
+    //             heads2.insert(head, j);
+    //         }
+
+    //         if *heads1.get(&tail).unwrap_or(&0) == 0 {
+    //             heads1.insert(tail, j);
+    //         } else {
+    //             heads2.insert(tail, j);
+    //         }
+    //     }
+    // }
+
+    // // Merging polylines together
+    // // This results in some vectors of el_x and el_y being empty
+    // for l in 0..data.len() {
+    //     let mut to_join = 0;
+    //     if !el_x[l].is_empty() {
+    //         let mut end_loop = false;
+    //         while !end_loop {
+    //             let tmp = *heads1.get(&heads[l]).unwrap_or(&0);
+    //             if tmp != 0 && tmp != l && !el_x[tmp].is_empty() {
+    //                 to_join = tmp;
+    //             } else {
+    //                 let tmp = *heads2.get(&heads[l]).unwrap_or(&0);
+    //                 if tmp != 0 && tmp != l && !el_x[tmp].is_empty() {
+    //                     to_join = tmp;
+    //                 } else {
+    //                     let tmp = *heads2.get(&tails[l]).unwrap_or(&0);
+    //                     if tmp != 0 && tmp != l && !el_x[tmp].is_empty() {
+    //                         to_join = tmp;
+    //                     } else {
+    //                         let tmp = *heads1.get(&tails[l]).unwrap_or(&0);
+    //                         if tmp != 0 && tmp != l && !el_x[tmp].is_empty() {
+    //                             to_join = tmp;
+    //                         } else {
+    //                             end_loop = true;
+    //                         }
+    //                     }
+    //                 }
+    //             }
+
+    //             if !end_loop {
+    //                 if tails[l] == heads[to_join] {
+    //                     let tmp = tails[l].to_string();
+    //                     heads2.insert(tmp, 0);
+    //                     let tmp = tails[l].to_string();
+    //                     heads1.insert(tmp, 0);
+    //                     let mut to_append = el_x[to_join].to_vec();
+    //                     el_x[l].append(&mut to_append);
+    //                     let mut to_append = el_y[to_join].to_vec();
+    //                     el_y[l].append(&mut to_append);
+    //                     let tmp = tails[to_join].to_string();
+    //                     tails[l] = tmp;
+    //                     el_x[to_join].clear();
+    //                 } else if tails[l] == tails[to_join] {
+    //                     let tmp = tails[l].to_string();
+    //                     heads2.insert(tmp, 0);
+    //                     let tmp = tails[l].to_string();
+    //                     heads1.insert(tmp, 0);
+    //                     let mut to_append = el_x[to_join].to_vec();
+    //                     to_append.reverse();
+    //                     el_x[l].append(&mut to_append);
+    //                     let mut to_append = el_y[to_join].to_vec();
+    //                     to_append.reverse();
+    //                     el_y[l].append(&mut to_append);
+    //                     let tmp = heads[to_join].to_string();
+    //                     tails[l] = tmp;
+    //                     el_x[to_join].clear();
+    //                 } else if heads[l] == tails[to_join] {
+    //                     let tmp = heads[l].to_string();
+    //                     heads2.insert(tmp, 0);
+    //                     let tmp = heads[l].to_string();
+    //                     heads1.insert(tmp, 0);
+    //                     let to_append = el_x[to_join].to_vec();
+    //                     el_x[l].splice(0..0, to_append);
+    //                     let to_append = el_y[to_join].to_vec();
+    //                     el_y[l].splice(0..0, to_append);
+    //                     let tmp = heads[to_join].to_string();
+    //                     heads[l] = tmp;
+    //                     el_x[to_join].clear();
+    //                 } else if heads[l] == heads[to_join] {
+    //                     let tmp = heads[l].to_string();
+    //                     heads2.insert(tmp, 0);
+    //                     let tmp = heads[l].to_string();
+    //                     heads1.insert(tmp, 0);
+    //                     let mut to_append = el_x[to_join].to_vec();
+    //                     to_append.reverse();
+    //                     el_x[l].splice(0..0, to_append);
+    //                     let mut to_append = el_y[to_join].to_vec();
+    //                     to_append.reverse();
+    //                     el_y[l].splice(0..0, to_append);
+    //                     let tmp = tails[to_join].to_string();
+    //                     heads[l] = tmp;
+    //                     el_x[to_join].clear();
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
+
+    println!("{:?}", elevations);
 
     // Smoothing merged contours
-    for l in 0..data.len() {
+    for l in 0..el_x.len() {
         let mut el_x_len = el_x[l].len();
 
         // Skiping empty polylines that have been merged and flushed
@@ -258,7 +291,7 @@ pub fn smoothjoin(tile: &Tile, avg_alt: Vec<Vec<f64>>) -> Vec<Vec<f64>> {
                 el_x[l].clear();
             }
 
-            let height = elevations[l - 1];
+            let height = elevations[l];
 
             // Finding back the elevation of the polyline, as the information was known during the previous step but lost
             // if !skip {
