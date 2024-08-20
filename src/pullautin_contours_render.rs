@@ -191,11 +191,7 @@ pub fn pullautin_render_contours(
                 }
             }
         }
-        // let mut color = PURPLE; // purple
-        let mut color = BROWN; // purple
-        if layer.contains("contour") {
-            color = BROWN // brown
-        }
+
         if !nodepressions || layer.contains("contour") {
             let mut curvew = 2.0;
             if layer.contains("index") {
@@ -433,7 +429,7 @@ pub fn pullautin_render_contours(
                                                 + (y[i] + m) as f32,
                                         );
 
-                                        draw_line_segment_mut(&mut img, start, end, color);
+                                        draw_line_segment_mut(&mut img, start, end, BROWN);
                                         m += 1.0;
                                     }
                                     n += 1.0;
@@ -457,7 +453,7 @@ pub fn pullautin_render_contours(
                                         image_height as f32 + buffer_in_pixels + (y[i] + m) as f32,
                                     );
 
-                                    draw_line_segment_mut(&mut img, start, end, color);
+                                    draw_line_segment_mut(&mut img, start, end, BROWN);
                                     m += 1.0;
                                 }
                                 n += 1.0;
@@ -478,7 +474,7 @@ pub fn pullautin_render_contours(
                                     image_height as f32 + buffer_in_pixels + (y[i] + m) as f32,
                                 );
 
-                                draw_line_segment_mut(&mut img, start, end, color);
+                                draw_line_segment_mut(&mut img, start, end, BROWN);
                                 m += 1.0;
                             }
                             n += 1.0;
