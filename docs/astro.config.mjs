@@ -7,7 +7,7 @@ export default defineConfig({
     starlight({
       title: "Cassini",
       social: {
-        github: "https://github.com/withastro/starlight",
+        github: "https://github.com/NicoRio42/cassini",
       },
       sidebar: [
         { label: "The what and the why", link: "/what-and-why" },
