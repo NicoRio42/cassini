@@ -79,6 +79,6 @@ fn main() {
         generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(tile, neighbor_tiles);
 
         let duration = start.elapsed();
-        println!("Tiles generated in {:.1?}", duration);
+        println!("Tile generated in {:.1?}", duration);
     }
 }

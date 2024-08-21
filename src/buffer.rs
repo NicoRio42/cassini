@@ -62,9 +62,7 @@ pub fn create_tif_with_buffer(
         .output()
         .expect("failed to execute gdal_contour command");
 
-    if ExitStatus::success(&gdalbuildvrt_output.status) {
-        println!("{}", String::from_utf8(gdalbuildvrt_output.stdout).unwrap());
-    } else {
+    if !ExitStatus::success(&gdalbuildvrt_output.status) {
         println!("{}", String::from_utf8(gdalbuildvrt_output.stderr).unwrap());
     }
 
@@ -84,12 +82,7 @@ pub fn create_tif_with_buffer(
         .output()
         .expect("failed to execute gdal_contour command");
 
-    if ExitStatus::success(&gdal_translate_output.status) {
-        println!(
-            "{}",
-            String::from_utf8(gdal_translate_output.stdout).unwrap()
-        );
-    } else {
+    if !ExitStatus::success(&gdal_translate_output.status) {
         println!(
             "{}",
             String::from_utf8(gdal_translate_output.stderr).unwrap()

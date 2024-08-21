@@ -1,20 +1,24 @@
 use las::raw::Header;
 use std::fs::{create_dir_all, write, File};
+use std::io::{stdout, Write};
 use std::path::PathBuf;
 use std::process::{Command, ExitStatus};
+use std::time::Instant;
 
 pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
     laz_path: &PathBuf,
     output_dir_path: &PathBuf,
 ) {
+    print!("Executing PDAL pipeline");
+    let _ = stdout().flush();
+    let start = Instant::now();
+
     let mut file = File::open(&laz_path).unwrap();
     let header = Header::read_from(&mut file).unwrap();
     let min_x = header.min_x.round() as i64;
     let min_y = header.min_y.round() as i64;
     let max_x = header.max_x.round() as i64;
     let max_y = header.max_y.round() as i64;
-
-    println!("Generating PDAL pipeline json file for tile");
 
     let dem_path = output_dir_path.join("dem.tif");
     let dem_low_resolution_path = output_dir_path.join("dem-low-resolution.tif");
@@ -103,16 +107,15 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
 
     write(&pipeline_path, pdal_pipeline).expect("Unable to write pipeline file");
 
-    println!("Executing PDAL pipeline.");
-
     let pdal_output = Command::new("pdal")
         .args(["pipeline", &pipeline_path.to_str().unwrap()])
         .output()
         .expect("failed to execute pdal pipeline command");
 
-    if ExitStatus::success(&pdal_output.status) {
-        println!("{}", String::from_utf8(pdal_output.stdout).unwrap());
-    } else {
+    if !ExitStatus::success(&pdal_output.status) {
         println!("{}", String::from_utf8(pdal_output.stderr).unwrap());
     }
+
+    let duration = start.elapsed();
+    println!(" -> Done in {:.1?}", duration);
 }

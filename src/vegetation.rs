@@ -6,7 +6,12 @@ use crate::{
 };
 use image::{Rgba, RgbaImage};
 use imageproc::{drawing::draw_filled_rect_mut, rect::Rect};
-use std::{fs::File, path::PathBuf};
+use std::{
+    fs::File,
+    io::{stdout, Write},
+    path::PathBuf,
+    time::Instant,
+};
 use tiff::decoder::{Decoder, DecodingResult};
 
 pub fn render_vegetation(
@@ -16,7 +21,9 @@ pub fn render_vegetation(
     image_height: u32,
     config: &Config,
 ) {
-    println!("Rendering vegetation");
+    print!("Rendering vegetation");
+    let _ = stdout().flush();
+    let start = Instant::now();
 
     let vegetation_block_size_pixel =
         config.vegetation_block_size as f32 * config.dpi_resolution / INCH;
@@ -88,6 +95,9 @@ pub fn render_vegetation(
     vegetation_layer_img
         .save(vegetation_output_path)
         .expect("could not save output png");
+
+    let duration = start.elapsed();
+    println!(" -> Done in {:.1?}", duration);
 }
 
 fn get_average_pixel_value(

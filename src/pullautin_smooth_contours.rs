@@ -2,15 +2,19 @@ use core::f64;
 use shapefile::dbase::{FieldValue, Record};
 use shapefile::record::polyline::GenericPolyline;
 use shapefile::{Point, Polyline, Reader};
-use std::fs::File;
-use std::io::BufReader;
+use std::fs::{create_dir_all, File};
+use std::io::{stdout, BufReader, Write};
+use std::time::Instant;
 use tiff::decoder::{Decoder, DecodingResult};
 
 use crate::constants::BUFFER;
 use crate::tile::Tile;
 
 pub fn pullautin_smooth_contours(tile: &Tile) -> (Vec<Vec<f64>>, Vec<(Vec<f64>, Vec<f64>, f64)>) {
-    println!("Smoothing contours");
+    print!("Smoothing contours");
+    let _ = stdout().flush();
+    let start = Instant::now();
+
     let smoothing: f64 = 0.7;
     let curviness: f64 = 1.1;
 
@@ -46,7 +50,7 @@ pub fn pullautin_smooth_contours(tile: &Tile) -> (Vec<Vec<f64>>, Vec<(Vec<f64>, 
         }
     }
 
-    let contours_polylines_path = tile.dir_path.join("contours-raw.shp");
+    let contours_polylines_path = tile.dir_path.join("contours-raw").join("contours-raw.shp");
 
     let mut contours_polylines_reader: shapefile::Reader<BufReader<File>, BufReader<File>> =
         Reader::from_path(&contours_polylines_path).unwrap();
@@ -58,8 +62,11 @@ pub fn pullautin_smooth_contours(tile: &Tile) -> (Vec<Vec<f64>>, Vec<(Vec<f64>, 
 
     let table_info = contours_polylines_reader_for_table_info.into_table_info();
 
+    let contours_dir = tile.dir_path.join("contours");
+    create_dir_all(&contours_dir).expect("Could not create contours dir");
+
     let mut writer =
-        shapefile::Writer::from_path_with_info(tile.dir_path.join("contours.shp"), table_info)
+        shapefile::Writer::from_path_with_info(contours_dir.join("contours.shp"), table_info)
             .unwrap();
 
     for shape_record in contours_polylines_reader.iter_shapes_and_records_as::<Polyline, Record>() {
@@ -259,6 +266,9 @@ pub fn pullautin_smooth_contours(tile: &Tile) -> (Vec<Vec<f64>>, Vec<(Vec<f64>, 
         let _ = writer.write_shape_and_record(&smoothed_polyline, &record);
         smoothed_contours.push((x_array, y_array, height));
     }
+
+    let duration = start.elapsed();
+    println!(" -> Done in {:.1?}", duration);
 
     return (avg_alt, smoothed_contours);
 }

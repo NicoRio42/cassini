@@ -1,6 +1,10 @@
 use image::RgbaImage;
 use imageproc::drawing::draw_filled_ellipse_mut;
-use std::fs::File;
+use std::{
+    fs::File,
+    io::{stdout, Write},
+    time::Instant,
+};
 use tiff::decoder::{Decoder, DecodingResult};
 
 use crate::{
@@ -10,7 +14,9 @@ use crate::{
 };
 
 pub fn render_cliffs(tile: &Tile, image_width: u32, image_height: u32, config: &Config) {
-    println!("Rendering cliffs");
+    print!("Rendering cliffs");
+    let _ = stdout().flush();
+    let start = Instant::now();
 
     let dem_block_size_pixel = config.dem_block_size as f32 * config.dpi_resolution / INCH;
 
@@ -71,4 +77,7 @@ pub fn render_cliffs(tile: &Tile, image_width: u32, image_height: u32, config: &
     cliffs_layer_canvas
         .save(cliffs_path)
         .expect("could not save cliffs png");
+
+    let duration = start.elapsed();
+    println!(" -> Done in {:.1?}", duration);
 }

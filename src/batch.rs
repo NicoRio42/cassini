@@ -36,8 +36,6 @@ pub fn batch(number_of_threads: usize, skip_lidar: bool) {
 
             let spawned_thread = spawn(move || {
                 for tile in chunk.iter() {
-                    println!("{:?}", tile.tile.dir_path);
-
                     generate_dem_and_vegetation_density_tiff_images_from_laz_file(
                         &tile.tile.laz_path,
                         &tile.tile.dir_path,

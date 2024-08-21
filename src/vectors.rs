@@ -16,12 +16,16 @@ use shapefile::{
     Point, Polygon, Polyline,
 };
 use std::{
+    io::{stdout, Write},
     path::{Path, PathBuf},
     process::{Command, ExitStatus},
+    time::Instant,
 };
 
 pub fn render_osm_vector_shapes(tile: &Tile, image_width: u32, image_height: u32, config: &Config) {
-    println!("Transforming osm file to shapefiles");
+    print!("Transforming osm file to shapefiles");
+    let _ = stdout().flush();
+    let start = Instant::now();
 
     let scale_factor = config.dpi_resolution / INCH;
     let shapes_outlput_path = tile.dir_path.join("shapes");
@@ -44,13 +48,16 @@ pub fn render_osm_vector_shapes(tile: &Tile, image_width: u32, image_height: u32
         .output()
         .expect("failed to execute ogr2ogr command");
 
-    if ExitStatus::success(&ogr2ogr_output.status) {
-        println!("{}", String::from_utf8(ogr2ogr_output.stdout).unwrap());
-    } else {
+    if !ExitStatus::success(&ogr2ogr_output.status) {
         println!("{}", String::from_utf8(ogr2ogr_output.stderr).unwrap());
     }
 
-    println!("Rendering vectors");
+    let duration = start.elapsed();
+    println!(" -> Done in {:.1?}", duration);
+
+    print!("Rendering vectors");
+    let _ = stdout().flush();
+    let start = Instant::now();
 
     let multipolygons_path = shapes_outlput_path.join("multipolygons.shp");
     let multipolygons = read_as::<_, Polygon, Record>(multipolygons_path)
@@ -152,6 +159,9 @@ pub fn render_osm_vector_shapes(tile: &Tile, image_width: u32, image_height: u32
     }
 
     map_renderer.save_as(tile.dir_path.join("vectors.png"));
+
+    let duration = start.elapsed();
+    println!(" -> Done in {:.1?}", duration);
 }
 
 struct MapRenderer {

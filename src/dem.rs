@@ -3,10 +3,17 @@ use crate::{
     constants::BUFFER,
     tile::{NeighborTiles, Tile},
 };
-use std::process::{Command, ExitStatus};
+use std::{
+    fs::create_dir_all,
+    io::{stdout, Write},
+    process::{Command, ExitStatus},
+    time::Instant,
+};
 
 pub fn create_dem_with_buffer_and_slopes_tiff(tile: &Tile, neighbor_tiles: &NeighborTiles) {
-    println!("Generating dem with buffer.");
+    print!("Generating dem with buffer");
+    let _ = stdout().flush();
+    let start = Instant::now();
 
     let dem_with_buffer_path = tile.dir_path.join("dem-with-buffer.tif");
     create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "dem");
@@ -18,12 +25,7 @@ pub fn create_dem_with_buffer_and_slopes_tiff(tile: &Tile, neighbor_tiles: &Neig
         .output()
         .expect("failed to execute gdal_contour command");
 
-    if ExitStatus::success(&gdal_fillnodata_output.status) {
-        println!(
-            "{}",
-            String::from_utf8(gdal_fillnodata_output.stdout).unwrap()
-        );
-    } else {
+    if !ExitStatus::success(&gdal_fillnodata_output.status) {
         println!(
             "{}",
             String::from_utf8(gdal_fillnodata_output.stderr).unwrap()
@@ -42,21 +44,23 @@ pub fn create_dem_with_buffer_and_slopes_tiff(tile: &Tile, neighbor_tiles: &Neig
         .output()
         .expect("failed to execute gdal_contour command");
 
-    if ExitStatus::success(&gdal_fillnodata_output.status) {
-        println!(
-            "{}",
-            String::from_utf8(gdal_fillnodata_output.stdout).unwrap()
-        );
-    } else {
+    if !ExitStatus::success(&gdal_fillnodata_output.status) {
         println!(
             "{}",
             String::from_utf8(gdal_fillnodata_output.stderr).unwrap()
         );
     }
 
-    println!("Generating countours shapefiles.");
+    let duration = start.elapsed();
+    println!(" -> Done in {:.1?}", duration);
 
-    let contours_raw_path = tile.dir_path.join("contours-raw.shp");
+    print!("Generating countours shapefiles");
+    let _ = stdout().flush();
+    let start = Instant::now();
+
+    let contours_raw_dir = tile.dir_path.join("contours-raw");
+    create_dir_all(&contours_raw_dir).expect("Could not create contours-raw dir");
+    let contours_raw_path = contours_raw_dir.join("contours-raw.shp");
 
     let gdal_contours_output = Command::new("gdal_contour")
         .args([
@@ -70,19 +74,19 @@ pub fn create_dem_with_buffer_and_slopes_tiff(tile: &Tile, neighbor_tiles: &Neig
         .output()
         .expect("failed to execute gdal_contour command");
 
-    if ExitStatus::success(&gdal_contours_output.status) {
-        println!(
-            "{}",
-            String::from_utf8(gdal_contours_output.stdout).unwrap()
-        );
-    } else {
+    if !ExitStatus::success(&gdal_contours_output.status) {
         println!(
             "{}",
             String::from_utf8(gdal_contours_output.stderr).unwrap()
         );
     }
 
-    println!("Generating slopes tif image.");
+    let duration = start.elapsed();
+    println!(" -> Done in {:.1?}", duration);
+
+    print!("Generating slopes tif image");
+    let _ = stdout().flush();
+    let start = Instant::now();
 
     let slopes_path = tile.dir_path.join("slopes.tif");
 
@@ -95,9 +99,10 @@ pub fn create_dem_with_buffer_and_slopes_tiff(tile: &Tile, neighbor_tiles: &Neig
         .output()
         .expect("failed to execute gdaldem command");
 
-    if ExitStatus::success(&gdaldem_output.status) {
-        println!("{}", String::from_utf8(gdaldem_output.stdout).unwrap());
-    } else {
+    if !ExitStatus::success(&gdaldem_output.status) {
         println!("{}", String::from_utf8(gdaldem_output.stderr).unwrap());
     }
+
+    let duration = start.elapsed();
+    println!(" -> Done in {:.1?}", duration);
 }

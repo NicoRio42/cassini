@@ -2,9 +2,10 @@ use image::RgbaImage;
 use imageproc::drawing::draw_line_segment_mut;
 use shapefile::dbase::{FieldIOError, FieldWriter, WritableRecord};
 use shapefile::record::polyline::GenericPolyline;
-use shapefile::{Point, Reader};
-use std::fs::File;
-use std::io::{BufReader, Write};
+use shapefile::{Point, Reader, Writer};
+use std::fs::{create_dir_all, File};
+use std::io::{stdout, BufReader, Write};
+use std::time::Instant;
 
 struct FormLineRecord {
     id: i32,
@@ -37,7 +38,9 @@ pub fn pullautin_cull_formlines_render_contours(
     avg_alt: Vec<Vec<f64>>,
     smoothed_contours: Vec<(Vec<f64>, Vec<f64>, f64)>,
 ) {
-    println!("Culling formiles and rendering contours");
+    print!("Culling formlines and rendering contours");
+    let _ = stdout().flush();
+    let start = Instant::now();
 
     let scalefactor = 1.0;
     let formlineaddition: f64 = 17.;
@@ -171,16 +174,18 @@ pub fn pullautin_cull_formlines_render_contours(
     }
 
     let mut id: i32 = 0;
-    let contours_polylines_path = tile.dir_path.join("contours-raw.shp");
+    let contours_polylines_path = tile.dir_path.join("contours-raw").join("contours-raw.shp");
 
     let contours_polylines_reader: shapefile::Reader<BufReader<File>, BufReader<File>> =
         Reader::from_path(&contours_polylines_path).unwrap();
 
     let table_info = contours_polylines_reader.into_table_info();
 
+    let formlines_dir = tile.dir_path.join("formlines");
+    create_dir_all(&formlines_dir).expect("Could not create formlines dir");
+
     let mut writer =
-        shapefile::Writer::from_path_with_info(tile.dir_path.join("formlines.shp"), table_info)
-            .unwrap();
+        Writer::from_path_with_info(formlines_dir.join("formlines.shp"), table_info).unwrap();
 
     for (x_array, y_array, elevation) in smoothed_contours {
         let mut x = Vec::<f64>::new();
@@ -459,6 +464,9 @@ pub fn pullautin_cull_formlines_render_contours(
     // TODO: img.save takes 8 seconds, maybe mutualize with other images saving
     img.save(tile.dir_path.join("contours.png"))
         .expect("could not save output png");
+
+    let duration = start.elapsed();
+    println!(" -> Done in {:.1?}", duration);
 }
 
 fn write_formline_shape_to_shapefile(

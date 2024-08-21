@@ -1,7 +1,14 @@
+use std::{
+    io::{stdout, Write},
+    time::Instant,
+};
+
 use crate::{canvas::Canvas, tile::Tile};
 
 pub fn render_full_map_to_png(tile: &Tile, image_width: u32, image_height: u32) {
-    println!("Rendering map to png");
+    print!("Rendering map to png");
+    let _ = stdout().flush();
+    let start = Instant::now();
 
     let mut full_map_canvas = Canvas::new(image_width as i32, image_height as i32);
 
@@ -20,5 +27,8 @@ pub fn render_full_map_to_png(tile: &Tile, image_width: u32, image_height: u32) 
     full_map_canvas.overlay(&mut vectors_canvas, 0.0, 0.0);
 
     let full_map_path = tile.dir_path.join("full-map.png");
-    full_map_canvas.save_as(&full_map_path.to_str().unwrap())
+    full_map_canvas.save_as(&full_map_path.to_str().unwrap());
+
+    let duration = start.elapsed();
+    println!(" -> Done in {:.1?}", duration);
 }
