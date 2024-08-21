@@ -31,7 +31,7 @@ jobs:
           command: c
           files: |
             cassini
-            LICENSE
+            LICENSE.md
             README.md
           outPath: '${{ runner.temp }}/cassini-x86_64-linux.tar.gz'
 
