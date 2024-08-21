@@ -5,39 +5,6 @@ use std::{
 
 use crate::{constants::BUFFER, tile::TileWithNeighbors};
 
-pub fn _download_laz_files_if_needed(
-    min_x: u64,
-    min_y: u64,
-    max_x: u64,
-    max_y: u64,
-    macro_tile_id: String,
-) {
-    for x in [min_x / 1000, max_x / 1000] {
-        for y in [min_y / 1000 + 1, max_y / 1000 + 1] {
-            let file_name = format!("LHD_FXX_{:0>4}_{:0>4}_PTS_C_LAMB93_IGN69.copc.laz", x, y);
-            let path = Path::new("in").join(&file_name);
-
-            if path.exists() {
-                println!("{} already downloaded", file_name);
-                continue;
-            }
-
-            println!("Downloading {}", file_name);
-
-            let download_output = Command::new("wget")
-                .args(["-P", "in" , &format!("https://storage.sbg.cloud.ovh.net/v1/AUTH_63234f509d6048bca3c9fd7928720ca1/ppk-lidar/{}/{}", macro_tile_id, file_name)])
-                .output()
-                .expect("failed to execute gdal_contour command");
-
-            if ExitStatus::success(&download_output.status) {
-                println!("{}", String::from_utf8(download_output.stdout).unwrap());
-            } else {
-                println!("{}", String::from_utf8(download_output.stderr).unwrap());
-            }
-        }
-    }
-}
-
 pub fn download_osm_files_for_all_tiles_if_needed(tiles: &Vec<TileWithNeighbors>) {
     for tile in tiles {
         download_osm_file_if_needed(

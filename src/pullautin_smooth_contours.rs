@@ -1,11 +1,9 @@
 use core::f64;
-use std::collections::HashMap;
-use std::fs::File;
-use std::io::{BufReader, BufWriter, Write};
-
-use shapefile::dbase::{FieldValue, Record, WritableRecord};
+use shapefile::dbase::{FieldValue, Record};
 use shapefile::record::polyline::GenericPolyline;
-use shapefile::{read_as, Point, Polyline, Reader};
+use shapefile::{Point, Polyline, Reader};
+use std::fs::File;
+use std::io::BufReader;
 use tiff::decoder::{Decoder, DecodingResult};
 
 use crate::constants::BUFFER;
@@ -13,17 +11,12 @@ use crate::tile::Tile;
 
 pub fn pullautin_smooth_contours(tile: &Tile) -> (Vec<Vec<f64>>, Vec<(Vec<f64>, Vec<f64>, f64)>) {
     println!("Smooth curves...");
-    let scalefactor: f64 = 1.0;
     let smoothing: f64 = 0.7;
     let curviness: f64 = 1.1;
-    let indexcontours: f64 = 25.;
-    let contour_interval: f64 = 5.0;
-    let halfinterval = contour_interval / 2.0 * scalefactor;
 
     let size: f64 = 2.0;
     let xstart: f64 = (tile.min_x - BUFFER as i64) as f64;
     let ystart: f64 = (tile.min_y - BUFFER as i64) as f64;
-
     let xmax: u64 = (tile.max_x + BUFFER as i64 - xstart as i64) as u64 / 2;
     let ymax: u64 = (tile.max_y + BUFFER as i64 - ystart as i64) as u64 / 2;
 

@@ -1,9 +1,27 @@
 use image::RgbaImage;
 use imageproc::drawing::draw_line_segment_mut;
 use rustc_hash::FxHashMap as HashMap;
-use shapefile::Reader;
-use std::fs::{self, File};
-use std::io::{BufReader, BufWriter, Write};
+use shapefile::dbase::{FieldIOError, FieldWriter, WritableRecord};
+use shapefile::record::polyline::GenericPolyline;
+use shapefile::{Point, Reader};
+use std::fs::File;
+use std::io::{BufReader, Write};
+
+struct FormLineRecord {
+    id: i32,
+    elev: f64,
+}
+
+impl WritableRecord for FormLineRecord {
+    fn write_using<'a, W>(&self, field_writer: &mut FieldWriter<'a, W>) -> Result<(), FieldIOError>
+    where
+        W: Write,
+    {
+        field_writer.write_next_field_value(&self.id)?;
+        field_writer.write_next_field_value(&self.elev)?;
+        Ok(())
+    }
+}
 
 use crate::config::Config;
 use crate::constants::{BUFFER, INCH};
@@ -12,7 +30,7 @@ use crate::{
     tile::Tile,
 };
 
-pub fn pullautin_render_contours(
+pub fn pullautin_cull_formlines_render_contours(
     tile: &Tile,
     image_width: u32,
     image_height: u32,
@@ -27,7 +45,6 @@ pub fn pullautin_render_contours(
     let gaplength: f64 = 12.;
     let mut img = RgbaImage::from_pixel(image_width, image_height, TRANSPARENT);
     let formlinesteepness: f64 = 0.37;
-    let label_depressions = false;
     let buffer_in_pixels = BUFFER as f32 * (config.dpi_resolution / INCH) as f32;
     let indexcontours: f64 = 25.;
     let contour_interval: f64 = 5.0;
@@ -151,9 +168,10 @@ pub fn pullautin_render_contours(
         }
     }
 
+    let mut id: i32 = 0;
     let contours_polylines_path = tile.dir_path.join("contours-raw.shp");
 
-    let mut contours_polylines_reader: shapefile::Reader<BufReader<File>, BufReader<File>> =
+    let contours_polylines_reader: shapefile::Reader<BufReader<File>, BufReader<File>> =
         Reader::from_path(&contours_polylines_path).unwrap();
 
     let table_info = contours_polylines_reader.into_table_info();
@@ -313,26 +331,20 @@ pub fn pullautin_render_contours(
         let mut gap = 0.0;
         let mut formlinestart = false;
 
+        let mut current_formline: Vec<(f64, f64)> = vec![];
+
         for i in 1..x.len() {
             if curvew != 1.5 || help2[i] || smallringtest {
                 if curvew == 1.5 {
                     if !formlinestart {
-                        // formline_out.push_str(
-                        //     format!("POLYLINE\r\n 66\r\n1\r\n  8\r\n{}\r\n  0\r\n", f_label)
-                        //         .as_str(),
-                        // );
-
+                        current_formline = vec![];
                         formlinestart = true;
                     }
-                    // formline_out.push_str(
-                    //     format!(
-                    //         "VERTEX\r\n  8\r\n{}\r\n 10\r\n{}\r\n 20\r\n{}\r\n  0\r\n",
-                    //         f_label,
-                    //         x[i] / 600.0 * 254.0 * scalefactor + x0,
-                    //         -y[i] / 600.0 * 254.0 * scalefactor + y0
-                    //     )
-                    //     .as_str(),
-                    // );
+
+                    current_formline.push((
+                        x[i] / 600.0 * 254.0 * scalefactor + x0,
+                        -y[i] / 600.0 * 254.0 * scalefactor + y0,
+                    ));
                 }
 
                 if curvew == 1.5 {
@@ -440,16 +452,40 @@ pub fn pullautin_render_contours(
                     }
                 }
             } else if formlinestart {
-                // formline_out.push_str("SEQEND\r\n  0\r\n");
+                write_formline_shape_to_shapefile(&current_formline, id, elevation, &mut writer);
+                id += 1;
                 formlinestart = false;
             }
         }
+
         if formlinestart {
-            // formline_out.push_str("SEQEND\r\n  0\r\n");
+            write_formline_shape_to_shapefile(&current_formline, id, elevation, &mut writer);
+            id += 1;
         }
     }
 
     // TODO: img.save takes 8 seconds, maybe mutualize with other images saving
     img.save(tile.dir_path.join("contours.png"))
         .expect("could not save output png");
+}
+
+fn write_formline_shape_to_shapefile(
+    current_formline: &Vec<(f64, f64)>,
+    id: i32,
+    elevation: f64,
+    writer: &mut shapefile::Writer<std::io::BufWriter<File>>,
+) {
+    let mut points: Vec<Point> = vec![];
+
+    for (x, y) in current_formline {
+        points.push(Point { x: *x, y: *y });
+    }
+
+    let record = FormLineRecord {
+        id,
+        elev: elevation,
+    };
+
+    let smoothed_polyline = GenericPolyline::new(points);
+    let _ = writer.write_shape_and_record(&smoothed_polyline, &record);
 }

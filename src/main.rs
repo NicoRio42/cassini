@@ -1,5 +1,4 @@
 mod batch;
-mod bezier;
 mod buffer;
 mod canvas;
 mod cli;
@@ -13,11 +12,9 @@ mod full_map;
 mod lidar;
 mod merge;
 mod png;
-mod pullautin_contours;
 mod pullautin_contours_render;
 mod pullautin_smooth_contours;
 mod tile;
-mod utils;
 mod vectors;
 mod vegetation;
 

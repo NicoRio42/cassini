@@ -1,4 +1,4 @@
-use crate::pullautin_contours::generate_contours_with_pullautin_algorithme;
+use crate::contours::generate_contours_with_pullautin_algorithme;
 use crate::vectors::render_osm_vector_shapes;
 use crate::INCH;
 use crate::{
