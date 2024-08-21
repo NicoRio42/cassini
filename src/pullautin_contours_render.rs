@@ -1,6 +1,5 @@
 use image::RgbaImage;
 use imageproc::drawing::draw_line_segment_mut;
-use rustc_hash::FxHashMap as HashMap;
 use shapefile::dbase::{FieldIOError, FieldWriter, WritableRecord};
 use shapefile::record::polyline::GenericPolyline;
 use shapefile::{Point, Reader};
@@ -38,6 +37,8 @@ pub fn pullautin_cull_formlines_render_contours(
     avg_alt: Vec<Vec<f64>>,
     smoothed_contours: Vec<(Vec<f64>, Vec<f64>, f64)>,
 ) {
+    println!("Culling formiles and rendering contours");
+
     let scalefactor = 1.0;
     let formlineaddition: f64 = 17.;
     let minimumgap: u32 = 30;
@@ -53,12 +54,12 @@ pub fn pullautin_cull_formlines_render_contours(
     let size: f64 = 2.0;
     let xstart: f64 = (tile.min_x - BUFFER as i64) as f64;
     let ystart: f64 = (tile.min_y - BUFFER as i64) as f64;
-    let mut steepness: HashMap<(usize, usize), f64> = HashMap::default();
     let x0 = xstart as f64;
     let y0 = ystart as f64;
 
     let sxmax: usize = (tile.max_x + BUFFER as i64 - xstart as i64) as usize / 2;
     let symax: usize = (tile.max_y + BUFFER as i64 - ystart as i64) as usize / 2;
+    let mut steepness = vec![vec![0.0f64; symax + 2]; sxmax + 2];
 
     // Building a more complex steepness matrix
     for i in 6..(sxmax - 7) {
@@ -164,7 +165,8 @@ pub fn pullautin_cull_formlines_render_contours(
             if high > val {
                 val = high;
             }
-            steepness.insert((i, j), val);
+
+            steepness[i][j] = val;
         }
     }
 
@@ -210,20 +212,10 @@ pub fn pullautin_cull_formlines_render_contours(
                 let xx = (((x[i] / 600.0 * 254.0 * scalefactor + x0) - xstart) / size).floor();
                 let yy = (((-y[i] / 600.0 * 254.0 * scalefactor + y0) - ystart) / size).floor();
                 if curvew != 1.5
-                    || steepness.get(&(xx as usize, yy as usize)).unwrap_or(&0.0)
-                        < &formlinesteepness
-                    || steepness
-                        .get(&(xx as usize, yy as usize + 1))
-                        .unwrap_or(&0.0)
-                        < &formlinesteepness
-                    || steepness
-                        .get(&(xx as usize + 1, yy as usize))
-                        .unwrap_or(&0.0)
-                        < &formlinesteepness
-                    || steepness
-                        .get(&(xx as usize + 1, yy as usize + 1))
-                        .unwrap_or(&0.0)
-                        < &formlinesteepness
+                    || &steepness[xx as usize][yy as usize] < &formlinesteepness
+                    || &steepness[xx as usize][yy as usize + 1] < &formlinesteepness
+                    || &steepness[xx as usize + 1][yy as usize] < &formlinesteepness
+                    || &steepness[xx as usize + 1][yy as usize + 1] < &formlinesteepness
                 {
                     help[i] = true;
                 }

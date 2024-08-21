@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fs};
+use std::fs;
 
 const DEFAULT_DEM_BLOCK_SIZE: u32 = 1;
 const DEFAULT_VEGETATION_BLOCK_SIZE: u32 = 1;
@@ -42,45 +42,45 @@ pub struct Config {
     pub form_lines: FormLineConfig,
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct VectorConfig {
-    pub uncrossable_body_of_water_301: HashMap<String, String>,
-    pub shallow_body_of_water_302: HashMap<String, String>,
-    pub crossable_watercourse_304: HashMap<String, String>,
-    pub small_crossable_watercourse_305: HashMap<String, String>,
-    pub minor_or_seasonal_water_channel_306: HashMap<String, String>,
-    pub uncrossable_marsh_307: HashMap<String, String>,
-    pub marsh_308: HashMap<String, String>,
-    pub cultivated_land_412: HashMap<String, String>,
-    pub orchard_413: HashMap<String, String>,
-    pub vineyard_414: HashMap<String, String>,
-    pub paved_area_501: HashMap<String, String>,
-    pub wide_road_502: HashMap<String, String>,
-    pub road_503: HashMap<String, String>,
-    pub vehicle_track_504: HashMap<String, String>,
-    pub footpath_505: HashMap<String, String>,
-    pub small_footpath_506: HashMap<String, String>,
-    pub less_distinct_small_footpath_507: HashMap<String, String>,
-    pub narrow_ride_508: HashMap<String, String>,
-    pub railway_509: HashMap<String, String>,
-    pub power_line_510: HashMap<String, String>,
-    pub major_power_line_511: HashMap<String, String>,
-    pub wall_513_1: HashMap<String, String>,
-    pub retained_wall_513_2: HashMap<String, String>,
-    pub ruined_wall_515: HashMap<String, String>,
-    pub impassable_wall_515: HashMap<String, String>,
-    pub fence_516: HashMap<String, String>,
-    pub ruined_fence_517: HashMap<String, String>,
-    pub impassable_fence_518: HashMap<String, String>,
-    pub out_of_bounds_area_520: HashMap<String, String>,
-    pub building_521: HashMap<String, String>,
-    pub canopy_522: HashMap<String, String>,
-    pub ruin_523: HashMap<String, String>,
-    pub high_tower_524: HashMap<String, String>,
-    pub prominent_line_feature_528: HashMap<String, String>,
-    pub impassable_prominent_line_feature_529: HashMap<String, String>,
-    pub stairway_532: HashMap<String, String>,
-}
+// #[derive(Serialize, Deserialize)]
+// pub struct VectorConfig {
+//     pub uncrossable_body_of_water_301: HashMap<String, String>,
+//     pub shallow_body_of_water_302: HashMap<String, String>,
+//     pub crossable_watercourse_304: HashMap<String, String>,
+//     pub small_crossable_watercourse_305: HashMap<String, String>,
+//     pub minor_or_seasonal_water_channel_306: HashMap<String, String>,
+//     pub uncrossable_marsh_307: HashMap<String, String>,
+//     pub marsh_308: HashMap<String, String>,
+//     pub cultivated_land_412: HashMap<String, String>,
+//     pub orchard_413: HashMap<String, String>,
+//     pub vineyard_414: HashMap<String, String>,
+//     pub paved_area_501: HashMap<String, String>,
+//     pub wide_road_502: HashMap<String, String>,
+//     pub road_503: HashMap<String, String>,
+//     pub vehicle_track_504: HashMap<String, String>,
+//     pub footpath_505: HashMap<String, String>,
+//     pub small_footpath_506: HashMap<String, String>,
+//     pub less_distinct_small_footpath_507: HashMap<String, String>,
+//     pub narrow_ride_508: HashMap<String, String>,
+//     pub railway_509: HashMap<String, String>,
+//     pub power_line_510: HashMap<String, String>,
+//     pub major_power_line_511: HashMap<String, String>,
+//     pub wall_513_1: HashMap<String, String>,
+//     pub retained_wall_513_2: HashMap<String, String>,
+//     pub ruined_wall_515: HashMap<String, String>,
+//     pub impassable_wall_515: HashMap<String, String>,
+//     pub fence_516: HashMap<String, String>,
+//     pub ruined_fence_517: HashMap<String, String>,
+//     pub impassable_fence_518: HashMap<String, String>,
+//     pub out_of_bounds_area_520: HashMap<String, String>,
+//     pub building_521: HashMap<String, String>,
+//     pub canopy_522: HashMap<String, String>,
+//     pub ruin_523: HashMap<String, String>,
+//     pub high_tower_524: HashMap<String, String>,
+//     pub prominent_line_feature_528: HashMap<String, String>,
+//     pub impassable_prominent_line_feature_529: HashMap<String, String>,
+//     pub stairway_532: HashMap<String, String>,
+// }
 
 #[derive(Serialize, Deserialize)]
 pub struct FormLineConfig {

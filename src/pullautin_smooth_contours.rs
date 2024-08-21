@@ -10,7 +10,7 @@ use crate::constants::BUFFER;
 use crate::tile::Tile;
 
 pub fn pullautin_smooth_contours(tile: &Tile) -> (Vec<Vec<f64>>, Vec<(Vec<f64>, Vec<f64>, f64)>) {
-    println!("Smooth curves...");
+    println!("Smoothing contours");
     let smoothing: f64 = 0.7;
     let curviness: f64 = 1.1;
 
@@ -259,8 +259,6 @@ pub fn pullautin_smooth_contours(tile: &Tile) -> (Vec<Vec<f64>>, Vec<(Vec<f64>, 
         let _ = writer.write_shape_and_record(&smoothed_polyline, &record);
         smoothed_contours.push((x_array, y_array, height));
     }
-
-    println!("Done");
 
     return (avg_alt, smoothed_contours);
 }
