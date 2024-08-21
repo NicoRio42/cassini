@@ -10,11 +10,20 @@ export default defineConfig({
         github: "https://github.com/withastro/starlight",
       },
       sidebar: [
+        { label: "The what and the why", link: "/what-and-why" },
         {
           label: "Guides",
           items: [
-            // Each item here is one entry in the navigation menu.
-            { label: "Example Guide", slug: "guides/example" },
+            {
+              label: "Installation and setup",
+              slug: "guides/installation-and-setup",
+            },
+            {
+              label: "Process a single LiDAR file",
+              slug: "guides/single-tile",
+            },
+            { label: "Batch mode", slug: "guides/batch-mode" },
+            { label: "Vector files", slug: "guides/vector-files" },
           ],
         },
         {
