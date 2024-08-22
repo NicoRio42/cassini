@@ -3,7 +3,7 @@ title: Configuration Reference
 description: A reference page in my new Starlight docs site.
 ---
 
-The following reference covers all supported configuration options in Cassini. The configuration should be in a json file in the directory you are running the `cassini` command. To generate a default configuration file, run:
+The following reference covers all supported configuration options in Cassini. The configuration should be in a `config.json` file in the directory you are running the `cassini` command. To generate a default configuration file, run:
 
 ```sh
 cassini --default-config

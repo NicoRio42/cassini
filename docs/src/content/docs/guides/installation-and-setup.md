@@ -31,6 +31,12 @@ Everytime you will open a new terminal and want to use Cassini, you will have to
 conda activate cassini
 ```
 
-## Download Cassini executable
+## Downloading Cassini executable
 
-Todo
+Go to the [Latest release page on Github](https://github.com/NicoRio42/cassini/releases/latest). Then download the tar file corresponding to your operating system. Decompress it and copy the cassini executable where you want to use it on your machine.
+
+:::caution
+Cassini is only available on Linux at the moment.
+:::
+
+If you want to make the `cassini` command globally available on you machine, you can follow [this tutorial](https://zwbetz.com/how-to-add-a-binary-to-your-path-on-macos-linux-windows/).
