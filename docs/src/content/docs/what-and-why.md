@@ -71,11 +71,17 @@ These rasters are not subject to the edges artifacts problem because:
 - Then a value is attributed to each of these cells depending on the points that it contains.
 - Thus the value does not depend on the neighborhood of the cell.
 
-Then, a buffer is added to these raster, using the adgacent tiles rasters just like in the approach described in the paragraph above. It is orders of magnitudes faster to add a buffer to a raster than to add a buffer to a LiDAR tile.
+Then, a buffer is added to these raster, using the adgacent tiles rasters just like in the approach described in the paragraph above. It is orders of magnitudes faster to add a buffer to a raster than to add a buffer to a LiDAR tile. Finally, the map is generated from these rasters.
+
+### The tradeoffs
+
+As mentioned, Cassini uses the PDAL and the GDAL libraries to process LiDAR and raster data. These libraries are very fast and efficient, but they are implemented in C++. As for now, their is no stable integration in the Rust programming language for PDAL an GDAL. Thus, they should be installed separately with Miniconda. This is much more complexe and less beginner friendly than Karttapullautin for exemple, that is a standalone program with no external runtime dependencies.
 
 ## Alternatives to Cassini
 
 ### Karttapullautin
+
+Karttapullautin is the project that inspired Cassini. It is an all-in-one tool to generate highly accurate topographic maps from LiDAR data and shapefiles data. It originally was implemented in Perl, but has recently been rewritten in Rust. It is pretty simple to start with, with a lot of configuration and customisation possibilities. It is however a Command-Line Interface, so it requires using a terminal.
 
 ### Terje Mathisen's pipeline
 
