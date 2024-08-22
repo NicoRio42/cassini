@@ -16,6 +16,7 @@ pub const BROWN: Rgba<u8> = Rgba([209, 92, 0, 255]);
 pub const VECTOR_BLUE: (u8, u8, u8) = (0, 255, 255);
 pub const VECTOR_BLACK: (u8, u8, u8) = (0, 0, 0);
 pub const VECTOR_BUILDING_GRAY: (u8, u8, u8) = (89, 89, 89);
+pub const VECTOR_PAVED_AREA_BROWN: (u8, u8, u8) = (232, 174, 128);
 
 pub const CLIFF_THICKNESS_1: f32 = 0.25;
 pub const CLIFF_THICKNESS_2: f32 = 0.35;
@@ -26,6 +27,8 @@ pub const _FORM_CONTOUR_DASH_LENGTH: f32 = 2.0;
 pub const _FORM_CONTOUR_DASH_INTERVAL_LENGTH: f32 = 0.2;
 pub const INCROSSABLE_BODY_OF_WATER_OUTLINE_WIDTH: f32 = 0.18;
 pub const BUILDING_OUTLINE_WIDTH: f32 = 0.2;
+pub const WIDE_ROAD_INNER_WIDTH: f32 = 0.45;
+pub const WIDE_ROAD_OUTER_WIDTH: f32 = 0.73;
 pub const ROAD_WIDTH: f32 = 0.35;
 pub const FOOTPATH_WIDTH: f32 = 0.25;
 pub const FOOTPATH_DASH_LENGTH: f32 = 2.0;

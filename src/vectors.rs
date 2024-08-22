@@ -5,7 +5,8 @@ use crate::{
         BUILDING_OUTLINE_WIDTH, CROSSABLE_WATERCOURSE_WIDTH, FOOTPATH_DASH_INTERVAL_LENGTH,
         FOOTPATH_DASH_LENGTH, FOOTPATH_WIDTH, INCH, INCROSSABLE_BODY_OF_WATER_OUTLINE_WIDTH,
         MARSH_LINE_SPACING, MARSH_LINE_WIDTH, ROAD_WIDTH, VECTOR_BLACK, VECTOR_BLUE,
-        VECTOR_BUILDING_GRAY,
+        VECTOR_BUILDING_GRAY, VECTOR_PAVED_AREA_BROWN, WIDE_ROAD_INNER_WIDTH,
+        WIDE_ROAD_OUTER_WIDTH,
     },
     tile::Tile,
 };
@@ -126,6 +127,20 @@ pub fn render_osm_vector_shapes(tile: &Tile, image_width: u32, image_height: u32
             None => panic!("Field 'highway' is not within polygon-dataset"),
         };
 
+        // 502 wide road
+        if highway == "secondary" {
+            map_renderer = map_renderer.draw_line(&line, VECTOR_BLACK, WIDE_ROAD_OUTER_WIDTH);
+            map_renderer =
+                map_renderer.draw_line(&line, VECTOR_PAVED_AREA_BROWN, WIDE_ROAD_INNER_WIDTH);
+            continue;
+        }
+
+        // 503 road
+        if highway == "track" {
+            map_renderer = map_renderer.draw_line(&line, VECTOR_BLACK, ROAD_WIDTH);
+            continue;
+        }
+
         // 505 footpath
         if highway == "path" || highway == "unclassified" {
             map_renderer = map_renderer.draw_dashed_line(
@@ -139,12 +154,6 @@ pub fn render_osm_vector_shapes(tile: &Tile, image_width: u32, image_height: u32
             continue;
         }
 
-        // 503 road
-        if highway == "track" {
-            map_renderer = map_renderer.draw_line(line, VECTOR_BLACK, ROAD_WIDTH);
-            continue;
-        }
-
         let waterway = match record.get("waterway") {
             Some(FieldValue::Character(Some(x))) => x,
             Some(_) => "",
@@ -153,7 +162,7 @@ pub fn render_osm_vector_shapes(tile: &Tile, image_width: u32, image_height: u32
 
         // 304 crossable watercourse
         if waterway == "stream" {
-            map_renderer = map_renderer.draw_line(line, VECTOR_BLUE, CROSSABLE_WATERCOURSE_WIDTH);
+            map_renderer = map_renderer.draw_line(&line, VECTOR_BLUE, CROSSABLE_WATERCOURSE_WIDTH);
             continue;
         }
     }
@@ -253,7 +262,7 @@ impl MapRenderer {
     #[inline]
     fn draw_line(
         mut self,
-        line: GenericPolyline<Point>,
+        line: &GenericPolyline<Point>,
         stroke_color: (u8, u8, u8),
         stroke_width: f32,
     ) -> MapRenderer {
