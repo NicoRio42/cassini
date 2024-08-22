@@ -40,7 +40,7 @@ To properly distribute the computing, a worker node should be able to render one
 
 ![An exemple of a LiDAR generated map with artifacts on the edges](../../assets/artifacts.png)
 
-On the left border of the LiDAR generated map above, you can see artifacts on contours and vegetation. There is artificially more formlines, and there is a thin vertical white band. This is because the contours and the vegetation generation algorithmes needs to know about the close neighborhood of a cell during computing, and this neighborhood is incomplete at the edges of a LiDAR file.
+On the left border of the LiDAR generated map above, you can see artifacts on contours and vegetation. There are artificially more formlines, and there is a thin vertical white band. This is because the contours and the vegetation generation algorithmes needs to know about the close neighborhood of a cell during computing, and this neighborhood is incomplete at the edges of a LiDAR file.
 
 To remedy this problem, a classic approach is to add a buffer to every tiles:
 
@@ -58,7 +58,7 @@ As mentioned in the previous paragraph, reading LiDAR points is very time consum
 
 ### The Cassini approach
 
-Cassini is designed to adress these two problems. To improve the point cloud reading speed, it uses the PDAL library to read and preprocess the LiDAR data.
+Cassini is designed to adress these two problems. To improve the point cloud reading speed, it simply uses the PDAL library to read and preprocess the LiDAR data.
 
 To solve the edges artifacts problem, it uses a much more efficient approach than the one described above. First, all LiDAR tiles are processed once with PDAL. During this step, the program produces temporary files that are not subject to the edges artifacts problem:
 
