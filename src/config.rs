@@ -4,20 +4,20 @@ use std::{
     io::Write,
 };
 
-const DEFAULT_YELLOW_THRESHOLD: f64 = 0.5;
-const DEFAULT_GREEN_THRESHOLD_1: f64 = 1.0;
-const DEFAULT_GREEN_THRESHOLD_2: f64 = 2.0;
-const DEFAULT_GREEN_THRESHOLD_3: f64 = 3.0;
-const DEFAULT_SLOPE_THRESHOLD_1: f32 = 45.;
-const DEFAULT_SLOPE_THRESHOLD_2: f32 = 55.;
-const DEFAULT_DPI_RESOLUTION: f32 = 600.0;
+const DEFAULT_YELLOW_THRESHOLD: f64 = 0.5; // Update the docs when modifying
+const DEFAULT_GREEN_THRESHOLD_1: f64 = 1.0; // Update the docs when modifying
+const DEFAULT_GREEN_THRESHOLD_2: f64 = 2.0; // Update the docs when modifying
+const DEFAULT_GREEN_THRESHOLD_3: f64 = 3.0; // Update the docs when modifying
+const DEFAULT_CLIFF_THRESHOLD_1: f32 = 45.; // Update the docs when modifying
+const DEFAULT_CLIFF_THRESHOLD_2: f32 = 55.; // Update the docs when modifying
+const DEFAULT_DPI_RESOLUTION: f32 = 600.0; // Update the docs when modifying
 
-const DEFAULT_FORM_LINES_THRESHOLD: f64 = 0.05;
-const DEFAULT_FORM_LINES_MIN_DISTANCE_TO_CONTOUR: f64 = 5.0;
-const DEFAULT_FORM_LINES_MAX_DISTANCE_TO_CONTOUR: f64 = 100.0;
-const DEFAULT_FORM_LINES_MIN_LENGTH: f64 = 10.0;
-const DEFAULT_FORM_LINES_MIN_GAP_LENGTH: f64 = 50.0;
-const DEFAULT_FORM_LINES_ADDITIONAL_TAIL_LENGTH: f64 = 15.0;
+const DEFAULT_FORM_LINES_THRESHOLD: f64 = 0.05; // Update the docs when modifying
+const DEFAULT_FORM_LINES_MIN_DISTANCE_TO_CONTOUR: f64 = 5.0; // Update the docs when modifying
+const DEFAULT_FORM_LINES_MAX_DISTANCE_TO_CONTOUR: f64 = 100.0; // Update the docs when modifying
+const DEFAULT_FORM_LINES_MIN_LENGTH: f64 = 10.0; // Update the docs when modifying
+const DEFAULT_FORM_LINES_MIN_GAP_LENGTH: f64 = 50.0; // Update the docs when modifying
+const DEFAULT_FORM_LINES_ADDITIONAL_TAIL_LENGTH: f64 = 15.0; // Update the docs when modifying
 
 #[derive(Serialize, Deserialize)]
 pub struct Config {
@@ -29,10 +29,10 @@ pub struct Config {
     pub green_threshold_2: f64,
     #[serde(default = "default_green_threshold_3")]
     pub green_threshold_3: f64,
-    #[serde(default = "default_slope_threshold_1")]
-    pub slope_threshold_1: f32,
-    #[serde(default = "default_slope_threshold_2")]
-    pub slope_threshold_2: f32,
+    #[serde(default = "default_cliff_threshold_1")]
+    pub cliff_threshold_1: f32,
+    #[serde(default = "default_cliff_threshold_2")]
+    pub cliff_threshold_2: f32,
     #[serde(default = "default_dpi_resolution")]
     pub dpi_resolution: f32,
     // #[serde(default = "FormLineConfig::default")]
@@ -136,12 +136,12 @@ fn default_green_threshold_3() -> f64 {
     DEFAULT_GREEN_THRESHOLD_3
 }
 
-fn default_slope_threshold_1() -> f32 {
-    DEFAULT_SLOPE_THRESHOLD_1
+fn default_cliff_threshold_1() -> f32 {
+    DEFAULT_CLIFF_THRESHOLD_1
 }
 
-fn default_slope_threshold_2() -> f32 {
-    DEFAULT_SLOPE_THRESHOLD_2
+fn default_cliff_threshold_2() -> f32 {
+    DEFAULT_CLIFF_THRESHOLD_2
 }
 
 fn default_dpi_resolution() -> f32 {

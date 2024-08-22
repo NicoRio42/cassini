@@ -54,9 +54,9 @@ pub fn render_cliffs(tile: &Tile, image_width: u32, image_height: u32, config: &
 
         let mut cliff_thickness: Option<f32> = None;
 
-        if slope > config.slope_threshold_2 {
+        if slope > config.cliff_threshold_2 {
             cliff_thickness = Some(CLIFF_THICKNESS_2);
-        } else if slope > config.slope_threshold_1 {
+        } else if slope > config.cliff_threshold_1 {
             cliff_thickness = Some(CLIFF_THICKNESS_1);
         }
 
