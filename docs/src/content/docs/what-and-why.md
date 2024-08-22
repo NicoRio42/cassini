@@ -13,7 +13,7 @@ This project is heavily inspired by [karttapullautin](https://github.com/rphlo/k
 Cassini is very early stage and still an experimental project. Use it at your own risks, expect API changes and bugs!
 :::
 
-## Why does Cassini exists
+## Why does Cassini exist
 
 Todo
 

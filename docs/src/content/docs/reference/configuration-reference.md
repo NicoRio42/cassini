@@ -1,6 +1,6 @@
 ---
 title: Configuration Reference
-description: A reference page in my new Starlight docs site.
+description: The reference for the Cassini configuration.
 ---
 
 The following reference covers all supported configuration options in Cassini. The configuration should be in a `config.json` file in the directory you are running the `cassini` command. To generate a default configuration file, run:
@@ -56,7 +56,7 @@ The number of points above witch a one metter by one metter cell will be medium 
 
 ```json
 {
-  "green_threshold_1": 2.0
+  "green_threshold_2": 2.0
 }
 ```
 
@@ -73,7 +73,7 @@ The number of points above witch a one metter by one metter cell will be dark gr
 
 ```json
 {
-  "green_threshold_1": 3.0
+  "green_threshold_3": 3.0
 }
 ```
 

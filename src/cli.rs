@@ -1,5 +1,6 @@
 use clap::Parser;
 
+// Update the docs when modifying
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 pub struct Args {
