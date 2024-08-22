@@ -30,11 +30,48 @@ However, there is some reasons that pushed me to develop my own rendering engine
 
 ### The point cloud reading bottleneck
 
-A LiDAR file is basically just a list of millions of 3 dimensions points (with some metadata). To process it, a program should at some point loop other all these points, witch is a very time consuming step. Karttapullautin uses the popular `las` Rust library to do so. For some reason (that I ignore), this library performs worst than the C++ equivalent programs (PDAL or LasTools).
+A LiDAR file is basically just a list of millions of 3 dimensions points (with some metadata). To process it, a program should at some point loop other all these points, witch is a very time consuming step. Karttapullautin uses the popular [`las` Rust library](https://crates.io/crates/las) to do so. For some reason (that I ignore), this library performs worst than the C++ equivalent programs (PDAL or LasTools).
 
 ### The edges artifacts problem
 
+The surface area of France is 551,695 square kilometers. This means that there is 551,695 one kilometer large tiles to process to generate the Mapant.fr map. This is way too much work for one computer, so it should be distributed on several machines.
+
+To properly distribute the computing, a worker node should be able to render one tile after another independently. This introduces another problem: the edges artifacts problem.
+
+![An exemple of a LiDAR generated map with artifacts on the edges](../../assets/artifacts.png)
+
+On the left border of the LiDAR generated map above, you can see artifacts on contours and vegetation. There is artificially more formlines, and there is a thin vertical white band. This is because the contours and the vegetation generation algorithmes needs to know about the close neighborhood of a cell during computing, and this neighborhood is incomplete at the edges of a LiDAR file.
+
+To remedy this problem, a classic approach is to add a buffer to every tiles:
+
+- You download the 8 adjacent LiDAR tiles.
+- You generate a new LiDAR tile with a 200 meters buffer all around it.
+- You generate the map for this tile (with Karttapullautin).
+- You crop the resulting image to the original tile extent
+
+This way the artifacts are cropped away from the resulting image. This technique has the advantage of being simple. However, it is very inefficient. The problem is that:
+
+- All the points of the 9 tiles (the targeted tile and the 8 adgacent ones) have to be read to create the tile with buffer
+- Then, all the points from the buffered tile have to be read during the map generation
+
+As mentioned in the previous paragraph, reading LiDAR points is very time consuming. It consists in a large part of the processing pipeline. With this approach, 10 times more points have to be read than if you could just directly process the original tile without buffer.
+
 ### The Cassini approach
+
+Cassini is designed to adress these two problems. To improve the point cloud reading speed, it uses the PDAL library to read and preprocess the LiDAR data.
+
+To solve the edges artifacts problem, it uses a much more efficient approach than the one described above. First, all LiDAR tiles are processed once with PDAL. During this step, the program produces temporary files that are not subject to the edges artifacts problem:
+
+- A Digital Elevation Model, representing the terrain elevation
+- A set of vegetation density rasters (one for low vegetation, and one for high vegetation)
+
+These rasters are not subject to the edges artifacts problem because:
+
+- The tile's extent area is clipped to one meter by one meter cells.
+- Then a value is attributed to each of these cells depending on the points that it contains.
+- Thus the value does not depend on the neighborhood of the cell.
+
+Then, a buffer is added to these raster, using the adgacent tiles rasters just like in the approach described in the paragraph above. It is orders of magnitudes faster to add a buffer to a raster than to add a buffer to a LiDAR tile.
 
 ## Alternatives to Cassini
 
