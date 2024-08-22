@@ -21,6 +21,7 @@ mod vegetation;
 use batch::batch;
 use clap::Parser;
 use cli::Args;
+use config::generate_default_config;
 use constants::INCH;
 use las::raw::Header;
 use lidar::generate_dem_and_vegetation_density_tiff_images_from_laz_file;
@@ -30,6 +31,11 @@ use tile::{NeighborTiles, Tile};
 
 fn main() {
     let args = Args::parse();
+
+    if args.default_config {
+        generate_default_config();
+        return;
+    }
 
     if args.batch {
         let start = Instant::now();

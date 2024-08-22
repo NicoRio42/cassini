@@ -1,7 +1,7 @@
 use crate::{
     buffer::create_tif_with_buffer,
     config::Config,
-    constants::{BUFFER, GREEN_1, GREEN_2, GREEN_3, INCH, WHITE, YELLOW},
+    constants::{BUFFER, GREEN_1, GREEN_2, GREEN_3, INCH, VEGETATION_BLOCK_SIZE, WHITE, YELLOW},
     tile::{NeighborTiles, Tile},
 };
 use image::{Rgba, RgbaImage};
@@ -25,9 +25,7 @@ pub fn render_vegetation(
     let _ = stdout().flush();
     let start = Instant::now();
 
-    let vegetation_block_size_pixel =
-        config.vegetation_block_size as f32 * config.dpi_resolution / INCH;
-
+    let vegetation_block_size_pixel = VEGETATION_BLOCK_SIZE as f32 * config.dpi_resolution / INCH;
     let casted_vegetation_block_size_pixel = vegetation_block_size_pixel.ceil() as u32;
 
     create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "high-vegetation");
@@ -66,11 +64,11 @@ pub fn render_vegetation(
 
             // println!("{}", medium_vegetation_density);
 
-            if medium_vegetation_density > config.green_3_threshold {
+            if medium_vegetation_density > config.green_threshold_3 {
                 green_color = Some(GREEN_3);
-            } else if medium_vegetation_density > config.green_2_threshold {
+            } else if medium_vegetation_density > config.green_threshold_2 {
                 green_color = Some(GREEN_2);
-            } else if medium_vegetation_density > config.green_1_threshold {
+            } else if medium_vegetation_density > config.green_threshold_1 {
                 green_color = Some(GREEN_1);
             }
 

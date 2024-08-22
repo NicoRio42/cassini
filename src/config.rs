@@ -1,12 +1,13 @@
 use serde::{Deserialize, Serialize};
-use std::fs;
+use std::{
+    fs::{self, File},
+    io::Write,
+};
 
-const DEFAULT_DEM_BLOCK_SIZE: u32 = 1;
-const DEFAULT_VEGETATION_BLOCK_SIZE: u32 = 1;
 const DEFAULT_YELLOW_THRESHOLD: f64 = 0.5;
-const DEFAULT_GREEN_1_THRESHOLD: f64 = 1.0;
-const DEFAULT_GREEN_2_THRESHOLD: f64 = 2.0;
-const DEFAULT_GREEN_3_THRESHOLD: f64 = 3.0;
+const DEFAULT_GREEN_THRESHOLD_1: f64 = 1.0;
+const DEFAULT_GREEN_THRESHOLD_2: f64 = 2.0;
+const DEFAULT_GREEN_THRESHOLD_3: f64 = 3.0;
 const DEFAULT_SLOPE_THRESHOLD_1: f32 = 45.;
 const DEFAULT_SLOPE_THRESHOLD_2: f32 = 55.;
 const DEFAULT_DPI_RESOLUTION: f32 = 600.0;
@@ -20,26 +21,22 @@ const DEFAULT_FORM_LINES_ADDITIONAL_TAIL_LENGTH: f64 = 15.0;
 
 #[derive(Serialize, Deserialize)]
 pub struct Config {
-    #[serde(default = "default_dem_block_size")]
-    pub dem_block_size: u32,
-    #[serde(default = "default_vegetation_block_size")]
-    pub vegetation_block_size: u32,
     #[serde(default = "default_yellow_threshold")]
     pub yellow_threshold: f64,
-    #[serde(default = "default_green_1_threshold")]
-    pub green_1_threshold: f64,
-    #[serde(default = "default_green_2_threshold")]
-    pub green_2_threshold: f64,
-    #[serde(default = "default_green_3_threshold")]
-    pub green_3_threshold: f64,
+    #[serde(default = "default_green_threshold_1")]
+    pub green_threshold_1: f64,
+    #[serde(default = "default_green_threshold_2")]
+    pub green_threshold_2: f64,
+    #[serde(default = "default_green_threshold_3")]
+    pub green_threshold_3: f64,
     #[serde(default = "default_slope_threshold_1")]
     pub slope_threshold_1: f32,
     #[serde(default = "default_slope_threshold_2")]
     pub slope_threshold_2: f32,
     #[serde(default = "default_dpi_resolution")]
     pub dpi_resolution: f32,
-    #[serde(default = "FormLineConfig::default")]
-    pub form_lines: FormLineConfig,
+    // #[serde(default = "FormLineConfig::default")]
+    // pub form_lines: FormLineConfig,
 }
 
 // #[derive(Serialize, Deserialize)]
@@ -83,7 +80,7 @@ pub struct Config {
 // }
 
 #[derive(Serialize, Deserialize)]
-pub struct FormLineConfig {
+pub struct _FormLineConfig {
     #[serde(default = "default_form_lines_threshold")]
     pub threshold: f64,
     #[serde(default = "default_form_lines_min_distance_to_contour")]
@@ -98,8 +95,8 @@ pub struct FormLineConfig {
     pub additional_tail_length: f64,
 }
 
-impl FormLineConfig {
-    fn default() -> Self {
+impl _FormLineConfig {
+    fn _default() -> Self {
         Self {
             threshold: DEFAULT_FORM_LINES_THRESHOLD,
             min_distance_to_contour: DEFAULT_FORM_LINES_MIN_DISTANCE_TO_CONTOUR,
@@ -116,28 +113,27 @@ pub fn get_config() -> Config {
     return serde_json::from_str(&raw_config).unwrap();
 }
 
-fn default_dem_block_size() -> u32 {
-    DEFAULT_DEM_BLOCK_SIZE
-}
-
-fn default_vegetation_block_size() -> u32 {
-    DEFAULT_VEGETATION_BLOCK_SIZE
+pub fn generate_default_config() {
+    let default_config: Config = serde_json::from_str("{}").unwrap();
+    let json_string = serde_json::to_string_pretty(&default_config).unwrap();
+    let mut file = File::create("config.json").unwrap();
+    file.write_all(json_string.as_bytes()).unwrap();
 }
 
 fn default_yellow_threshold() -> f64 {
     DEFAULT_YELLOW_THRESHOLD
 }
 
-fn default_green_1_threshold() -> f64 {
-    DEFAULT_GREEN_1_THRESHOLD
+fn default_green_threshold_1() -> f64 {
+    DEFAULT_GREEN_THRESHOLD_1
 }
 
-fn default_green_2_threshold() -> f64 {
-    DEFAULT_GREEN_2_THRESHOLD
+fn default_green_threshold_2() -> f64 {
+    DEFAULT_GREEN_THRESHOLD_2
 }
 
-fn default_green_3_threshold() -> f64 {
-    DEFAULT_GREEN_3_THRESHOLD
+fn default_green_threshold_3() -> f64 {
+    DEFAULT_GREEN_THRESHOLD_3
 }
 
 fn default_slope_threshold_1() -> f32 {

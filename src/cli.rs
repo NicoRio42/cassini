@@ -11,4 +11,6 @@ pub struct Args {
     pub batch: bool,
     #[arg(long)]
     pub threads: Option<usize>,
+    #[arg(long)]
+    pub default_config: bool,
 }

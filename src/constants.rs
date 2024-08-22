@@ -1,5 +1,7 @@
 use image::Rgba;
 
+pub const DEM_BLOCK_SIZE: u32 = 1;
+pub const VEGETATION_BLOCK_SIZE: u32 = 1;
 pub const INCH: f32 = 254.0;
 pub const BUFFER: usize = 200;
 

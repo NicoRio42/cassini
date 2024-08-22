@@ -9,7 +9,9 @@ use tiff::decoder::{Decoder, DecodingResult};
 
 use crate::{
     config::Config,
-    constants::{BLACK, BUFFER, CLIFF_THICKNESS_1, CLIFF_THICKNESS_2, INCH, TRANSPARENT},
+    constants::{
+        BLACK, BUFFER, CLIFF_THICKNESS_1, CLIFF_THICKNESS_2, DEM_BLOCK_SIZE, INCH, TRANSPARENT,
+    },
     tile::Tile,
 };
 
@@ -18,7 +20,7 @@ pub fn render_cliffs(tile: &Tile, image_width: u32, image_height: u32, config: &
     let _ = stdout().flush();
     let start = Instant::now();
 
-    let dem_block_size_pixel = config.dem_block_size as f32 * config.dpi_resolution / INCH;
+    let dem_block_size_pixel = DEM_BLOCK_SIZE as f32 * config.dpi_resolution / INCH;
 
     let slopes_path = tile.dir_path.join("slopes.tif");
     let slopes_tif_file = File::open(slopes_path).expect("Cannot find slopes tif image!");
