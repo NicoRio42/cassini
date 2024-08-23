@@ -7,7 +7,7 @@ This document will guide you to install Cassini and all its dependencies on your
 
 ## Installing PDAL and GDAL
 
-Cassini uses the [PDAL](https://pdal.io) and the [GDAL](https://gdal.org) to process LiDAR and shapefiles data. To use Cassini, you first need to install them on your machine.
+Cassini uses the [PDAL](https://pdal.io) and the [GDAL](https://gdal.org) libraries to process LiDAR and shapefiles data. To use Cassini, you first need to install them on your machine.
 
 The easiest way to install PDAL and GDAL is with Miniconda. Follow [this link](https://docs.anaconda.com/miniconda/#quick-command-line-install) and copy past the commmand line instruction to a terminal to install Miniconda.
 

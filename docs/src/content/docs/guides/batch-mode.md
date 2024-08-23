@@ -1,6 +1,20 @@
 ---
-title: Process a single LiDAR file
-description: A guide to generate a map with Cassini.
+title: Process several LiDAR files
+description: A guide to generate a map with Cassini in batch mode.
 ---
 
-Todo
+If you want to generate a map for a large area, you might need to process several LiDAR files together. You can do so by passing the `--batch` flag to the `cassini` command.
+
+```sh
+cassini --batch
+```
+
+You will need to put your LiDAR files in a directory named `in` at the root of the directory in which you are executing Cassini. The output tiles and the merged map will be put in a directory named `out`.
+
+If you are not happy with the result (too few cliffs, too much green...), you can modify the configuration and re-generate the map while skipping the LiDAR preprocessing step (which is the most time consuming part) with the `--skip-lidar` flag:
+
+```sh
+cassini --batch --skip-lidar
+```
+
+Check the [configuration reference](/reference/configuration-reference/) to learn more about all the configuration options.

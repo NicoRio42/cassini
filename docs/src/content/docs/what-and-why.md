@@ -13,6 +13,10 @@ This project is heavily inspired by [Karttapullautin](https://github.com/rphlo/k
 Cassini is very early stage and still an experimental project. Use it at your own risks, expect API changes and bugs!
 :::
 
+:::note[Did you know?]
+Cassini is (humbly) named after the [Cassini map](https://en.wikipedia.org/wiki/Cassini_map), which is the first topographic and geometric map made of the Kingdom of France as a whole, by the Cassini family in the 1700's.
+:::
+
 ## Why does Cassini exist
 
 Cassini is developped to be the main rendering engine for the [Mapant.fr](https://mapant.fr) project. It consists in generating the most precise topographic map of France out of freely available LiDAR data and shapefiles data. It is inspired by its predecessors:
@@ -51,10 +55,10 @@ To remedy this problem, a classic approach is to add a buffer to every tiles:
 
 This way the artifacts are cropped away from the resulting image. This technique has the advantage of being simple. However, it is very inefficient. The problem is that:
 
-- All the points of the 9 tiles (the targeted tile and the 8 adgacent ones) have to be read to create the tile with buffer
-- Then, all the points from the buffered tile have to be read during the map generation
+- All the points of the 9 tiles (the targeted tile and the 8 adgacent ones) have to be read to create the buffered tile.
+- Then, all the points from the buffered tile have to be read during the map generation.
 
-As mentioned in the previous paragraph, reading LiDAR points is very time consuming. It consists in a large part of the processing pipeline. With this approach, 10 times more points have to be read than if you could just directly process the original tile without buffer.
+As mentioned in the previous paragraph, reading LiDAR points is very time consuming. It consists in a large part of the processing pipeline. With this approach, 10 times more points have to be read, compared to if you could just directly process the original tile without buffer.
 
 ### The Cassini approach
 
@@ -71,7 +75,7 @@ These rasters are not subject to the edges artifacts problem because:
 - Then a value is attributed to each of these cells depending on the points that it contains.
 - Thus the value does not depend on the neighborhood of the cell.
 
-Then, a buffer is added to these raster, using the adgacent tiles rasters just like in the approach described in the paragraph above. It is orders of magnitudes faster to add a buffer to a raster than to add a buffer to a LiDAR tile. Finally, the map is generated from these rasters.
+Then, a buffer is added to these raster, using the adgacent tiles rasters just like in the approach described in the paragraph above. It is orders of magnitudes faster to add a buffer to a raster than to add a buffer to a LiDAR tile. Finally, the map is generated from these rasters. This approach guaranties that every LiDAR points are only read once.
 
 ### The tradeoffs
 
@@ -81,8 +85,12 @@ As mentioned, Cassini uses the PDAL and the GDAL libraries to process LiDAR and 
 
 ### Karttapullautin
 
-Karttapullautin is the project that inspired Cassini. It is an all-in-one tool to generate highly accurate topographic maps from LiDAR data and shapefiles data. It originally was implemented in Perl, but has recently been rewritten in Rust. It is pretty simple to start with, with a lot of configuration and customisation possibilities. It is however a Command-Line Interface, so it requires using a terminal.
+[Karttapullautin](https://routegadget.net/karttapullautin/) is the project that inspired Cassini. It is an all-in-one tool to generate highly accurate topographic maps from LiDAR data and shapefiles data. It originally was implemented in Perl by [Jarkko Ryyppö](https://x.com/RouteGadget), but has recently been rewritten in Rust by [Raphaël Stefanini](https://www.linkedin.com/in/rphlo/). It is pretty simple to start with, with a lot of configuration and customisation possibilities. It is however a Command-Line Interface (like Cassini), so it requires using a terminal.
 
 ### Terje Mathisen's pipeline
 
+In 2013, Terje Mathisen wrote [an article](https://tmsw.no/mapping/basemap_generation.html) about a pipeline he developed to generate maps from LiDAR data. Being an orienteering mapper, his main goal was to output a base map to help him during his mapping surveys. His pipeline uses the LasTools library to preprocess the LiDAR files, the same way that Cassini uses PDAL to do so. LasTools being a licenced software, it constraints the usage of this pipeline. However, the accompanying article is very interesting by explaining the process step by step.
+
 ### OCAD
+
+The [OCAD](https://www.ocad.com/) mapping software supports map generation from LiDAR data in its latest versions. Unlike the previously mentioned tools, OCAD is a desktop application with a Graphical User Interface (GUI). It makes it accessible to users with less knowledges of Computer Science and programming. However, OCAD is a licenced software.

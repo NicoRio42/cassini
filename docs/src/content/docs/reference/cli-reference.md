@@ -23,7 +23,7 @@ cassini ./path/to/my/tile.laz
 
 </p>
 
-The `--batch` flag will enable batch processing several LiDAR files at a time. You should put them in a directory named `in` at the root of the directory where you are executing Cassini. The output tiles and the merged map will be put in a directory named `out`;
+The `--batch` flag will enable batch processing several LiDAR files at a time. You should put them in a directory named `in` at the root of the directory where you are executing Cassini. The output tiles and the merged map will be put in a directory named `out`:
 
 ```sh
 cassini --batch

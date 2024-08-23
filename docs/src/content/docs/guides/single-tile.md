@@ -11,8 +11,10 @@ cassini ./path/to/my/tile.laz
 
 It will generate a png map in the `out/tile` directory.
 
-If you are not happy with the result (too few cliffs, too much green...), you can modify the configuration and re-generate the map while skipping the LiDAR preprocessing part (which is the most time consuming part) with the `--skip-lidar` flag:
+If you are not happy with the result (too few cliffs, too much green...), you can modify the configuration and re-generate the map while skipping the LiDAR preprocessing step (which is the most time consuming part) with the `--skip-lidar` flag:
 
 ```sh
 cassini ./path/to/my/tile.laz --skip-lidar
 ```
+
+Check the [configuration reference](/reference/configuration-reference/) to learn more about all the configuration options.
