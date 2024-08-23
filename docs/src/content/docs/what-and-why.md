@@ -10,7 +10,7 @@ Cassini is a software that generates highly accurate topographic maps from [LiDA
 This project is heavily inspired by [Karttapullautin](https://github.com/rphlo/karttapullautin/tree/master) and [Terje Mathisen's pipeline](https://tmsw.no/mapping/basemap_generation.html). Unlike them, it uses the [PDAL](https://pdal.io) and the [GDAL](https://gdal.org) libraries to preprocess the LiDAR data.
 
 :::caution
-Cassini is very early stage and still an experimental project. Use it at your own risks, expect API changes and bugs!
+Cassini is very early stage and still an experimental project. Use it at your own risks, expect API changes and bugs! Please [fill an issue](https://github.com/NicoRio42/cassini/issues/new) if you find any bug.
 :::
 
 :::note[Did you know?]
