@@ -6,6 +6,10 @@ export default defineConfig({
   integrations: [
     starlight({
       title: "Cassini",
+      logo: {
+        dark: "./src/assets/logo-dark.svg",
+        light: "./src/assets/logo-light.svg",
+      },
       social: {
         github: "https://github.com/NicoRio42/cassini",
       },
