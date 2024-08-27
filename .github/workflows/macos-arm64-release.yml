@@ -1,0 +1,47 @@
+name: "Build for macos arm64"
+on:
+  release:
+    types: [created]
+
+jobs:
+  release:
+    name: release macos arm64
+    runs-on: macos-14
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Rust
+        uses: hecrj/setup-rust-action@v1.4.0
+        with:
+          rust-version: stable
+
+      - name: Compile
+        shell: bash
+        run: |
+          cargo clean
+          cargo build --release
+
+      - run: cp target/release/cassini .
+
+      - name: 'Compress binaries'
+        if: true
+        uses: a7ul/tar-action@v1.1.2
+        with:
+          command: c
+          files: |
+            pullauta
+            LICENCE.md
+            README.md
+          outPath: '${{ runner.temp }}/cassini-arm64-macos.tar.gz'
+
+      - name: 'Release binaries'
+        if: true
+        uses: pragmatrix/release-action@v1.11.1-rs
+        with:
+          allowUpdates: true
+          replacesArtifacts: true
+          artifacts: '${{ runner.temp }}/cassini-arm64-macos.tar.gz'
+          token: ${{ secrets.GITHUB_TOKEN }}
+          artifactErrorsFailBuild: true
+          prerelease: true
