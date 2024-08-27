@@ -35,6 +35,7 @@ export default defineConfig({
           autogenerate: { directory: "reference" },
         },
       ],
+      favicon: "./src/assets/favicon.ico",
     }),
   ],
 });
