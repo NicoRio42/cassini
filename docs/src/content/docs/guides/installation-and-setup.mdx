@@ -1,0 +1,91 @@
+---
+title: Installation and Setup
+description: A guide to generate a map with Cassini.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+This document will guide you to install Cassini and all its dependencies on your machine.
+
+## Installing PDAL and GDAL
+
+Cassini uses the [PDAL](https://pdal.io) and the [GDAL](https://gdal.org) libraries to process LiDAR and shapefiles data. To use Cassini, you first need to install them on your machine.
+
+The easiest way to install PDAL and GDAL is with Miniconda. Bellow are some command line instructions reproduced from [Miniconda documentation](https://docs.anaconda.com/miniconda/#quick-command-line-install) to quickly install miniconda:
+
+<Tabs syncKey="os">
+  <TabItem label="Windows" icon="seti:windows">
+>    These three commands quickly and quietly install the latest 64-bit version of the installer and then clean up after themselves. To install a different version or architecture of Miniconda for Windows, change the name of the `.exe` installer in the `curl` command.
+>
+>    ```sh
+>    curl https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe -o miniconda.exe
+>    start /wait "" miniconda.exe /S
+>    del miniconda.exe
+>    ```
+>
+>    After installing, open the “Anaconda Prompt (miniconda3)” program to use Miniconda3. For the Powershell version, use “Anaconda Powershell Prompt (miniconda3)”.
+  </TabItem>
+  
+  <TabItem label="macOS" icon="apple">
+>    These four commands quickly and quietly install the latest M1 macOS version of the installer and then clean up after themselves. To install a different version or architecture of Miniconda for macOS, change the name of the `.sh` installer in the `curl` command.
+>
+>    ```sh
+>    mkdir -p ~/miniconda3
+>    curl https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-arm64.sh -o ~/miniconda3/miniconda.sh
+>    bash ~/miniconda3/miniconda.sh -b -u -p ~/miniconda3
+>    rm ~/miniconda3/miniconda.sh
+>    ```
+>
+>    After installing, initialize your newly-installed Miniconda. The following commands initialize for bash and zsh shells:
+>
+>    ```sh
+>    ~/miniconda3/bin/conda init bash
+>    ~/miniconda3/bin/conda init zsh
+>    ```
+  </TabItem>
+
+  <TabItem label="Linux" icon="linux">
+>    These four commands quickly and quietly install the latest 64-bit version of the installer and then clean up after themselves. To install a different version or architecture of Miniconda for Linux, change the name of the `.sh` installer in the `wget` command.
+> 
+>    ```sh
+>    mkdir -p ~/miniconda3
+>    wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda3/miniconda.sh
+>    bash ~/miniconda3/miniconda.sh -b -u -p ~/miniconda3
+>    rm ~/miniconda3/miniconda.sh
+>    ```
+>
+>    After installing, initialize your newly-installed Miniconda. The following commands initialize for bash and zsh shells:
+>
+>    ```sh
+>    ~/miniconda3/bin/conda init bash
+>    ~/miniconda3/bin/conda init zsh
+>    ```
+  </TabItem>
+</Tabs>
+
+
+After following these instructions, the `conda` command should be available in you terminal. To check that everything worked:
+
+```sh
+conda --version
+```
+
+This should print the version of the conda program.
+
+Then create a new miniconda environment named `cassini` with pdal and gdal installed:
+
+```sh
+conda create --yes --name cassini --channel conda-forge pdal gdal
+```
+
+Everytime you will open a new terminal and want to use Cassini, you will have to activate this environment:
+
+```sh
+conda activate cassini
+```
+
+## Downloading Cassini executable
+
+Go to the [Latest release page on Github](https://github.com/NicoRio42/cassini/releases/latest). Then download the tar file corresponding to your operating system in the "Assets" section. Decompress it and copy the cassini executable where you want to use it on your machine.
+
+If you want to make the `cassini` command globally available on you machine, you can follow [this tutorial](https://zwbetz.com/how-to-add-a-binary-to-your-path-on-macos-linux-windows/).
