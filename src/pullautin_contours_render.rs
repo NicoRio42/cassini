@@ -60,8 +60,8 @@ pub fn pullautin_cull_formlines_render_contours(
     let x0 = xstart as f64;
     let y0 = ystart as f64;
 
-    let sxmax: usize = (tile.max_x + BUFFER as i64 - xstart as i64) as usize / 2;
-    let symax: usize = (tile.max_y + BUFFER as i64 - ystart as i64) as usize / 2;
+    let sxmax: usize = ((tile.max_x + BUFFER as i64 - xstart as i64) as f64 / 2.).ceil() as usize;
+    let symax: usize = ((tile.max_y + BUFFER as i64 - ystart as i64) as f64 / 2.).ceil() as usize;
     let mut steepness = vec![vec![0.0f64; symax + 2]; sxmax + 2];
 
     // Building a more complex steepness matrix

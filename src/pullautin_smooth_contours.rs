@@ -21,8 +21,8 @@ pub fn pullautin_smooth_contours(tile: &Tile) -> (Vec<Vec<f64>>, Vec<(Vec<f64>, 
     let size: f64 = 2.0;
     let xstart: f64 = (tile.min_x - BUFFER as i64) as f64;
     let ystart: f64 = (tile.min_y - BUFFER as i64) as f64;
-    let xmax: u64 = (tile.max_x + BUFFER as i64 - xstart as i64) as u64 / 2;
-    let ymax: u64 = (tile.max_y + BUFFER as i64 - ystart as i64) as u64 / 2;
+    let xmax: u64 = ((tile.max_x + BUFFER as i64 - xstart as i64) as f64 / 2.).ceil() as u64;
+    let ymax: u64 = ((tile.max_y + BUFFER as i64 - ystart as i64) as f64 / 2.).ceil() as u64;
 
     let avg_alt = get_elevation_matrix_from_dem(tile);
     let mut steepness = vec![vec![f64::NAN; (ymax + 2) as usize]; (xmax + 2) as usize];
@@ -293,6 +293,13 @@ fn get_elevation_matrix_from_dem(tile: &Tile) -> Vec<Vec<f64>> {
     // Building avg_alt matrix and defining hmin and hmax
     for index in 0..image_data.len() {
         let x = index % usize::try_from(dem_width).unwrap();
+        let y_inverse = index / usize::try_from(dem_height).unwrap();
+
+        // Sometime there is more pixel data than it should be given the header's dimensions
+        if y_inverse > usize::try_from(dem_height).unwrap() {
+            break;
+        }
+
         let y = usize::try_from(dem_height).unwrap() - index / usize::try_from(dem_height).unwrap();
         let elevation = image_data[index] as f64;
         avg_alt[x][y] = elevation;

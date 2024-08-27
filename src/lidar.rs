@@ -39,6 +39,18 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
         max_y - min_y
     );
 
+    let gdal_dem_low_resolution_options = format!(
+        r#""binmode": true,
+        "origin_x": {},
+        "origin_y": {},
+        "width": {},
+        "height": {},"#,
+        min_x,
+        min_y,
+        ((max_x - min_x) as f64 / 2.).ceil() as i64,
+        ((max_y - min_y) as f64 / 2.).ceil() as i64
+    );
+
     let pdal_pipeline = format!(
         r#"[
     {:?},
@@ -97,7 +109,7 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
         dem_path,
         gdal_common_options,
         dem_low_resolution_path,
-        gdal_common_options,
+        gdal_dem_low_resolution_options,
         dem_path,
         medium_vegetation_path,
         gdal_common_options,
