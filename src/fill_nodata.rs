@@ -154,7 +154,15 @@ pub fn fill_nodata_in_raster(input_raster_path: &PathBuf, output_raster_path: &P
                 i += 1;
             }
 
-            if top.is_nan() && right.is_nan() && bottom.is_nan() && left.is_nan() {
+            if top.is_nan()
+                && top_right.is_nan()
+                && right.is_nan()
+                && bottom_right.is_nan()
+                && bottom.is_nan()
+                && bottom_left.is_nan()
+                && left.is_nan()
+                && top_left.is_nan()
+            {
                 continue;
             }
 
@@ -215,107 +223,211 @@ pub fn fill_nodata_in_raster(input_raster_path: &PathBuf, output_raster_path: &P
 
     let encoder = image.encoder();
 
-    match img_decoder.find_tag(Tag::XResolution).unwrap_or(None) {
-        Some(v) => {
-            encoder
-                .write_tag(Tag::XResolution, v.into_f64().unwrap())
-                .unwrap();
-        }
-        None => {}
-    }
+    let all_tags = [
+        Tag::Artist,
+        Tag::BitsPerSample,
+        Tag::CellLength,
+        Tag::CellWidth,
+        Tag::ColorMap,
+        Tag::Compression,
+        Tag::Copyright,
+        Tag::DateTime,
+        Tag::ExtraSamples,
+        Tag::FillOrder,
+        Tag::FreeByteCounts,
+        Tag::FreeOffsets,
+        Tag::GrayResponseCurve,
+        Tag::GrayResponseUnit,
+        Tag::HostComputer,
+        Tag::ImageDescription,
+        Tag::ImageLength,
+        Tag::ImageWidth,
+        Tag::Make,
+        Tag::MaxSampleValue,
+        Tag::MinSampleValue,
+        Tag::Model,
+        Tag::NewSubfileType,
+        Tag::Orientation,
+        Tag::PhotometricInterpretation,
+        Tag::PlanarConfiguration,
+        Tag::ResolutionUnit,
+        Tag::RowsPerStrip,
+        Tag::SamplesPerPixel,
+        Tag::Software,
+        Tag::StripByteCounts,
+        Tag::StripOffsets,
+        Tag::SubfileType,
+        Tag::Threshholding,
+        Tag::XResolution,
+        Tag::YResolution,
+        Tag::Predictor,
+        Tag::TileWidth,
+        Tag::TileLength,
+        Tag::TileOffsets,
+        Tag::TileByteCounts,
+        Tag::SampleFormat,
+        Tag::SMinSampleValue,
+        Tag::SMaxSampleValue,
+        Tag::JPEGTables,
+        Tag::ModelPixelScaleTag,
+        Tag::ModelTransformationTag,
+        Tag::ModelTiepointTag,
+        Tag::GeoKeyDirectoryTag,
+        Tag::GeoDoubleParamsTag,
+        Tag::GeoAsciiParamsTag,
+        Tag::GdalNodata,
+    ];
 
-    match img_decoder.find_tag(Tag::YResolution).unwrap_or(None) {
-        Some(v) => {
-            match v {
-                Value::Byte(v) => {}
-                Value::Short(v) => {}
-                Value::Signed(v) => {}
-                Value::SignedBig(v) => {}
-                Value::Unsigned(v) => {}
-                Value::UnsignedBig(v) => {}
-                Value::Float(v) => {}
-                Value::Double(v) => {}
-                Value::List(v) => {}
-                Value::Rational(v1, v2) => {}
-                Value::RationalBig(v1, v2) => {}
-                Value::SRational(v1, v2) => {}
-                Value::SRationalBig(v, _) => {}
-                Value::Ascii(v) => {}
-                Value::Ifd(v) => {}
-                Value::IfdBig(v) => {}
+    // Copying all tags from input raster to output raster
+    // TODO: DRY this monster
+    for tag in all_tags {
+        match img_decoder.find_tag(tag).unwrap_or(None) {
+            Some(v) => match v {
+                Value::Byte(v) => {
+                    let _ = encoder.write_tag(tag, v);
+                }
+                Value::Short(v) => {
+                    let _ = encoder.write_tag(tag, v);
+                }
+                Value::Signed(v) => {
+                    let _ = encoder.write_tag(tag, v);
+                }
+                Value::SignedBig(v) => {
+                    let _ = encoder.write_tag(tag, v);
+                }
+                Value::Unsigned(v) | Value::Ifd(v) => {
+                    let _ = encoder.write_tag(tag, v);
+                }
+                Value::UnsignedBig(v) | Value::IfdBig(v) => {
+                    let _ = encoder.write_tag(tag, v);
+                }
+                Value::Float(v) => {
+                    let _ = encoder.write_tag(tag, v);
+                }
+                Value::Double(v) => {
+                    let _ = encoder.write_tag(tag, v);
+                }
+                Value::List(list_value) => {
+                    let first_value_option = list_value.first();
+
+                    match first_value_option {
+                        None => {
+                            let empty_slice: &[i32] = &[];
+                            let _ = encoder.write_tag(tag, empty_slice);
+                        }
+                        Some(first_value) => match first_value {
+                            Value::Byte(v) => {
+                                let mut output_vec = vec![v.clone()];
+                                for value in &list_value {
+                                    let parsed_value = value.clone().into_u8().unwrap();
+                                    output_vec.push(parsed_value)
+                                }
+                                let _ = encoder.write_tag(tag, &output_vec[..]);
+                            }
+                            Value::Short(v) => {
+                                let mut output_vec = vec![v.clone()];
+                                for value in &list_value {
+                                    let parsed_value = value.clone().into_u16().unwrap();
+                                    output_vec.push(parsed_value)
+                                }
+                                let _ = encoder.write_tag(tag, &output_vec[..]);
+                            }
+                            Value::Signed(v) => {
+                                let mut output_vec = vec![v.clone()];
+                                for value in &list_value {
+                                    let parsed_value = value.clone().into_i32().unwrap();
+                                    output_vec.push(parsed_value)
+                                }
+                                let _ = encoder.write_tag(tag, &output_vec[..]);
+                            }
+                            Value::SignedBig(v) => {
+                                let mut output_vec = vec![v.clone()];
+                                for value in &list_value {
+                                    let parsed_value = value.clone().into_i64().unwrap();
+                                    output_vec.push(parsed_value)
+                                }
+                                let _ = encoder.write_tag(tag, &output_vec[..]);
+                            }
+                            Value::Unsigned(v) | Value::Ifd(v) => {
+                                let mut output_vec = vec![v.clone()];
+                                for value in &list_value {
+                                    let parsed_value = value.clone().into_u32().unwrap();
+                                    output_vec.push(parsed_value)
+                                }
+                                let _ = encoder.write_tag(tag, &output_vec[..]);
+                            }
+                            Value::UnsignedBig(v) | Value::IfdBig(v) => {
+                                let mut output_vec = vec![v.clone()];
+                                for value in &list_value {
+                                    let parsed_value = value.clone().into_u64().unwrap();
+                                    output_vec.push(parsed_value)
+                                }
+                                let _ = encoder.write_tag(tag, &output_vec[..]);
+                            }
+                            Value::Float(v) => {
+                                let mut output_vec = vec![v.clone()];
+                                for value in &list_value {
+                                    let parsed_value = value.clone().into_f32().unwrap();
+                                    output_vec.push(parsed_value)
+                                }
+                                let _ = encoder.write_tag(tag, &output_vec[..]);
+                            }
+                            Value::Double(v) => {
+                                let mut output_vec = vec![v.clone()];
+                                for value in &list_value {
+                                    let parsed_value = value.clone().into_f64().unwrap();
+                                    output_vec.push(parsed_value)
+                                }
+                                let _ = encoder.write_tag(tag, &output_vec[..]);
+                            }
+                            // Value::Rational(v1, v2) => {
+                            //     let _ = encoder.write_tag(tag, &[v1, v2][..]);
+                            // }
+                            // Value::RationalBig(v1, v2) => {
+                            //     let _ = encoder.write_tag(tag, &[v1, v2][..]);
+                            // }
+                            // Value::SRational(v1, v2) => {
+                            //     let _ = encoder.write_tag(tag, &[v1, v2][..]);
+                            // }
+                            // Value::SRationalBig(v1, v2) => {
+                            //     let _ = encoder.write_tag(tag, &[v1, v2][..]);
+                            // }
+                            // Value::Ascii(v) => {
+                            //     let mut output_vec = vec![&v.clone()[..]];
+                            //     for value in &list_value {
+                            //         let parsed_value = value.clone().into_string().unwrap();
+                            //         output_vec.push(&parsed_value[..])
+                            //     }
+                            //     let _ = encoder.write_tag(tag, &output_vec[..]);
+                            // }
+                            _ => {}
+                        },
+                    }
+
+                    // for value in v {
+                    //     value.into();
+                    // }
+                }
+                Value::Rational(v1, v2) => {
+                    let _ = encoder.write_tag(tag, &[v1, v2][..]);
+                }
+                Value::RationalBig(v1, v2) => {
+                    let _ = encoder.write_tag(tag, &[v1, v2][..]);
+                }
+                Value::SRational(v1, v2) => {
+                    let _ = encoder.write_tag(tag, &[v1, v2][..]);
+                }
+                Value::SRationalBig(v1, v2) => {
+                    let _ = encoder.write_tag(tag, &[v1, v2][..]);
+                }
+                Value::Ascii(v) => {
+                    let _ = encoder.write_tag(tag, &v[..]);
+                }
                 _ => {}
-            }
-            encoder
-                .write_tag(Tag::YResolution, v.into_f64().unwrap())
-                .unwrap();
+            },
+            None => {}
         }
-        None => {}
     }
-
-    match img_decoder
-        .find_tag(Tag::ModelPixelScaleTag)
-        .unwrap_or(None)
-    {
-        Some(v) => {
-            let toto = v.into_f64_vec().unwrap();
-            encoder
-                .write_tag(Tag::ModelPixelScaleTag, &[toto[0], toto[1], toto[2]][..])
-                .unwrap();
-        }
-        None => {}
-    }
-
-    match img_decoder
-        .find_tag(Tag::ModelTransformationTag)
-        .unwrap_or(None)
-    {
-        Some(v) => {
-            encoder
-                .write_tag(Tag::ModelTransformationTag, v.into_f64().unwrap())
-                .unwrap();
-        }
-        None => {}
-    }
-
-    match img_decoder.find_tag(Tag::ModelTiepointTag).unwrap_or(None) {
-        Some(v) => {
-            let toto = v.into_f64_vec().unwrap();
-            encoder
-                .write_tag(
-                    Tag::ModelTiepointTag,
-                    &[toto[0], toto[1], toto[2], toto[3], toto[4], toto[5]][..],
-                )
-                .unwrap();
-        }
-        None => {}
-    }
-
-    // match img_decoder.find_tag(Tag::GeoKeyDirectoryTag).unwrap_or(None) {
-    //     Some(v) => {
-    //         encoder
-    //             .write_tag(Tag::GeoKeyDirectoryTag, v.into_f64().unwrap())
-    //             .unwrap();
-    //     }
-    //     None => {}
-    // }
-
-    // match img_decoder.find_tag(Tag::GeoDoubleParamsTag).unwrap_or(None) {
-    //     Some(v) => {
-    //         encoder
-    //             .write_tag(Tag::GeoDoubleParamsTag, v.into_f64().unwrap())
-    //             .unwrap();
-    //     }
-    //     None => {}
-    // }
-
-    // match img_decoder.find_tag(Tag::GeoAsciiParamsTag).unwrap_or(None) {
-    //     Some(v) => {
-    //         encoder
-    //             .write_tag(Tag::GeoAsciiParamsTag, v.into_f64().unwrap())
-    //             .unwrap();
-    //     }
-    //     None => {}
-    // }
 
     image.write_data(&image_data).unwrap();
 }

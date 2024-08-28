@@ -24,6 +24,7 @@ use clap::Parser;
 use cli::Args;
 use config::generate_default_config;
 use constants::INCH;
+use fill_nodata::fill_nodata_in_raster;
 use las::raw::Header;
 use lidar::generate_dem_and_vegetation_density_tiff_images_from_laz_file;
 use png::generate_png_from_dem_vegetation_density_tiff_images_and_vector_file;
@@ -31,6 +32,14 @@ use std::{fs::File, path::Path, time::Instant};
 use tile::{NeighborTiles, Tile};
 
 fn main() {
+    fill_nodata_in_raster(
+        &Path::new("out")
+            .join("615000_6163000_616000_6164000")
+            .join("dem.tif"),
+        &Path::new("toto.tiff").to_path_buf(),
+    );
+    return;
+
     let args = Args::parse();
 
     if args.default_config {
