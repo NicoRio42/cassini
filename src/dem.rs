@@ -18,10 +18,7 @@ pub fn create_dem_with_buffer_and_slopes_tiff(tile: &Tile, neighbor_tiles: &Neig
 
     let dem_with_buffer_path = tile.dir_path.join("dem-with-buffer.tif");
     create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "dem");
-    fill_nodata_in_raster(
-        &dem_with_buffer_path,
-        &tile.dir_path.join("dem-with-buffer-filled.tif"),
-    );
+    fill_nodata_in_raster(&dem_with_buffer_path, &dem_with_buffer_path);
 
     let dem_low_resolution_with_buffer_path =
         tile.dir_path.join("dem-low-resolution-with-buffer.tif");

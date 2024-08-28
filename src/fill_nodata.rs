@@ -1,6 +1,6 @@
 use std::{fs::File, path::PathBuf};
 use tiff::{
-    decoder::{ifd::Value, Decoder, DecodingResult},
+    decoder::{Decoder, DecodingResult},
     encoder::{colortype, TiffEncoder},
     tags::Tag,
 };
@@ -154,7 +154,15 @@ pub fn fill_nodata_in_raster(input_raster_path: &PathBuf, output_raster_path: &P
                 i += 1;
             }
 
-            if top.is_nan() && right.is_nan() && bottom.is_nan() && left.is_nan() {
+            if top.is_nan()
+                && top_right.is_nan()
+                && right.is_nan()
+                && bottom_right.is_nan()
+                && bottom.is_nan()
+                && bottom_left.is_nan()
+                && left.is_nan()
+                && top_left.is_nan()
+            {
                 continue;
             }
 
@@ -218,7 +226,7 @@ pub fn fill_nodata_in_raster(input_raster_path: &PathBuf, output_raster_path: &P
     match img_decoder.find_tag(Tag::XResolution).unwrap_or(None) {
         Some(v) => {
             encoder
-                .write_tag(Tag::XResolution, v.into_f64().unwrap())
+                .write_tag(Tag::XResolution, &v.into_f64_vec().unwrap()[..])
                 .unwrap();
         }
         None => {}
@@ -226,27 +234,8 @@ pub fn fill_nodata_in_raster(input_raster_path: &PathBuf, output_raster_path: &P
 
     match img_decoder.find_tag(Tag::YResolution).unwrap_or(None) {
         Some(v) => {
-            match v {
-                Value::Byte(v) => {}
-                Value::Short(v) => {}
-                Value::Signed(v) => {}
-                Value::SignedBig(v) => {}
-                Value::Unsigned(v) => {}
-                Value::UnsignedBig(v) => {}
-                Value::Float(v) => {}
-                Value::Double(v) => {}
-                Value::List(v) => {}
-                Value::Rational(v1, v2) => {}
-                Value::RationalBig(v1, v2) => {}
-                Value::SRational(v1, v2) => {}
-                Value::SRationalBig(v, _) => {}
-                Value::Ascii(v) => {}
-                Value::Ifd(v) => {}
-                Value::IfdBig(v) => {}
-                _ => {}
-            }
             encoder
-                .write_tag(Tag::YResolution, v.into_f64().unwrap())
+                .write_tag(Tag::YResolution, &v.into_f64_vec().unwrap()[..])
                 .unwrap();
         }
         None => {}
@@ -257,9 +246,8 @@ pub fn fill_nodata_in_raster(input_raster_path: &PathBuf, output_raster_path: &P
         .unwrap_or(None)
     {
         Some(v) => {
-            let toto = v.into_f64_vec().unwrap();
             encoder
-                .write_tag(Tag::ModelPixelScaleTag, &[toto[0], toto[1], toto[2]][..])
+                .write_tag(Tag::ModelPixelScaleTag, &v.into_f64_vec().unwrap()[..])
                 .unwrap();
         }
         None => {}
@@ -271,7 +259,7 @@ pub fn fill_nodata_in_raster(input_raster_path: &PathBuf, output_raster_path: &P
     {
         Some(v) => {
             encoder
-                .write_tag(Tag::ModelTransformationTag, v.into_f64().unwrap())
+                .write_tag(Tag::ModelTransformationTag, &v.into_f64_vec().unwrap()[..])
                 .unwrap();
         }
         None => {}
@@ -279,43 +267,46 @@ pub fn fill_nodata_in_raster(input_raster_path: &PathBuf, output_raster_path: &P
 
     match img_decoder.find_tag(Tag::ModelTiepointTag).unwrap_or(None) {
         Some(v) => {
-            let toto = v.into_f64_vec().unwrap();
             encoder
-                .write_tag(
-                    Tag::ModelTiepointTag,
-                    &[toto[0], toto[1], toto[2], toto[3], toto[4], toto[5]][..],
-                )
+                .write_tag(Tag::ModelTiepointTag, &v.into_f64_vec().unwrap()[..])
                 .unwrap();
         }
         None => {}
     }
 
-    // match img_decoder.find_tag(Tag::GeoKeyDirectoryTag).unwrap_or(None) {
-    //     Some(v) => {
-    //         encoder
-    //             .write_tag(Tag::GeoKeyDirectoryTag, v.into_f64().unwrap())
-    //             .unwrap();
-    //     }
-    //     None => {}
-    // }
+    match img_decoder
+        .find_tag(Tag::GeoKeyDirectoryTag)
+        .unwrap_or(None)
+    {
+        Some(v) => {
+            encoder
+                .write_tag(Tag::GeoKeyDirectoryTag, &v.into_u64_vec().unwrap()[..])
+                .unwrap();
+        }
+        None => {}
+    }
 
-    // match img_decoder.find_tag(Tag::GeoDoubleParamsTag).unwrap_or(None) {
-    //     Some(v) => {
-    //         encoder
-    //             .write_tag(Tag::GeoDoubleParamsTag, v.into_f64().unwrap())
-    //             .unwrap();
-    //     }
-    //     None => {}
-    // }
+    match img_decoder
+        .find_tag(Tag::GeoDoubleParamsTag)
+        .unwrap_or(None)
+    {
+        Some(v) => {
+            encoder
+                .write_tag(Tag::GeoDoubleParamsTag, &v.into_f64_vec().unwrap()[..])
+                .unwrap();
+        }
+        None => {}
+    }
 
-    // match img_decoder.find_tag(Tag::GeoAsciiParamsTag).unwrap_or(None) {
-    //     Some(v) => {
-    //         encoder
-    //             .write_tag(Tag::GeoAsciiParamsTag, v.into_f64().unwrap())
-    //             .unwrap();
-    //     }
-    //     None => {}
-    // }
+    match img_decoder.find_tag(Tag::GeoAsciiParamsTag).unwrap_or(None) {
+        Some(v) => {
+            encoder
+                .write_tag(Tag::GeoAsciiParamsTag, &v.into_string().unwrap()[..])
+                .unwrap();
+        }
+        None => {}
+    }
 
+    encoder.write_tag(Tag::GdalNodata, -9999.).unwrap();
     image.write_data(&image_data).unwrap();
 }
