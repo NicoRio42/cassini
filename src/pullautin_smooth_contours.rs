@@ -282,9 +282,9 @@ fn get_elevation_matrix_from_dem(tile: &Tile) -> Vec<Vec<f64>> {
 
     let (dem_width, dem_height) = dem_img_decoder.dimensions().unwrap();
 
-    let w: usize = dem_width as usize;
-    let h: usize = dem_height as usize;
-    let mut avg_alt = vec![vec![f64::NAN; h + 2]; w + 2];
+    let width: usize = dem_width as usize;
+    let height: usize = dem_height as usize;
+    let mut avg_alt = vec![vec![f64::NAN; height + 2]; width + 2];
 
     let DecodingResult::F64(image_data) = dem_img_decoder.read_image().unwrap() else {
         panic!("Cannot read band data")
@@ -292,15 +292,8 @@ fn get_elevation_matrix_from_dem(tile: &Tile) -> Vec<Vec<f64>> {
 
     // Building avg_alt matrix and defining hmin and hmax
     for index in 0..image_data.len() {
-        let x = index % usize::try_from(dem_width).unwrap();
-        let y_inverse = index / usize::try_from(dem_height).unwrap();
-
-        // Sometime there is more pixel data than it should be given the header's dimensions
-        if y_inverse > usize::try_from(dem_height).unwrap() {
-            break;
-        }
-
-        let y = usize::try_from(dem_height).unwrap() - index / usize::try_from(dem_height).unwrap();
+        let x = index % width;
+        let y = height - index / width;
         let elevation = image_data[index] as f64;
         avg_alt[x][y] = elevation;
     }

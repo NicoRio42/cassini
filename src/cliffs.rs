@@ -28,7 +28,7 @@ pub fn render_cliffs(tile: &Tile, image_width: u32, image_height: u32, config: &
     let mut slopes_img_decoder = Decoder::new(slopes_tif_file).expect("Cannot create decoder");
     slopes_img_decoder = slopes_img_decoder.with_limits(tiff::decoder::Limits::unlimited());
 
-    let (slopes_width, slopes_height) = slopes_img_decoder.dimensions().unwrap();
+    let (slopes_width, _) = slopes_img_decoder.dimensions().unwrap();
     let mut cliffs_layer_canvas = RgbaImage::from_pixel(image_width, image_height, TRANSPARENT);
 
     let DecodingResult::F32(image_data) = slopes_img_decoder.read_image().unwrap() else {
@@ -36,8 +36,8 @@ pub fn render_cliffs(tile: &Tile, image_width: u32, image_height: u32, config: &
     };
 
     for index in 0..image_data.len() {
-        let x = index % usize::try_from(slopes_width).unwrap();
-        let y = index / usize::try_from(slopes_height).unwrap();
+        let x = index % slopes_width as usize;
+        let y = index / slopes_width as usize;
 
         let x_pixel = ((x as i64 - BUFFER as i64) as f32 * dem_block_size_pixel) as i32;
         let y_pixel = ((y as i64 - BUFFER as i64) as f32 * dem_block_size_pixel) as i32;
