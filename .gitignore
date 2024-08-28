@@ -4,3 +4,7 @@ target
 pullautin
 data
 config.json
+*.tif
+*.tiff
+*.geotif
+*.geotiff

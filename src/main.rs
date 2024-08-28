@@ -8,6 +8,7 @@ mod constants;
 mod contours;
 mod dem;
 mod download;
+mod fill_nodata;
 mod full_map;
 mod lidar;
 mod merge;

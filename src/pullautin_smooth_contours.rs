@@ -293,14 +293,14 @@ fn get_elevation_matrix_from_dem(tile: &Tile) -> Vec<Vec<f64>> {
     // Building avg_alt matrix and defining hmin and hmax
     for index in 0..image_data.len() {
         let x = index % usize::try_from(dem_width).unwrap();
-        let y_inverse = index / usize::try_from(dem_height).unwrap();
+        let y_inverse = index / dem_width as usize;
 
         // Sometime there is more pixel data than it should be given the header's dimensions
-        if y_inverse > usize::try_from(dem_height).unwrap() {
+        if y_inverse > dem_height as usize {
             break;
         }
 
-        let y = usize::try_from(dem_height).unwrap() - index / usize::try_from(dem_height).unwrap();
+        let y = dem_height as usize - y_inverse;
         let elevation = image_data[index] as f64;
         avg_alt[x][y] = elevation;
     }

@@ -1,6 +1,7 @@
 use crate::{
     buffer::create_tif_with_buffer,
     constants::BUFFER,
+    fill_nodata::fill_nodata_in_raster,
     tile::{NeighborTiles, Tile},
 };
 use std::{
@@ -17,39 +18,20 @@ pub fn create_dem_with_buffer_and_slopes_tiff(tile: &Tile, neighbor_tiles: &Neig
 
     let dem_with_buffer_path = tile.dir_path.join("dem-with-buffer.tif");
     create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "dem");
-
-    // Filling holes
-    let gdal_fillnodata_output = Command::new("gdal_fillnodata")
-        .arg(&dem_with_buffer_path.to_str().unwrap())
-        .arg(&dem_with_buffer_path.to_str().unwrap())
-        .output()
-        .expect("failed to execute gdal_contour command");
-
-    if !ExitStatus::success(&gdal_fillnodata_output.status) {
-        println!(
-            "{}",
-            String::from_utf8(gdal_fillnodata_output.stderr).unwrap()
-        );
-    }
+    fill_nodata_in_raster(
+        &dem_with_buffer_path,
+        &tile.dir_path.join("dem-with-buffer-filled.tif"),
+    );
 
     let dem_low_resolution_with_buffer_path =
         tile.dir_path.join("dem-low-resolution-with-buffer.tif");
 
     create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "dem-low-resolution");
 
-    // Filling holes
-    let gdal_fillnodata_output = Command::new("gdal_fillnodata")
-        .arg(&dem_low_resolution_with_buffer_path.to_str().unwrap())
-        .arg(&dem_low_resolution_with_buffer_path.to_str().unwrap())
-        .output()
-        .expect("failed to execute gdal_contour command");
-
-    if !ExitStatus::success(&gdal_fillnodata_output.status) {
-        println!(
-            "{}",
-            String::from_utf8(gdal_fillnodata_output.stderr).unwrap()
-        );
-    }
+    fill_nodata_in_raster(
+        &dem_low_resolution_with_buffer_path,
+        &dem_low_resolution_with_buffer_path,
+    );
 
     let duration = start.elapsed();
     println!(" -> Done in {:.1?}", duration);
