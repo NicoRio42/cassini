@@ -44,7 +44,7 @@ To properly distribute the computing, a worker node should be able to render one
 
 ![An exemple of a LiDAR generated map with artifacts on the edges](../../assets/artifacts.png)
 
-On the left border of the LiDAR generated map above, you can see artifacts on contours and vegetation. There are artificially more formlines, and there is a thin vertical white band. This is because the contours and the vegetation generation algorithmes needs to know about the close neighborhood of a cell during computing, and this neighborhood is incomplete at the edges of a LiDAR file.
+On the right border of the LiDAR generated map above, you can see artifacts on contours and vegetation. There are artificially more formlines, and there is a thin vertical white band. This is because the contours and the vegetation generation algorithmes needs to know about the close neighborhood of a cell during computing, and this neighborhood is incomplete at the edges of a LiDAR file.
 
 To remedy this problem, a classic approach is to add a buffer to every tiles:
 
