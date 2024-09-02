@@ -23,6 +23,7 @@ use clap::Parser;
 use cli::Args;
 use config::generate_default_config;
 use constants::INCH;
+use download::download_osm_file_if_needed;
 use las::raw::Header;
 use lidar::generate_dem_and_vegetation_density_tiff_images_from_laz_file;
 use png::generate_png_from_dem_vegetation_density_tiff_images_and_vector_file;
@@ -82,6 +83,7 @@ fn main() {
             top_left: None,
         };
 
+        download_osm_file_if_needed(tile.min_x, tile.min_y, tile.max_x, tile.max_y);
         generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(tile, neighbor_tiles);
 
         let duration = start.elapsed();
