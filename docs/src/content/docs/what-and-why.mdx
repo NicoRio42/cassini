@@ -70,7 +70,7 @@ Cassini is designed to adress these two problems. To improve the point cloud rea
 
 To solve the edges artifacts problem, it uses a much more efficient approach than the one described above. First, all <GlossaryLink slug="lidar" /> tiles are processed once with <GlossaryLink slug="pdal" />. During this step, the program produces temporary files that are not subject to the edges artifacts problem:
 
-- A Digital Elevation Model, representing the terrain elevation
+- A <GlossaryLink slug="dem" />, representing the terrain elevation
 - A set of vegetation density <GlossaryLink slug="raster" label="rasters" /> (one for low vegetation, and one for high vegetation)
 
 These <GlossaryLink slug="raster" label="rasters" /> are not subject to the edges artifacts problem because:
