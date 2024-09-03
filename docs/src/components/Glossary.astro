@@ -1,0 +1,25 @@
+---
+import { getCollection } from "astro:content";
+
+const glossaryEntries = await getCollection("glossary");
+---
+
+{
+  glossaryEntries.map(async (entry) => {
+    const { Content } = await entry.render();
+
+    return (
+      <>
+        <h2 id={entry.slug}>{entry.data.defaultLabel}</h2>
+
+        <Content />
+
+        <p>
+          <a href={entry.data.externalUrl} target="_blank" rel="nofollow">
+            Learn more
+          </a>
+        </p>
+      </>
+    );
+  })
+}

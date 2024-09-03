@@ -1,0 +1,148 @@
+---
+import { getEntry, type CollectionEntry } from "astro:content";
+import { Icon } from "@astrojs/starlight/components";
+
+export interface Props {
+  slug: CollectionEntry<"glossary">["slug"];
+  label?: string;
+}
+
+const glossaryEntry = await getEntry("glossary", Astro.props.slug);
+const { Content } = await glossaryEntry.render();
+---
+
+<glossary-link>
+  <a href={`/reference/glossary#${glossaryEntry.slug}`} class="link">
+    {Astro.props.label ?? glossaryEntry.data.defaultLabel}
+
+    <Icon name="information" class="icon" />
+  </a>
+
+  <button type="button" class="button"><Icon name="information" /></button>
+
+  <template class="card">
+    <Content />
+
+    <p>
+      <a href={glossaryEntry.data.externalUrl} target="_blank" rel="nofollow">
+        Learn more
+      </a>
+    </p>
+  </template>
+</glossary-link>
+
+<script>
+  const isSmallScreen = () =>
+    window.matchMedia("screen and (max-width: 632px)").matches;
+
+  class GlossaryLinkCustomElement extends HTMLElement {
+    constructor() {
+      super();
+
+      let isHoverlingCard = false;
+      let scrollY = window.scrollY;
+      let hasBeenClicked = false;
+      const link = this.querySelector("a")!;
+      const template = this.querySelector("template")!;
+      const card = document.createElement("article");
+      const button = this.querySelector("button")!;
+      card.innerHTML = template.innerHTML;
+      card.classList.add("glossary-card");
+
+      link.addEventListener("mouseenter", () => {
+        if (isSmallScreen()) return;
+        const rect = link.getBoundingClientRect();
+
+        card.style.top = `${rect.top + rect.height + 6}px`;
+
+        if (rect.left < document.body.clientWidth / 2) {
+          card.style.left = `${rect.left}px`;
+        } else {
+          card.style.right = `${document.body.clientWidth - rect.right}px`;
+        }
+
+        setTimeout(() => document.body.prepend(card), 250);
+      });
+
+      link.addEventListener("mouseleave", () => {
+        setTimeout(() => {
+          if (!isHoverlingCard) card.remove();
+        }, 250);
+      });
+
+      window.addEventListener("click", (e) => {
+        if (!hasBeenClicked) return;
+        hasBeenClicked = false;
+        if (!card.contains(e.target as Node))
+          setTimeout(() => card.remove(), 250);
+      });
+
+      button.addEventListener("click", () => {
+        setTimeout(() => {
+          hasBeenClicked = true;
+          const rect = link.getBoundingClientRect();
+          card.style.top = `${rect.top + rect.height + 6}px`;
+          card.style.left = "16px";
+          setTimeout(() => document.body.prepend(card), 250);
+        });
+      });
+
+      card.addEventListener("mouseenter", () => (isHoverlingCard = true));
+
+      card.addEventListener(
+        "mouseleave",
+        () => ((isHoverlingCard = false), setTimeout(() => card.remove(), 250))
+      );
+
+      window.addEventListener("scroll", () => {
+        const scrollYOffset = window.scrollY - scrollY;
+        scrollY = window.scrollY;
+        const currentTop = +card.style.top.replace("px", "");
+        card.style.top = `${currentTop - scrollYOffset}px`;
+      });
+    }
+  }
+
+  // Tell the browser to use our AstroHeart class for <astro-heart> elements.
+  customElements.define("glossary-link", GlossaryLinkCustomElement);
+</script>
+
+<style>
+  glossary-link {
+    display: contents;
+  }
+
+  :global(.glossary-card) {
+    position: fixed;
+    z-index: 2;
+    background-color: var(--sl-color-bg);
+    max-width: 30rem;
+    padding: 1rem 1.5rem;
+    border: 1px solid var(--sl-color-gray-5);
+  }
+
+  .icon {
+    display: inline-block !important;
+  }
+
+  .button {
+    display: none;
+    padding: 0;
+    background-color: transparent;
+    border: none;
+  }
+
+  @media screen and (max-width: 632px) {
+    :global(.glossary-card) {
+      width: calc(100% - 2rem);
+    }
+
+    .icon {
+      display: none !important;
+    }
+
+    .button {
+      display: inline-block;
+    }
+  }
+</style>

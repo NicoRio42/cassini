@@ -33,7 +33,17 @@ export default defineConfig({
         },
         {
           label: "Reference",
-          autogenerate: { directory: "reference" },
+          items: [
+            {
+              label: "CLI Reference",
+              slug: "reference/cli-reference",
+            },
+            {
+              label: "Configuration Reference",
+              slug: "reference/configuration-reference",
+            },
+            { label: "Glossary", slug: "reference/glossary" },
+          ],
         },
       ],
       favicon: "./src/assets/favicon.ico",
