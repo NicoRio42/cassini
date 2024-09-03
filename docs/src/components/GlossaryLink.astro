@@ -13,26 +13,39 @@ const { Content } = await glossaryEntry.render();
 
 <glossary-link>
   <a href={`/reference/glossary#${glossaryEntry.slug}`} class="link">
-    {Astro.props.label ?? glossaryEntry.data.defaultLabel}&nbsp;<Icon
-      name="information"
-      class="icon"
-    />
-  </a><button type="button" class="button"><Icon name="information" /></button>
+    <span class="link-content"
+      >{Astro.props.label ?? glossaryEntry.data.defaultLabel}</span
+    >&nbsp;<Icon name="information" class="icon" />
+  </a>
 
   <template class="card">
+    <p class="glossary-link">
+      <a href={`/reference/glossary#${glossaryEntry.slug}`}>
+        Go to glossary
+      </a>&nbsp;<Icon name="right-arrow" class="icon arrow-icon" />
+    </p>
+
     <Content />
 
-    <p>
+    <p class="external-link">
       <a href={glossaryEntry.data.externalUrl} target="_blank" rel="nofollow">
-        Learn more
+        Learn more&nbsp;<Icon name="external" class="icon" />
       </a>
     </p>
   </template>
 </glossary-link>
 
 <script>
-  const isSmallScreen = () =>
-    window.matchMedia("screen and (max-width: 632px)").matches;
+  function isSmallScreen() {
+    return window.matchMedia("screen and (max-width: 632px)").matches;
+  }
+  function getCardTopValue(rect: DOMRect): [string, string] {
+    if (rect.top < window.innerHeight / 2 + 30) {
+      return [`${rect.top + rect.height + 6}px`, "unset"];
+    }
+
+    return ["unset", `${window.innerHeight - rect.bottom + 26}px`];
+  }
 
   class GlossaryLinkCustomElement extends HTMLElement {
     constructor() {
@@ -44,15 +57,15 @@ const { Content } = await glossaryEntry.render();
       const link = this.querySelector("a")!;
       const template = this.querySelector("template")!;
       const card = document.createElement("article");
-      const button = this.querySelector("button")!;
       card.innerHTML = template.innerHTML;
       card.classList.add("glossary-card");
 
       link.addEventListener("mouseenter", () => {
         if (isSmallScreen()) return;
         const rect = link.getBoundingClientRect();
-
-        card.style.top = `${rect.top + rect.height + 6}px`;
+        const [top, bottom] = getCardTopValue(rect);
+        card.style.top = top;
+        card.style.bottom = bottom;
 
         if (rect.left < document.body.clientWidth / 2) {
           card.style.left = `${rect.left}px`;
@@ -76,11 +89,16 @@ const { Content } = await glossaryEntry.render();
           setTimeout(() => card.remove(), 250);
       });
 
-      button.addEventListener("click", () => {
+      link.addEventListener("click", (e) => {
+        if (!isSmallScreen()) return;
+        e.preventDefault();
+
         setTimeout(() => {
           hasBeenClicked = true;
           const rect = link.getBoundingClientRect();
-          card.style.top = `${rect.top + rect.height + 6}px`;
+          const [top, bottom] = getCardTopValue(rect);
+          card.style.top = top;
+          card.style.bottom = bottom;
           card.style.left = "16px";
           setTimeout(() => document.body.prepend(card), 250);
         });
@@ -111,9 +129,17 @@ const { Content } = await glossaryEntry.render();
     display: contents;
   }
 
+  .link {
+    text-decoration: none;
+  }
+
+  .link-content {
+    text-decoration: underline;
+  }
+
   :global(.glossary-card) {
     position: fixed;
-    z-index: 2;
+    z-index: 6;
     background-color: var(--sl-color-bg);
     max-width: 30rem;
     padding: 1rem 1.5rem;
@@ -124,11 +150,19 @@ const { Content } = await glossaryEntry.render();
     display: inline-block !important;
   }
 
-  .button {
+  .glossary-link {
     display: none;
-    padding: 0;
-    background-color: transparent;
-    border: none;
+    margin-bottom: 1.5rem;
+    font-weight: bold;
+  }
+
+  .arrow-icon {
+    width: 1.25rem;
+    height: 1.25rem;
+  }
+
+  .external-link {
+    margin-top: 1.5rem;
   }
 
   @media screen and (max-width: 632px) {
@@ -136,12 +170,8 @@ const { Content } = await glossaryEntry.render();
       width: calc(100% - 2rem);
     }
 
-    .icon {
-      display: none !important;
-    }
-
-    .button {
-      display: inline-block;
+    .glossary-link {
+      display: block;
     }
   }
 </style>

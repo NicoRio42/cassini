@@ -1,0 +1,43 @@
+---
+import type { Props } from "@astrojs/starlight/props";
+import Default from "@astrojs/starlight/components/PageSidebar.astro";
+import { getCollection } from "astro:content";
+
+const isGlossaryPage = Astro.props.slug === "reference/glossary";
+
+const toc = isGlossaryPage
+  ? {
+      minHeadingLevel: 2,
+      maxHeadingLevel: 3,
+      items: [
+        { depth: 2, slug: "_top", text: "Overview", children: [] },
+        ...(await getCollection("glossary"))
+          .sort((entry1, entry2) =>
+            entry1.data.defaultLabel.localeCompare(entry2.data.defaultLabel)
+          )
+          .map((entry) => ({
+            depth: 2,
+            slug: entry.slug,
+            text: entry.data.defaultLabel,
+            children: [],
+          })),
+      ],
+    }
+  : {
+      minHeadingLevel: 2,
+      maxHeadingLevel: 3,
+      items: [],
+    };
+---
+
+{
+  isGlossaryPage ? (
+    <Default {...{ ...Astro.props, toc }}>
+      <slot />
+    </Default>
+  ) : (
+    <Default {...Astro.props}>
+      <slot />
+    </Default>
+  )
+}

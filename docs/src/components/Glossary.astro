@@ -1,25 +1,37 @@
 ---
+import { Icon } from "@astrojs/starlight/components";
 import { getCollection } from "astro:content";
 
 const glossaryEntries = await getCollection("glossary");
 ---
 
 {
-  glossaryEntries.map(async (entry) => {
-    const { Content } = await entry.render();
+  glossaryEntries
+    .sort((entry1, entry2) =>
+      entry1.data.defaultLabel.localeCompare(entry2.data.defaultLabel)
+    )
+    .map(async (entry) => {
+      const { Content } = await entry.render();
 
-    return (
-      <>
-        <h2 id={entry.slug}>{entry.data.defaultLabel}</h2>
+      return (
+        <>
+          <h2 id={entry.slug}>{entry.data.defaultLabel}</h2>
 
-        <Content />
+          <Content />
 
-        <p>
-          <a href={entry.data.externalUrl} target="_blank" rel="nofollow">
-            Learn more
-          </a>
-        </p>
-      </>
-    );
-  })
+          <p>
+            <a href={entry.data.externalUrl} target="_blank" rel="nofollow">
+              Learn more&nbsp;
+              <Icon name="external" class="icon" />
+            </a>
+          </p>
+        </>
+      );
+    })
 }
+
+<style>
+  .icon {
+    display: inline-block !important;
+  }
+</style>

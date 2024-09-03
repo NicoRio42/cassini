@@ -47,6 +47,9 @@ export default defineConfig({
         },
       ],
       favicon: "./src/assets/favicon.ico",
+      components: {
+        PageSidebar: "./src/components/PageSidebar.astro",
+      },
     }),
   ],
   markdown: { rehypePlugins: [[rehypeExternalLinks, { target: "_blank" }]] },
