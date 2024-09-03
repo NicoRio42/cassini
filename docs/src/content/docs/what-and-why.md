@@ -34,7 +34,7 @@ However, there is some reasons that pushed me to develop my own rendering engine
 
 ### The point cloud reading bottleneck
 
-A LiDAR file is basically just a list of millions of 3 dimensions points (with some metadata). To process it, a program should at some point loop other all these points, witch is a very time consuming step. Karttapullautin uses the popular [`las` Rust library](https://crates.io/crates/las) to do so. For some reason (that I ignore), this library performs worst than the C++ equivalent programs (PDAL or LasTools).
+A LiDAR file is basically just a list of millions of 3 dimensions points (with some metadata). To process it, a program should at some point loop over all these points, witch is a very time consuming step. Karttapullautin uses the popular [`las` Rust library](https://crates.io/crates/las) to do so. For some reason (that I ignore), this library performs worst than the C++ equivalent programs (PDAL or LasTools).
 
 ### The edges artifacts problem
 
