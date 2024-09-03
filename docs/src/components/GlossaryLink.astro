@@ -13,12 +13,11 @@ const { Content } = await glossaryEntry.render();
 
 <glossary-link>
   <a href={`/reference/glossary#${glossaryEntry.slug}`} class="link">
-    {Astro.props.label ?? glossaryEntry.data.defaultLabel}
-
-    <Icon name="information" class="icon" />
-  </a>
-
-  <button type="button" class="button"><Icon name="information" /></button>
+    {Astro.props.label ?? glossaryEntry.data.defaultLabel}&nbsp;<Icon
+      name="information"
+      class="icon"
+    />
+  </a><button type="button" class="button"><Icon name="information" /></button>
 
   <template class="card">
     <Content />
