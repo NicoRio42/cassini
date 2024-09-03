@@ -50,6 +50,7 @@ export default defineConfig({
       components: {
         PageSidebar: "./src/components/PageSidebar.astro",
       },
+      customCss: ["./src/styles/custom.css"],
     }),
   ],
   markdown: { rehypePlugins: [[rehypeExternalLinks, { target: "_blank" }]] },

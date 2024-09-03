@@ -3,15 +3,16 @@ title: Installation and Setup
 description: A guide to generate a map with Cassini.
 ---
 
-import { Tabs, TabItem } from '@astrojs/starlight/components';
+import GlossaryLink from "../../../components/GlossaryLink.astro";
+import { Tabs, TabItem, Icon } from "@astrojs/starlight/components";
 
 This document will guide you to install Cassini and all its dependencies on your machine.
 
 ## Installing PDAL and GDAL
 
-Cassini uses the [PDAL](https://pdal.io) and the [GDAL](https://gdal.org) libraries to process LiDAR and shapefiles data. To use Cassini, you first need to install them on your machine.
+Cassini uses the <GlossaryLink slug="pdal" /> and the <GlossaryLink slug="gdal" /> libraries to process <GlossaryLink slug="lidar" /> and <GlossaryLink slug="shapefile" /> data. To use Cassini, you first need to install them on your machine.
 
-The easiest way to install PDAL and GDAL is with Miniconda. Bellow are some command line instructions reproduced from [Miniconda documentation](https://docs.anaconda.com/miniconda/#quick-command-line-install) to quickly install miniconda:
+The easiest way to install <GlossaryLink slug="pdal" /> and <GlossaryLink slug="gdal" /> is with <GlossaryLink slug="miniconda" />. Bellow are some command line instructions reproduced from [Miniconda documentation](https://docs.anaconda.com/miniconda/#quick-command-line-install) to quickly install miniconda:
 
 <Tabs syncKey="os">
   <TabItem label="Windows" icon="seti:windows">
@@ -63,7 +64,6 @@ The easiest way to install PDAL and GDAL is with Miniconda. Bellow are some comm
   </TabItem>
 </Tabs>
 
-
 After following these instructions, the `conda` command should be available in you terminal. To check that everything worked:
 
 ```sh
@@ -86,6 +86,13 @@ conda activate cassini
 
 ## Downloading Cassini executable
 
-Go to the [Latest release page on Github](https://github.com/NicoRio42/cassini/releases/latest). Then download the tar file corresponding to your operating system in the "Assets" section. Decompress it and copy the cassini executable where you want to use it on your machine.
+Download the binary file corresponding to your Operating System:
+
+- <Icon name="seti:windows" class="inline-icon" /> [Windows](https://github.com/NicoRio42/cassini/releases/latest/download/cassini-x86_64-win.tar.gz)
+- <Icon name="linux" class="inline-icon" /> [Linux](https://github.com/NicoRio42/cassini/releases/latest/download/cassini-x86_64-linux.tar.gz)
+- <Icon name="apple" class="inline-icon" /> [macOS x86_64](https://github.com/NicoRio42/cassini/releases/latest/download/cassini-x86_64-macos.tar.gz)
+- <Icon name="apple" class="inline-icon" /> [macOS arm64](https://github.com/NicoRio42/cassini/releases/latest/download/cassini-arm64-macos.tar.gz)
+
+Decompress it and copy the cassini executable where you want to use it on your machine.
 
 If you want to make the `cassini` command globally available on you machine, you can follow [this tutorial](https://zwbetz.com/how-to-add-a-binary-to-your-path-on-macos-linux-windows/).
