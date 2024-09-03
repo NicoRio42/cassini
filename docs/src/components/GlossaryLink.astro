@@ -54,6 +54,7 @@ const { Content } = await glossaryEntry.render();
       let isHoverlingCard = false;
       let scrollY = window.scrollY;
       let hasBeenClicked = false;
+      let isBottom = true;
       const link = this.querySelector("a")!;
       const template = this.querySelector("template")!;
       const card = document.createElement("article");
@@ -66,6 +67,7 @@ const { Content } = await glossaryEntry.render();
         const [top, bottom] = getCardTopValue(rect);
         card.style.top = top;
         card.style.bottom = bottom;
+        isBottom = top === "unset";
 
         if (rect.left < document.body.clientWidth / 2) {
           card.style.left = `${rect.left}px`;
@@ -99,6 +101,7 @@ const { Content } = await glossaryEntry.render();
           const [top, bottom] = getCardTopValue(rect);
           card.style.top = top;
           card.style.bottom = bottom;
+          isBottom = top === "unset";
           card.style.left = "16px";
           setTimeout(() => document.body.prepend(card), 250);
         });
@@ -114,8 +117,14 @@ const { Content } = await glossaryEntry.render();
       window.addEventListener("scroll", () => {
         const scrollYOffset = window.scrollY - scrollY;
         scrollY = window.scrollY;
-        const currentTop = +card.style.top.replace("px", "");
-        card.style.top = `${currentTop - scrollYOffset}px`;
+
+        if (!isBottom) {
+          const currentTop = +card.style.top.replace("px", "");
+          card.style.top = `${currentTop - scrollYOffset}px`;
+        } else {
+          const currentBottom = +card.style.bottom.replace("px", "");
+          card.style.bottom = `${currentBottom + scrollYOffset}px`;
+        }
       });
     }
   }
