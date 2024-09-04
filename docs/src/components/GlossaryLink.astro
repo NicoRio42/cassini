@@ -55,6 +55,7 @@ const { Content } = await glossaryEntry.render();
       let scrollY = window.scrollY;
       let hasBeenClicked = false;
       let isBottom = true;
+      let windowsHeight = window.innerHeight;
       const link = this.querySelector("a")!;
       const template = this.querySelector("template")!;
       const card = document.createElement("article");
@@ -63,6 +64,7 @@ const { Content } = await glossaryEntry.render();
 
       link.addEventListener("mouseenter", () => {
         if (isSmallScreen()) return;
+        windowsHeight = window.innerHeight;
         const rect = link.getBoundingClientRect();
         const [top, bottom] = getCardTopValue(rect);
         card.style.top = top;
@@ -94,6 +96,7 @@ const { Content } = await glossaryEntry.render();
       link.addEventListener("click", (e) => {
         if (!isSmallScreen()) return;
         e.preventDefault();
+        windowsHeight = window.innerHeight;
 
         setTimeout(() => {
           hasBeenClicked = true;
@@ -115,6 +118,7 @@ const { Content } = await glossaryEntry.render();
       );
 
       window.addEventListener("scroll", () => {
+        const windowsHeightOffset = windowsHeight - window.innerHeight;
         const scrollYOffset = window.scrollY - scrollY;
         scrollY = window.scrollY;
 
@@ -123,7 +127,7 @@ const { Content } = await glossaryEntry.render();
           card.style.top = `${currentTop - scrollYOffset}px`;
         } else {
           const currentBottom = +card.style.bottom.replace("px", "");
-          card.style.bottom = `${currentBottom + scrollYOffset}px`;
+          card.style.bottom = `${currentBottom + scrollYOffset + windowsHeightOffset}px`;
         }
       });
     }
