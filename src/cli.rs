@@ -9,6 +9,8 @@ pub struct Args {
     #[arg(long)]
     pub skip_lidar: bool,
     #[arg(long)]
+    pub skip_vector: bool,
+    #[arg(long)]
     pub batch: bool,
     #[arg(long)]
     pub threads: Option<usize>,

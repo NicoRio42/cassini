@@ -13,6 +13,7 @@ use crate::{
 pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
     tile: Tile,
     neighbor_tiles: NeighborTiles,
+    skip_vector: bool,
 ) {
     let config = get_config();
     let image_width = ((tile.max_x - tile.min_x) as f32 * config.dpi_resolution / INCH) as u32;
@@ -22,6 +23,10 @@ pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
     create_dem_with_buffer_and_slopes_tiff(&tile, &neighbor_tiles);
     generate_contours_with_pullautin_algorithme(&tile, image_width, image_height, &config);
     render_cliffs(&tile, image_width, image_height, &config);
-    render_osm_vector_shapes(&tile, image_width, image_height, &config);
-    render_full_map_to_png(&tile, image_width, image_height);
+
+    if !skip_vector {
+        render_osm_vector_shapes(&tile, image_width, image_height, &config);
+    }
+
+    render_full_map_to_png(&tile, image_width, image_height, skip_vector);
 }

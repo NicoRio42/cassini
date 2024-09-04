@@ -15,7 +15,7 @@ use std::{
     time::Duration,
 };
 
-pub fn batch(number_of_threads: usize, skip_lidar: bool) {
+pub fn batch(number_of_threads: usize, skip_lidar: bool, skip_vector: bool) {
     println!("Batch mode");
     println!("Generating raw rasters for every tiles");
 
@@ -53,7 +53,9 @@ pub fn batch(number_of_threads: usize, skip_lidar: bool) {
         }
     }
 
-    download_osm_files_for_all_tiles_if_needed(&tiles);
+    if !skip_vector {
+        download_osm_files_for_all_tiles_if_needed(&tiles);
+    }
 
     let tiles_chunks: Vec<Vec<TileWithNeighbors>> = tiles_arc
         .chunks(chunk_size)
@@ -72,6 +74,7 @@ pub fn batch(number_of_threads: usize, skip_lidar: bool) {
                 generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
                     tile.tile.clone(),
                     tile.neighbors.clone(),
+                    skip_vector,
                 );
             }
 

@@ -1,6 +1,9 @@
 use std::{
+    fs::File,
+    io::{copy, stdout, Write},
     path::Path,
-    process::{Command, ExitStatus, Stdio},
+    process::{Command, Stdio},
+    time::Instant,
 };
 
 use crate::{constants::BUFFER, tile::TileWithNeighbors};
@@ -24,7 +27,9 @@ pub fn download_osm_file_if_needed(min_x: i64, min_y: i64, max_x: i64, max_y: i6
         return;
     }
 
-    println!("Downloading osm file");
+    print!("Downloading osm file");
+    let _ = stdout().flush();
+    let start = Instant::now();
 
     let (min_lon, min_lat) = convert_coords_from_lambert_93_to_gps(
         (min_x - BUFFER as i64) as f64,
@@ -36,23 +41,17 @@ pub fn download_osm_file_if_needed(min_x: i64, min_y: i64, max_x: i64, max_y: i6
         (max_y + BUFFER as i64) as f64,
     );
 
-    let download_output = Command::new("wget")
-        .args([
-            "-O",
-            &osm_file_path.to_str().unwrap(),
-            &format!(
-                "https://www.openstreetmap.org/api/0.6/map?bbox={}%2C{}%2C{}%2C{}",
-                min_lon, min_lat, max_lon, max_lat,
-            ),
-        ])
-        .output()
-        .expect("failed to execute gdal_contour command");
+    let mut response = reqwest::blocking::get(&format!(
+        "https://www.openstreetmap.org/api/0.6/map?bbox={}%2C{}%2C{}%2C{}",
+        min_lon, min_lat, max_lon, max_lat,
+    ))
+    .expect("Could not download osm file.");
 
-    if ExitStatus::success(&download_output.status) {
-        println!("{}", String::from_utf8(download_output.stdout).unwrap());
-    } else {
-        println!("{}", String::from_utf8(download_output.stderr).unwrap());
-    }
+    let mut file = File::create(&osm_file_path).expect("Could not create file for osm download.");
+    copy(&mut response, &mut file).expect("Could not copy file content.");
+
+    let duration = start.elapsed();
+    println!(" -> Done in {:.1?}", duration);
 }
 
 fn convert_coords_from_lambert_93_to_gps(x: f64, y: f64) -> (f64, f64) {

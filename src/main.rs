@@ -41,7 +41,7 @@ fn main() {
     if args.batch {
         let start = Instant::now();
         let number_of_threads = args.threads.unwrap_or(3);
-        batch(number_of_threads, args.skip_lidar);
+        batch(number_of_threads, args.skip_lidar, args.skip_vector);
         let duration = start.elapsed();
         println!("Tiles generated in {:.1?}", duration);
 
@@ -83,8 +83,15 @@ fn main() {
             top_left: None,
         };
 
-        download_osm_file_if_needed(tile.min_x, tile.min_y, tile.max_x, tile.max_y);
-        generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(tile, neighbor_tiles);
+        if !args.skip_vector {
+            download_osm_file_if_needed(tile.min_x, tile.min_y, tile.max_x, tile.max_y);
+        }
+
+        generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
+            tile,
+            neighbor_tiles,
+            args.skip_vector,
+        );
 
         let duration = start.elapsed();
         println!("Tile generated in {:.1?}", duration);

@@ -15,7 +15,7 @@ const { Content } = await glossaryEntry.render();
   <a href={`/reference/glossary#${glossaryEntry.slug}`} class="link">
     <span class="link-content"
       >{Astro.props.label ?? glossaryEntry.data.defaultLabel}</span
-    >&nbsp;<Icon name="information" class="icon" />
+    ><Icon name="information" class="icon" />
   </a>
 
   <template class="card">
