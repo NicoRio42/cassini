@@ -20,9 +20,15 @@ const { Content } = await glossaryEntry.render();
 
   <template class="card">
     <p class="glossary-link">
-      <a href={`/reference/glossary#${glossaryEntry.slug}`}>
-        Go to glossary
-      </a>&nbsp;<Icon name="right-arrow" class="icon arrow-icon" />
+      <span>
+        <a href={`/reference/glossary#${glossaryEntry.slug}`}>
+          Go to glossary
+        </a>&nbsp;<Icon name="right-arrow" class="icon arrow-icon" />
+      </span>
+
+      <button type="button" class="close-button">
+        <Icon name="close" />
+      </button>
     </p>
 
     <Content />
@@ -44,6 +50,7 @@ const { Content } = await glossaryEntry.render();
     link: HTMLAnchorElement;
     card: HTMLElement;
     template: HTMLTemplateElement;
+    closeButton: HTMLButtonElement;
 
     constructor() {
       super();
@@ -54,8 +61,8 @@ const { Content } = await glossaryEntry.render();
       this.link = this.querySelector("a")!;
       this.template = this.querySelector("template")!;
       this.card = document.createElement("article");
-
       this.card.innerHTML = this.template.innerHTML;
+      this.closeButton = this.card.querySelector("button")!;
       this.card.classList.add("glossary-card");
 
       this.link.addEventListener("mouseenter", () => {
@@ -81,8 +88,11 @@ const { Content } = await glossaryEntry.render();
       window.addEventListener("click", (e) => {
         if (!hasBeenClicked) return;
         hasBeenClicked = false;
-        if (!this.card.contains(e.target as Node))
-          setTimeout(() => this.card.remove(), 250);
+        if (!this.card.contains(e.target as Node)) this.card.remove();
+      });
+
+      this.closeButton.addEventListener("click", () => {
+        this.card.remove();
       });
 
       this.link.addEventListener("click", (e) => {
@@ -165,6 +175,7 @@ const { Content } = await glossaryEntry.render();
 
   .glossary-link {
     display: none;
+    justify-content: space-between;
     margin-bottom: 1.5rem;
     font-weight: bold;
   }
@@ -172,6 +183,12 @@ const { Content } = await glossaryEntry.render();
   .arrow-icon {
     width: 1.25rem;
     height: 1.25rem;
+  }
+
+  .close-button {
+    background-color: transparent;
+    border: none;
+    margin-right: -0.75rem;
   }
 
   .external-link {
@@ -184,7 +201,7 @@ const { Content } = await glossaryEntry.render();
     }
 
     .glossary-link {
-      display: block;
+      display: flex;
     }
   }
 </style>
