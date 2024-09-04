@@ -127,7 +127,7 @@ const { Content } = await glossaryEntry.render();
           card.style.top = `${currentTop - scrollYOffset}px`;
         } else {
           const currentBottom = +card.style.bottom.replace("px", "");
-          card.style.bottom = `${currentBottom + scrollYOffset + windowsHeightOffset}px`;
+          card.style.bottom = `${currentBottom + scrollYOffset - windowsHeightOffset}px`;
         }
       });
     }
