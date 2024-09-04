@@ -59,7 +59,7 @@ To remedy this problem, a classic approach is to add a buffer to every tiles:
 
 This way the artifacts are cropped away from the resulting image. This technique has the advantage of being simple. However, it is very inefficient. The problem is that:
 
-- All the points of the 9 tiles (the targeted tile and the 8 adgacent ones) have to be read to create the buffered tile.
+- All the points of the 9 tiles (the targeted tile and the 8 adjacent ones) have to be read to create the buffered tile.
 - Then, all the points from the buffered tile have to be read again during the map generation.
 
 As mentioned in the previous paragraph, reading <GlossaryLink slug="lidar" /> points is very time consuming. It takes up a large part of the calculation time. With this approach, 10 times more points have to be read, compared to if you could just directly process the original tile without buffer.
@@ -79,7 +79,14 @@ These <GlossaryLink slug="raster" label="rasters" /> are not subject to the edge
 - A value is attributed to each of these cells depending only on the points that it contains.
 - Thus the value does not depend on the neighborhood of the cell.
 
-Then, a buffer is added to these raster, using the adgacent tiles <GlossaryLink slug="raster" label="rasters" /> just like in the approach described in the paragraph above. It is orders of magnitudes faster to add a buffer to a <GlossaryLink slug="raster" /> than to add a buffer to a <GlossaryLink slug="lidar" /> tile. Finally, the map is generated from these <GlossaryLink slug="raster" label="rasters" />. This approach guaranties that every <GlossaryLink slug="lidar" /> points are only read once.
+In a second step, Cassini generates the final map from these <GlossaryLink slug="raster" label="rasters" />. It uses the <GlossaryLink slug="dem" /> to generate <GlossaryLink slug="contours" /> and cliffs, and the vegetation density <GlossaryLink slug="raster" label="rasters" /> to generate the vegetation map.
+
+To prevent edges artifacts, a buffer is added to these <GlossaryLink slug="raster" label="rasters" /> using the 8 adjacent <GlossaryLink slug="raster" label="rasters" />. Then the map is generated and the artifacts are cropped away from the resulting image. The key difference is that the buffer is added to the intermediary raster files, and not to the <GlossaryLink slug="lidar" /> files at the begining. As these <GlossaryLink slug="raster" label="rasters" /> are much smaller and much faster to read than the <GlossaryLink slug="lidar" /> files, it drastically reduces the total computing time.
+
+With this approach, each <GlossaryLink slug="lidar" /> point is only read once, during the fist step to generate the intermediary <GlossaryLink slug="raster" /> files. In the approach described in the paragraph above, There are 10 times more points to read to generate a single tile:
+
+- The points from the processed tile and the 8 adjacent ones are read to generate a <GlossaryLink slug="lidar" /> tile with a buffer.
+- The points of this <GlossaryLink slug="lidar" /> tile are then read once again to generate the map.
 
 ### The tradeoffs
 
