@@ -39,101 +39,97 @@ const { Content } = await glossaryEntry.render();
   function isSmallScreen() {
     return window.matchMedia("screen and (max-width: 632px)").matches;
   }
-  function getCardTopValue(rect: DOMRect): [string, string] {
-    if (rect.top < window.innerHeight / 2 + 30) {
-      return [`${rect.top + rect.height + 6}px`, "unset"];
-    }
-
-    return ["unset", `${window.innerHeight - rect.bottom + 26}px`];
-  }
 
   class GlossaryLinkCustomElement extends HTMLElement {
+    link: HTMLAnchorElement;
+    card: HTMLElement;
+    template: HTMLTemplateElement;
+
     constructor() {
       super();
 
       let isHoverlingCard = false;
       let scrollY = window.scrollY;
       let hasBeenClicked = false;
-      let isBottom = true;
-      let windowsHeight = window.innerHeight;
-      const link = this.querySelector("a")!;
-      const template = this.querySelector("template")!;
-      const card = document.createElement("article");
-      card.innerHTML = template.innerHTML;
-      card.classList.add("glossary-card");
+      this.link = this.querySelector("a")!;
+      this.template = this.querySelector("template")!;
+      this.card = document.createElement("article");
 
-      link.addEventListener("mouseenter", () => {
+      this.card.innerHTML = this.template.innerHTML;
+      this.card.classList.add("glossary-card");
+
+      this.link.addEventListener("mouseenter", () => {
         if (isSmallScreen()) return;
-        windowsHeight = window.innerHeight;
-        const rect = link.getBoundingClientRect();
-        const [top, bottom] = getCardTopValue(rect);
-        card.style.top = top;
-        card.style.bottom = bottom;
-        isBottom = top === "unset";
+        this.setCardTopValue();
+        const linkRect = this.link.getBoundingClientRect();
 
-        if (rect.left < document.body.clientWidth / 2) {
-          card.style.left = `${rect.left}px`;
+        if (linkRect.left < document.body.clientWidth / 2) {
+          this.card.style.left = `${linkRect.left}px`;
         } else {
-          card.style.right = `${document.body.clientWidth - rect.right}px`;
+          this.card.style.right = `${document.body.clientWidth - linkRect.right}px`;
         }
 
-        setTimeout(() => document.body.prepend(card), 250);
+        setTimeout(() => document.body.prepend(this.card), 250);
       });
 
-      link.addEventListener("mouseleave", () => {
+      this.link.addEventListener("mouseleave", () => {
         setTimeout(() => {
-          if (!isHoverlingCard) card.remove();
+          if (!isHoverlingCard) this.card.remove();
         }, 250);
       });
 
       window.addEventListener("click", (e) => {
         if (!hasBeenClicked) return;
         hasBeenClicked = false;
-        if (!card.contains(e.target as Node))
-          setTimeout(() => card.remove(), 250);
+        if (!this.card.contains(e.target as Node))
+          setTimeout(() => this.card.remove(), 250);
       });
 
-      link.addEventListener("click", (e) => {
+      this.link.addEventListener("click", (e) => {
         if (!isSmallScreen()) return;
         e.preventDefault();
-        windowsHeight = window.innerHeight;
 
         setTimeout(() => {
           hasBeenClicked = true;
-          const rect = link.getBoundingClientRect();
-          const [top, bottom] = getCardTopValue(rect);
-          card.style.top = top;
-          card.style.bottom = bottom;
-          isBottom = top === "unset";
-          card.style.left = "16px";
-          setTimeout(() => document.body.prepend(card), 250);
+          this.setCardTopValue();
+          this.card.style.left = "16px";
+          setTimeout(() => document.body.prepend(this.card), 250);
         });
       });
 
-      card.addEventListener("mouseenter", () => (isHoverlingCard = true));
+      this.card.addEventListener("mouseenter", () => (isHoverlingCard = true));
 
-      card.addEventListener(
+      this.card.addEventListener(
         "mouseleave",
-        () => ((isHoverlingCard = false), setTimeout(() => card.remove(), 250))
+        () => (
+          (isHoverlingCard = false), setTimeout(() => this.card.remove(), 250)
+        )
       );
 
-      const scrollAdaptationCallback = () => {
-        const windowsHeightOffset = windowsHeight - window.innerHeight;
+      window.addEventListener("scroll", () => {
         const scrollYOffset = window.scrollY - scrollY;
         scrollY = window.scrollY;
+        const currentTop = +this.card.style.top.replace("px", "");
+        this.card.style.top = `${currentTop - scrollYOffset}px`;
+      });
+    }
 
-        if (!isBottom) {
-          const currentTop = +card.style.top.replace("px", "");
-          card.style.top = `${currentTop - scrollYOffset}px`;
-        } else {
-          const currentBottom = +card.style.bottom.replace("px", "");
-          card.style.bottom = `${currentBottom + scrollYOffset - windowsHeightOffset}px`;
-        }
-      };
+    setCardTopValue() {
+      const linkRect = this.link.getBoundingClientRect();
 
-      window.addEventListener("resize", scrollAdaptationCallback);
+      this.card.style.top = "100%";
+      document.body.prepend(this.card);
+      const cardRectHeight = this.card.getBoundingClientRect().height;
+      this.card.remove();
 
-      window.addEventListener("scroll", scrollAdaptationCallback);
+      const isBottom = linkRect.top < window.innerHeight / 2 + 30;
+
+      if (isBottom) {
+        this.card.style.top = `${linkRect.top + linkRect.height + 6}px`;
+        return;
+      }
+
+      this.card.style.top = `${linkRect.top - 6 - cardRectHeight}px`;
     }
   }
 
