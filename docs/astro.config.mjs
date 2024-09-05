@@ -46,7 +46,7 @@ export default defineConfig({
           ],
         },
       ],
-      favicon: "./src/assets/favicon.ico",
+      favicon: "favicon.ico",
       components: {
         PageSidebar: "./src/components/PageSidebar.astro",
       },
