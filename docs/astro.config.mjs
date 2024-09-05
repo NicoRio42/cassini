@@ -49,6 +49,7 @@ export default defineConfig({
       favicon: "favicon.ico",
       components: {
         PageSidebar: "./src/components/PageSidebar.astro",
+        Head: "./src/components/Head.astro",
       },
       customCss: ["./src/styles/custom.css"],
     }),

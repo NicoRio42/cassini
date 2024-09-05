@@ -1,0 +1,16 @@
+---
+import type { Props } from "@astrojs/starlight/props";
+import Default from "@astrojs/starlight/components/Head.astro";
+import bannerImage from "../assets/facebook-og.png";
+---
+
+<Default {...Astro.props}><slot /></Default>
+
+{
+  Astro.props.slug === "" && (
+    <>
+      <meta property="og:image" content={bannerImage.src} />
+      <meta name="twitter:image" content={bannerImage.src} />
+    </>
+  )
+}
