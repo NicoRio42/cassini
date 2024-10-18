@@ -128,7 +128,7 @@ pub fn render_osm_vector_shapes(tile: &Tile, image_width: u32, image_height: u32
         };
 
         // 502 wide road
-        if highway == "secondary" {
+        if highway == "secondary" || highway == "tertiary" {
             map_renderer = map_renderer.draw_line(&line, VECTOR_BLACK, WIDE_ROAD_OUTER_WIDTH);
             map_renderer =
                 map_renderer.draw_line(&line, VECTOR_PAVED_AREA_BROWN, WIDE_ROAD_INNER_WIDTH);
