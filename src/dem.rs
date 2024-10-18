@@ -42,7 +42,7 @@ pub fn create_dem_with_buffer_and_slopes_tiff(tile: &Tile, neighbor_tiles: &Neig
         .arg(&dem_low_resolution_with_buffer_path.to_str().unwrap())
         .arg(&dem_low_resolution_with_buffer_path.to_str().unwrap())
         .output()
-        .expect("failed to execute gdal_contour command");
+        .expect("failed to execute gdal_fillnodata command");
 
     if !ExitStatus::success(&gdal_fillnodata_output.status) {
         println!(

@@ -55,17 +55,20 @@ pub fn download_osm_file_if_needed(min_x: i64, min_y: i64, max_x: i64, max_y: i6
 }
 
 fn convert_coords_from_lambert_93_to_gps(x: f64, y: f64) -> (f64, f64) {
-    let echo = Command::new("echo")
-        .arg(format!("{:.1} {:.1}", x, y))
+    let mut cs2cs = Command::new("cs2cs")
+        .args(["+init=epsg:2154", "+to", "+init=epsg:4326", "-f", "%.8f"])
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
-        .unwrap();
+        .expect("Failed to start cs2cs");
 
-    let output = Command::new("cs2cs")
-        .args(["+init=epsg:2154", "+to", "+init=epsg:4326", "-f", "%.8f"])
-        .stdin(Stdio::from(echo.stdout.unwrap()))
-        .output()
-        .expect("failed to execute proj command");
+    if let Some(mut stdin) = cs2cs.stdin.take() {
+        writeln!(stdin, "{:.1} {:.1}", x, y).expect("Failed to write to stdin");
+    }
+
+    let output = cs2cs
+        .wait_with_output()
+        .expect("Failed to read cs2cs output");
 
     if !output.status.success() {
         panic!("Proj conversion failed.")

@@ -60,7 +60,7 @@ pub fn create_tif_with_buffer(
         .args(&rasters_paths)
         .arg("--quiet")
         .output()
-        .expect("failed to execute gdal_contour command");
+        .expect("failed to execute gdalbuildvrt command");
 
     if !ExitStatus::success(&gdalbuildvrt_output.status) {
         println!("{}", String::from_utf8(gdalbuildvrt_output.stderr).unwrap());
@@ -80,7 +80,7 @@ pub fn create_tif_with_buffer(
         .arg(&raster_with_buffer_path.to_str().unwrap())
         .arg("--quiet")
         .output()
-        .expect("failed to execute gdal_contour command");
+        .expect("failed to execute gdal_translate command");
 
     if !ExitStatus::success(&gdal_translate_output.status) {
         println!(
