@@ -1,6 +1,6 @@
 FROM pdal/pdal
 WORKDIR /app
-COPY ./target/release/cassini /app
-RUN pip install GDAL=="3.9.2"
-ENTRYPOINT ["./cassini"]
-#docker run -it -v "$(pwd)":/app/out test ./out/tile.laz --skip-vector
+COPY ./target/x86_64-unknown-linux-gnu/release/cassini /bin
+RUN pip install GDAL==$(gdal-config --version)
+ENTRYPOINT ["/bin/cassini"]
+#docker run -it -v "$(pwd)":/app test ./tile.laz --skip-vector

@@ -1,5 +1,5 @@
 use std::{
-    fs::File,
+    fs::{create_dir_all, File},
     io::{copy, stdout, Write},
     path::Path,
     process::{Command, Stdio},
@@ -20,7 +20,13 @@ pub fn download_osm_files_for_all_tiles_if_needed(tiles: &Vec<TileWithNeighbors>
 }
 
 pub fn download_osm_file_if_needed(min_x: i64, min_y: i64, max_x: i64, max_y: i64) {
-    let osm_file_path = Path::new("in").join(format!("{:0>7}_{:0>7}.osm", min_x, max_y));
+    let in_path = Path::new("in");
+
+    if !in_path.exists() {
+        create_dir_all(in_path).unwrap();
+    }
+
+    let osm_file_path = in_path.join(format!("{:0>7}_{:0>7}.osm", min_x, max_y));
 
     if osm_file_path.exists() {
         println!("Osm file already downloaded");
