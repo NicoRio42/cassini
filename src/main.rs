@@ -19,7 +19,7 @@ mod vectors;
 mod vegetation;
 
 use batch::batch;
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use cli::Args;
 use config::generate_default_config;
 use constants::INCH;
@@ -32,6 +32,11 @@ use tile::{NeighborTiles, Tile};
 
 fn main() {
     let args = Args::parse();
+
+    if std::env::args().len() == 1 {
+        Args::command().print_help().unwrap();
+        return;
+    }
 
     if args.default_config {
         generate_default_config();
