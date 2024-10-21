@@ -8,7 +8,13 @@ import { Tabs, TabItem, Icon } from "@astrojs/starlight/components";
 
 This document will guide you to install Cassini and all its dependencies on your machine.
 
-## Installing PDAL and GDAL
+## Installing with Conda
+
+:::caution
+If your operating système is Windows, you might prefer install Cassini using the [Docker](#installing-with-docker) method, as the Conda method is not stable yet for Windows.
+:::
+
+### Installing PDAL and GDAL
 
 Cassini uses the <GlossaryLink slug="pdal" /> and the <GlossaryLink slug="gdal" /> libraries to process <GlossaryLink slug="lidar" /> and <GlossaryLink slug="shapefile" /> data. To use Cassini, you first need to install them on your machine.
 
@@ -84,11 +90,14 @@ Everytime you will open a new terminal and want to use Cassini, you will have to
 conda activate cassini
 ```
 
-## Downloading Cassini executable
+### Downloading Cassini executable
 
 Download the binary file corresponding to your Operating System:
 
-- <Icon name="seti:windows" class="inline-icon" /> [Windows](https://github.com/NicoRio42/cassini/releases/latest/download/cassini-x86_64-win.tar.gz)
+- <Icon
+    name="seti:windows"
+    class="inline-icon"
+  /> [Windows](https://github.com/NicoRio42/cassini/releases/latest/download/cassini-x86_64-win.tar.gz)
 - <Icon name="linux" class="inline-icon" /> [Linux](https://github.com/NicoRio42/cassini/releases/latest/download/cassini-x86_64-linux.tar.gz)
 - <Icon name="apple" class="inline-icon" /> [macOS x86_64](https://github.com/NicoRio42/cassini/releases/latest/download/cassini-x86_64-macos.tar.gz)
 - <Icon name="apple" class="inline-icon" /> [macOS arm64](https://github.com/NicoRio42/cassini/releases/latest/download/cassini-arm64-macos.tar.gz)
@@ -96,3 +105,63 @@ Download the binary file corresponding to your Operating System:
 Decompress it and copy the cassini executable where you want to use it on your machine.
 
 If you want to make the `cassini` command globally available on you machine, you can follow [this tutorial](https://zwbetz.com/how-to-add-a-binary-to-your-path-on-macos-linux-windows/).
+
+## Installing with Docker
+
+A <GlossaryLink slug="docker" /> image with all the dependecies already installed is provided on Docker Hub : [nicorio42/cassini](https://hub.docker.com/r/nicorio42/cassini).
+
+First you will need to install <GlossaryLink slug="docker" />. Got to the project's front page, hover the "Download Docker Desktop" dropdown and select your operating system. Then follow the instructions and/or the installation wizard.
+
+To check if <GlossaryLink slug="docker" /> installation worked, open a terminal and type:
+
+```sh
+docker -v
+```
+
+This should print the version of <GlossaryLink slug="docker" />.
+
+Then you can use Cassini by replacing the `cassini` command with:
+
+<Tabs syncKey="os">
+  <TabItem label="Windows" icon="seti:windows">
+>    ```sh
+>    docker run -it -name cassini -v "%cd%":/app nicorio42/cassini
+>    ```
+  </TabItem>
+  
+  <TabItem label="macOS" icon="apple">
+>    ```sh
+>    docker run -it -name cassini -v "$(pwd)":/app nicorio42/cassini
+>    ```
+  </TabItem>
+
+  <TabItem label="Linux" icon="linux">
+>    ```sh
+>    docker run -it -name cassini -v "$(pwd)":/app nicorio42/cassini
+>    ```
+  </TabItem>
+</Tabs>
+
+So for exemple, if you are in a directory with a LiDAR file named `tile.laz`, you can run:
+
+<Tabs syncKey="os">
+  <TabItem label="Windows" icon="seti:windows">
+>    ```sh
+>    docker run -it -name cassini -v "%cd%":/app nicorio42/cassini ./tile.laz
+>    ```
+  </TabItem>
+  
+  <TabItem label="macOS" icon="apple">
+>    ```sh
+>    docker run -it -name cassini -v "$(pwd)":/app nicorio42/cassini ./tile.laz
+>    ```
+  </TabItem>
+
+  <TabItem label="Linux" icon="linux">
+>    ```sh
+>    docker run -it -name cassini -v "$(pwd)":/app nicorio42/cassini ./tile.laz
+>    ```
+  </TabItem>
+</Tabs>
+
+The first time you will use the command, it will download the nicorio42/cassini <GlossaryLink slug="docker" /> image which might take some minutes.
