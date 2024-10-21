@@ -125,19 +125,19 @@ Then you can use Cassini by replacing the `cassini` command with:
 <Tabs syncKey="os">
   <TabItem label="Windows" icon="seti:windows">
 >    ```sh
->    docker run -it -name cassini -v "%cd%":/app nicorio42/cassini
+>    docker run --rm -it -v "%cd%":/app nicorio42/cassini
 >    ```
   </TabItem>
   
   <TabItem label="macOS" icon="apple">
 >    ```sh
->    docker run -it -name cassini -v "$(pwd)":/app nicorio42/cassini
+>    docker run --rm -it -v "$(pwd)":/app nicorio42/cassini
 >    ```
   </TabItem>
 
   <TabItem label="Linux" icon="linux">
 >    ```sh
->    docker run -it -name cassini -v "$(pwd)":/app nicorio42/cassini
+>    docker run --rm -it -v "$(pwd)":/app nicorio42/cassini
 >    ```
   </TabItem>
 </Tabs>
@@ -147,19 +147,19 @@ So for example, if you are in a directory with a LiDAR file named `tile.laz`, yo
 <Tabs syncKey="os">
   <TabItem label="Windows" icon="seti:windows">
 >    ```sh
->    docker run -it -name cassini -v "%cd%":/app nicorio42/cassini ./tile.laz
+>    docker run --rm -it -v "%cd%":/app nicorio42/cassini ./tile.laz
 >    ```
   </TabItem>
   
   <TabItem label="macOS" icon="apple">
 >    ```sh
->    docker run -it -name cassini -v "$(pwd)":/app nicorio42/cassini ./tile.laz
+>    docker run --rm -it -v "$(pwd)":/app nicorio42/cassini ./tile.laz
 >    ```
   </TabItem>
 
   <TabItem label="Linux" icon="linux">
 >    ```sh
->    docker run -it -name cassini -v "$(pwd)":/app nicorio42/cassini ./tile.laz
+>    docker run --rm -it -v "$(pwd)":/app nicorio42/cassini ./tile.laz
 >    ```
   </TabItem>
 </Tabs>

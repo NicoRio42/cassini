@@ -92,7 +92,7 @@ pub fn batch(number_of_threads: usize, skip_lidar: bool, skip_vector: bool) {
 }
 
 pub fn get_tiles_with_neighbors() -> Vec<TileWithNeighbors> {
-    let paths = read_dir("in").unwrap();
+    let paths = read_dir("in").expect("There is no in directory.");
     let mut tiles: Vec<TileWithNeighbors> = vec![];
     let mut tiles_map = HashMap::<(i64, i64, i64, i64), PathBuf>::new();
 
