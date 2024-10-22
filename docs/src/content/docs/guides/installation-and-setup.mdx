@@ -22,51 +22,57 @@ The easiest way to install <GlossaryLink slug="pdal" /> and <GlossaryLink slug="
 
 <Tabs syncKey="os">
   <TabItem label="Windows" icon="seti:windows">
->    These three commands quickly and quietly install the latest 64-bit version of the installer and then clean up after themselves. To install a different version or architecture of Miniconda for Windows, change the name of the `.exe` installer in the `curl` command.
+
+> These three commands quickly and quietly install the latest 64-bit version of the installer and then clean up after themselves. To install a different version or architecture of Miniconda for Windows, change the name of the `.exe` installer in the `curl` command.
 >
->    ```sh
->    curl https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe -o miniconda.exe
->    start /wait "" miniconda.exe /S
->    del miniconda.exe
->    ```
+> ```sh
+> curl https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe -o miniconda.exe
+> start /wait "" miniconda.exe /S
+> del miniconda.exe
+> ```
 >
->    After installing, open the “Anaconda Prompt (miniconda3)” program to use Miniconda3. For the Powershell version, use “Anaconda Powershell Prompt (miniconda3)”.
+> After installing, open the “Anaconda Prompt (miniconda3)” program to use Miniconda3. For the Powershell version, use “Anaconda Powershell Prompt (miniconda3)”.
+
   </TabItem>
   
   <TabItem label="macOS" icon="apple">
->    These four commands quickly and quietly install the latest M1 macOS version of the installer and then clean up after themselves. To install a different version or architecture of Miniconda for macOS, change the name of the `.sh` installer in the `curl` command.
+
+> These four commands quickly and quietly install the latest M1 macOS version of the installer and then clean up after themselves. To install a different version or architecture of Miniconda for macOS, change the name of the `.sh` installer in the `curl` command.
 >
->    ```sh
->    mkdir -p ~/miniconda3
->    curl https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-arm64.sh -o ~/miniconda3/miniconda.sh
->    bash ~/miniconda3/miniconda.sh -b -u -p ~/miniconda3
->    rm ~/miniconda3/miniconda.sh
->    ```
+> ```sh
+> mkdir -p ~/miniconda3
+> curl https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-arm64.sh -o ~/miniconda3/miniconda.sh
+> bash ~/miniconda3/miniconda.sh -b -u -p ~/miniconda3
+> rm ~/miniconda3/miniconda.sh
+> ```
 >
->    After installing, initialize your newly-installed Miniconda. The following commands initialize for bash and zsh shells:
+> After installing, initialize your newly-installed Miniconda. The following commands initialize for bash and zsh shells:
 >
->    ```sh
->    ~/miniconda3/bin/conda init bash
->    ~/miniconda3/bin/conda init zsh
->    ```
+> ```sh
+> ~/miniconda3/bin/conda init bash
+> ~/miniconda3/bin/conda init zsh
+> ```
+
   </TabItem>
 
   <TabItem label="Linux" icon="linux">
->    These four commands quickly and quietly install the latest 64-bit version of the installer and then clean up after themselves. To install a different version or architecture of Miniconda for Linux, change the name of the `.sh` installer in the `wget` command.
-> 
->    ```sh
->    mkdir -p ~/miniconda3
->    wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda3/miniconda.sh
->    bash ~/miniconda3/miniconda.sh -b -u -p ~/miniconda3
->    rm ~/miniconda3/miniconda.sh
->    ```
+
+> These four commands quickly and quietly install the latest 64-bit version of the installer and then clean up after themselves. To install a different version or architecture of Miniconda for Linux, change the name of the `.sh` installer in the `wget` command.
 >
->    After installing, initialize your newly-installed Miniconda. The following commands initialize for bash and zsh shells:
+> ```sh
+> mkdir -p ~/miniconda3
+> wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda3/miniconda.sh
+> bash ~/miniconda3/miniconda.sh -b -u -p ~/miniconda3
+> rm ~/miniconda3/miniconda.sh
+> ```
 >
->    ```sh
->    ~/miniconda3/bin/conda init bash
->    ~/miniconda3/bin/conda init zsh
->    ```
+> After installing, initialize your newly-installed Miniconda. The following commands initialize for bash and zsh shells:
+>
+> ```sh
+> ~/miniconda3/bin/conda init bash
+> ~/miniconda3/bin/conda init zsh
+> ```
+
   </TabItem>
 </Tabs>
 
@@ -124,44 +130,132 @@ Then you can use Cassini by replacing the `cassini` command with:
 
 <Tabs syncKey="os">
   <TabItem label="Windows" icon="seti:windows">
->    ```sh
->    docker run --rm -it -v "%cd%":/app nicorio42/cassini
->    ```
+
+> ```sh
+> docker run --rm -it -v "%cd%":/app nicorio42/cassini
+> ```
+
   </TabItem>
   
   <TabItem label="macOS" icon="apple">
->    ```sh
->    docker run --rm -it -v "$(pwd)":/app nicorio42/cassini
->    ```
+
+> ```sh
+> docker run --rm -it -v "$(pwd)":/app nicorio42/cassini
+> ```
+
   </TabItem>
 
   <TabItem label="Linux" icon="linux">
->    ```sh
->    docker run --rm -it -v "$(pwd)":/app nicorio42/cassini
->    ```
+
+> ```sh
+> docker run --rm -it -v "$(pwd)":/app nicorio42/cassini
+> ```
+
   </TabItem>
 </Tabs>
 
-So for example, if you are in a directory with a LiDAR file named `tile.laz`, you can run:
+So for example, if your terminal is in a directory with a LiDAR file named `tile.laz`, you can run:
 
 <Tabs syncKey="os">
   <TabItem label="Windows" icon="seti:windows">
->    ```sh
->    docker run --rm -it -v "%cd%":/app nicorio42/cassini ./tile.laz
->    ```
+
+> On the command prompt:
+>
+> ```sh
+> docker run --rm -it -v "%cd%":/app nicorio42/cassini tile.laz
+> ```
+>
+> On Powershell:
+>
+> ```sh
+> docker run --rm -it --name cassini -v "${PWD}:/app" nicorio42/cassini
+> ```
+
   </TabItem>
   
   <TabItem label="macOS" icon="apple">
->    ```sh
->    docker run --rm -it -v "$(pwd)":/app nicorio42/cassini ./tile.laz
->    ```
+
+> ```sh
+> docker run --rm -it -v "$(pwd)":/app nicorio42/cassini ./tile.laz
+> ```
+
   </TabItem>
 
   <TabItem label="Linux" icon="linux">
->    ```sh
->    docker run --rm -it -v "$(pwd)":/app nicorio42/cassini ./tile.laz
->    ```
+
+> ```sh
+> docker run --rm -it -v "$(pwd)":/app nicorio42/cassini ./tile.laz
+> ```
+
   </TabItem>
 </Tabs>
 
 The first time you will use the command, it will download the nicorio42/cassini <GlossaryLink slug="docker" /> image which might take some minutes.
+
+For convenience, you can define a `cassini` function that will wrap the docker command:
+
+<Tabs syncKey="os">
+  <TabItem label="Windows" icon="seti:windows">
+
+> :::caution
+> This will only work on Powershell.
+> :::
+>
+> Open Powershell and execute:
+>
+> ```sh
+> notepad $PROFILE
+> ```
+>
+> This opens the profile script in Notepad. If the file doesn't exist, this command will create it. Add the following PowerShell function in your profile script:
+>
+> ```sh
+> function cassini {
+>   docker run --rm -it --name cassini -v "${PWD}:/app" nicorio42/cassini $args
+> }
+> ```
+
+  </TabItem>
+  
+  <TabItem label="macOS" icon="apple">
+
+> Open your `.bashrc` file:
+>
+> ```sh
+> nano ~/.bashrc
+> ```
+>
+> Then add this function
+>
+> ```sh
+> cassini() {
+>   docker run --rm -it --name cassini -v "$(pwd)":/app nicorio42/cassini "$@"
+> }
+> ```
+
+  </TabItem>
+
+  <TabItem label="Linux" icon="linux">
+
+> Open your `.bashrc` file:
+>
+> ```sh
+> nano ~/.bashrc
+> ```
+>
+> Then add this function
+>
+> ```sh
+> cassini() {
+>   docker run --rm -it --name cassini -v "$(pwd)":/app nicorio42/cassini "$@"
+> }
+> ```
+
+  </TabItem>
+</Tabs>
+
+Then you will be able to use the `cassini` command:
+
+```sh
+cassini ./tile.laz
+```
