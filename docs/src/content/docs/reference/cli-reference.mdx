@@ -4,6 +4,7 @@ description: The reference for the Cassini Command-Line Interface.
 ---
 
 import GlossaryLink from "../../../components/GlossaryLink.astro";
+import { Tabs, TabItem } from "@astrojs/starlight/components";
 
 The following reference covers all arguments you can pass to the `cassini` program.
 
@@ -11,9 +12,31 @@ The following reference covers all arguments you can pass to the `cassini` progr
 
 If you pass a <GlossaryLink slug="lidar" /> file path to `cassini`, it will generate the map for this file.
 
-```sh
+<Tabs syncKey="os">
+  <TabItem label="Windows" icon="seti:windows">
+
+```sh frame="none"
+cassini path\to\my\tile.laz
+```
+
+  </TabItem>
+  
+  <TabItem label="macOS" icon="apple">
+
+```sh frame="none"
 cassini ./path/to/my/tile.laz
 ```
+
+  </TabItem>
+
+  <TabItem label="Linux" icon="linux">
+
+```sh frame="none"
+cassini ./path/to/my/tile.laz
+```
+
+  </TabItem>
+</Tabs>
 
 ## Flags
 
@@ -27,7 +50,7 @@ cassini ./path/to/my/tile.laz
 
 The `--batch` flag will enable batch processing several <GlossaryLink slug="lidar" /> files at a time. You should put them in a directory named `in` at the root of the directory where you are executing Cassini. The output tiles and the merged map will be put in a directory named `out`:
 
-```sh
+```sh frame="none"
 cassini --batch
 ```
 
@@ -41,7 +64,7 @@ cassini --batch
 
 The `--skip-lidar` flag will skip the <GlossaryLink slug="lidar" /> processing stage of the pipeline. It will only work if you allready ran Cassini once with the same input files, as it will reuse some temp files.
 
-```sh
+```sh frame="none"
 cassini --skip-lidar
 ```
 
@@ -55,7 +78,7 @@ cassini --skip-lidar
 
 The `--skip-vector` flag will skip the vector processing stage of the pipeline. No file will be downloaded from <GlossaryLink slug="osm" /> and no vector features will be drawn on the map (roads, lakes...).
 
-```sh
+```sh frame="none"
 cassini --skip-vector
 ```
 
@@ -70,7 +93,7 @@ cassini --skip-vector
 
 In batch mode, you can specify the number of <GlossaryLink slug="thread" label="threads" /> used by Cassini to parallelize the work.
 
-```sh
+```sh frame="none"
 cassini --batch --threads 6
 ```
 
@@ -84,6 +107,6 @@ cassini --batch --threads 6
 
 Use this flag to output a default `config.json` file.
 
-```sh
+```sh frame="none"
 cassini --default-config
 ```

@@ -8,6 +8,204 @@ import { Tabs, TabItem, Icon } from "@astrojs/starlight/components";
 
 This document will guide you to install Cassini and all its dependencies on your machine.
 
+## Installing with Docker
+
+A <GlossaryLink slug="docker" /> image with all the dependecies already installed is provided on Docker Hub : [nicorio42/cassini](https://hub.docker.com/r/nicorio42/cassini). This makes it possible to run cassini with <GlossaryLink slug="docker" />, without having to install <GlossaryLink slug="pdal" /> and <GlossaryLink slug="gdal" />.
+
+First you will need to install <GlossaryLink slug="docker" />. Got to the [project's front page](https://www.docker.com/), hover the "Download Docker Desktop" dropdown and select your operating system. Then follow the instructions and/or the installation wizard.
+
+To check if <GlossaryLink slug="docker" /> installation worked, open a terminal and type:
+
+```sh frame="none"
+docker -v
+```
+
+This should print the version of <GlossaryLink slug="docker" />.
+
+Then you can use Cassini by replacing the `cassini` command with:
+
+<Tabs syncKey="os">
+  <TabItem label="Windows" icon="seti:windows">
+
+> On the command prompt:
+>
+> ```sh frame="none"
+> docker run --rm -it -v "%cd%":/app nicorio42/cassini
+> ```
+>
+> On Powershell:
+>
+> ```sh frame="none"
+> docker run --rm -it --name cassini -v "${PWD}:/app" nicorio42/cassini
+> ```
+
+  </TabItem>
+  
+  <TabItem label="macOS" icon="apple">
+
+> ```sh frame="none"
+> docker run --rm -it -v "$(pwd)":/app nicorio42/cassini
+> ```
+
+  </TabItem>
+
+  <TabItem label="Linux" icon="linux">
+
+> ```sh frame="none"
+> docker run --rm -it -v "$(pwd)":/app nicorio42/cassini
+> ```
+
+  </TabItem>
+</Tabs>
+
+So for example, if your terminal is in a directory with a LiDAR file named `tile.laz`, you can run:
+
+<Tabs syncKey="os">
+  <TabItem label="Windows" icon="seti:windows">
+
+> On the command prompt:
+>
+> ```sh frame="none"
+> docker run --rm -it -v "%cd%":/app nicorio42/cassini tile.laz
+> ```
+>
+> On Powershell:
+>
+> ```sh frame="none"
+> docker run --rm -it --name cassini -v "${PWD}:/app" nicorio42/cassini tile.laz
+> ```
+
+  </TabItem>
+  
+  <TabItem label="macOS" icon="apple">
+
+> ```sh frame="none"
+> docker run --rm -it -v "$(pwd)":/app nicorio42/cassini ./tile.laz
+> ```
+
+  </TabItem>
+
+  <TabItem label="Linux" icon="linux">
+
+> ```sh frame="none"
+> docker run --rm -it -v "$(pwd)":/app nicorio42/cassini ./tile.laz
+> ```
+
+  </TabItem>
+</Tabs>
+
+The first time you will use the command, it will download the nicorio42/cassini <GlossaryLink slug="docker" /> image which might take some minutes.
+
+For convenience, you can define a `cassini` function that will wrap the docker command:
+
+<Tabs syncKey="os">
+  <TabItem label="Windows" icon="seti:windows">
+
+> :::caution
+> This will only work on Powershell.
+> :::
+>
+> First open Powershell as an admin user and authorize script execution:
+>
+> ```sh frame="none"
+> set-executionpolicy unrestricted
+> ```
+>
+> Then open Powershell and execute:
+>
+> ```sh frame="none"
+> if (!(Test-Path -Path $PROFILE)) {
+>   New-Item -ItemType File -Path $PROFILE -Force
+> }
+> ```
+>
+> This will create a PowerShell profile (the equivalent of a .bashrc in Powershell) if it doesn't exist yet. Then execute the following command to edit this PowerShell profile:
+>
+> ```sh frame="none"
+> notepad $PROFILE
+> ```
+>
+> Add the following PowerShell function in your profile script and save it:
+>
+> ```sh frame="none"
+> function cassini {
+>   docker run --rm -it --name cassini -v "${PWD}:/app" nicorio42/cassini $args
+> }
+> ```
+
+  </TabItem>
+  
+  <TabItem label="macOS" icon="apple">
+
+> Open your `.bashrc` file:
+>
+> ```sh frame="none"
+> nano ~/.bashrc
+> ```
+>
+> Then add this function
+>
+> ```sh frame="none"
+> cassini() {
+>   docker run --rm -it --name cassini -v "$(pwd)":/app nicorio42/cassini "$@"
+> }
+> ```
+
+  </TabItem>
+
+  <TabItem label="Linux" icon="linux">
+
+> Open your `.bashrc` file:
+>
+> ```sh frame="none"
+> nano ~/.bashrc
+> ```
+>
+> Then add this function
+>
+> ```sh frame="none"
+> cassini() {
+>   docker run --rm -it --name cassini -v "$(pwd)":/app nicorio42/cassini "$@"
+> }
+> ```
+
+  </TabItem>
+</Tabs>
+
+Then you will be able to use the `cassini` command:
+
+<Tabs syncKey="os">
+  <TabItem label="Windows" icon="seti:windows">
+
+```sh frame="none"
+cassini tile.laz
+```
+
+  </TabItem>
+  
+  <TabItem label="macOS" icon="apple">
+
+```sh frame="none"
+cassini ./tile.laz
+```
+
+  </TabItem>
+
+  <TabItem label="Linux" icon="linux">
+
+```sh frame="none"
+cassini ./tile.laz
+```
+
+  </TabItem>
+</Tabs>
+
+To update Cassini to the latest version, pull the latest [nicorio42/cassini](https://hub.docker.com/r/nicorio42/cassini) image:
+
+```sh fram="none"
+docker pull nicorio42/cassini:latest
+```
+
 ## Installing with Conda
 
 :::caution
@@ -25,7 +223,7 @@ The easiest way to install <GlossaryLink slug="pdal" /> and <GlossaryLink slug="
 
 > These three commands quickly and quietly install the latest 64-bit version of the installer and then clean up after themselves. To install a different version or architecture of Miniconda for Windows, change the name of the `.exe` installer in the `curl` command.
 >
-> ```sh
+> ```sh frame="none"
 > curl https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe -o miniconda.exe
 > start /wait "" miniconda.exe /S
 > del miniconda.exe
@@ -39,7 +237,7 @@ The easiest way to install <GlossaryLink slug="pdal" /> and <GlossaryLink slug="
 
 > These four commands quickly and quietly install the latest M1 macOS version of the installer and then clean up after themselves. To install a different version or architecture of Miniconda for macOS, change the name of the `.sh` installer in the `curl` command.
 >
-> ```sh
+> ```sh frame="none"
 > mkdir -p ~/miniconda3
 > curl https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-arm64.sh -o ~/miniconda3/miniconda.sh
 > bash ~/miniconda3/miniconda.sh -b -u -p ~/miniconda3
@@ -48,7 +246,7 @@ The easiest way to install <GlossaryLink slug="pdal" /> and <GlossaryLink slug="
 >
 > After installing, initialize your newly-installed Miniconda. The following commands initialize for bash and zsh shells:
 >
-> ```sh
+> ```sh frame="none"
 > ~/miniconda3/bin/conda init bash
 > ~/miniconda3/bin/conda init zsh
 > ```
@@ -59,7 +257,7 @@ The easiest way to install <GlossaryLink slug="pdal" /> and <GlossaryLink slug="
 
 > These four commands quickly and quietly install the latest 64-bit version of the installer and then clean up after themselves. To install a different version or architecture of Miniconda for Linux, change the name of the `.sh` installer in the `wget` command.
 >
-> ```sh
+> ```sh frame="none"
 > mkdir -p ~/miniconda3
 > wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda3/miniconda.sh
 > bash ~/miniconda3/miniconda.sh -b -u -p ~/miniconda3
@@ -68,7 +266,7 @@ The easiest way to install <GlossaryLink slug="pdal" /> and <GlossaryLink slug="
 >
 > After installing, initialize your newly-installed Miniconda. The following commands initialize for bash and zsh shells:
 >
-> ```sh
+> ```sh frame="none"
 > ~/miniconda3/bin/conda init bash
 > ~/miniconda3/bin/conda init zsh
 > ```
@@ -78,7 +276,7 @@ The easiest way to install <GlossaryLink slug="pdal" /> and <GlossaryLink slug="
 
 After following these instructions, the `conda` command should be available in you terminal. To check that everything worked:
 
-```sh
+```sh frame="none"
 conda --version
 ```
 
@@ -86,13 +284,13 @@ This should print the version of the conda program.
 
 Then create a new miniconda environment named `cassini` with pdal and gdal installed:
 
-```sh
+```sh frame="none"
 conda create --yes --name cassini --channel conda-forge pdal gdal
 ```
 
 Everytime you will open a new terminal and want to use Cassini, you will have to activate this environment:
 
-```sh
+```sh frame="none"
 conda activate cassini
 ```
 
@@ -111,151 +309,3 @@ Download the binary file corresponding to your Operating System:
 Decompress it and copy the cassini executable where you want to use it on your machine.
 
 If you want to make the `cassini` command globally available on you machine, you can follow [this tutorial](https://zwbetz.com/how-to-add-a-binary-to-your-path-on-macos-linux-windows/).
-
-## Installing with Docker
-
-A <GlossaryLink slug="docker" /> image with all the dependecies already installed is provided on Docker Hub : [nicorio42/cassini](https://hub.docker.com/r/nicorio42/cassini).
-
-First you will need to install <GlossaryLink slug="docker" />. Got to the [project's front page](https://www.docker.com/), hover the "Download Docker Desktop" dropdown and select your operating system. Then follow the instructions and/or the installation wizard.
-
-To check if <GlossaryLink slug="docker" /> installation worked, open a terminal and type:
-
-```sh
-docker -v
-```
-
-This should print the version of <GlossaryLink slug="docker" />.
-
-Then you can use Cassini by replacing the `cassini` command with:
-
-<Tabs syncKey="os">
-  <TabItem label="Windows" icon="seti:windows">
-
-> ```sh
-> docker run --rm -it -v "%cd%":/app nicorio42/cassini
-> ```
-
-  </TabItem>
-  
-  <TabItem label="macOS" icon="apple">
-
-> ```sh
-> docker run --rm -it -v "$(pwd)":/app nicorio42/cassini
-> ```
-
-  </TabItem>
-
-  <TabItem label="Linux" icon="linux">
-
-> ```sh
-> docker run --rm -it -v "$(pwd)":/app nicorio42/cassini
-> ```
-
-  </TabItem>
-</Tabs>
-
-So for example, if your terminal is in a directory with a LiDAR file named `tile.laz`, you can run:
-
-<Tabs syncKey="os">
-  <TabItem label="Windows" icon="seti:windows">
-
-> On the command prompt:
->
-> ```sh
-> docker run --rm -it -v "%cd%":/app nicorio42/cassini tile.laz
-> ```
->
-> On Powershell:
->
-> ```sh
-> docker run --rm -it --name cassini -v "${PWD}:/app" nicorio42/cassini
-> ```
-
-  </TabItem>
-  
-  <TabItem label="macOS" icon="apple">
-
-> ```sh
-> docker run --rm -it -v "$(pwd)":/app nicorio42/cassini ./tile.laz
-> ```
-
-  </TabItem>
-
-  <TabItem label="Linux" icon="linux">
-
-> ```sh
-> docker run --rm -it -v "$(pwd)":/app nicorio42/cassini ./tile.laz
-> ```
-
-  </TabItem>
-</Tabs>
-
-The first time you will use the command, it will download the nicorio42/cassini <GlossaryLink slug="docker" /> image which might take some minutes.
-
-For convenience, you can define a `cassini` function that will wrap the docker command:
-
-<Tabs syncKey="os">
-  <TabItem label="Windows" icon="seti:windows">
-
-> :::caution
-> This will only work on Powershell.
-> :::
->
-> Open Powershell and execute:
->
-> ```sh
-> notepad $PROFILE
-> ```
->
-> This opens the profile script in Notepad. If the file doesn't exist, this command will create it. Add the following PowerShell function in your profile script:
->
-> ```sh
-> function cassini {
->   docker run --rm -it --name cassini -v "${PWD}:/app" nicorio42/cassini $args
-> }
-> ```
-
-  </TabItem>
-  
-  <TabItem label="macOS" icon="apple">
-
-> Open your `.bashrc` file:
->
-> ```sh
-> nano ~/.bashrc
-> ```
->
-> Then add this function
->
-> ```sh
-> cassini() {
->   docker run --rm -it --name cassini -v "$(pwd)":/app nicorio42/cassini "$@"
-> }
-> ```
-
-  </TabItem>
-
-  <TabItem label="Linux" icon="linux">
-
-> Open your `.bashrc` file:
->
-> ```sh
-> nano ~/.bashrc
-> ```
->
-> Then add this function
->
-> ```sh
-> cassini() {
->   docker run --rm -it --name cassini -v "$(pwd)":/app nicorio42/cassini "$@"
-> }
-> ```
-
-  </TabItem>
-</Tabs>
-
-Then you will be able to use the `cassini` command:
-
-```sh
-cassini ./tile.laz
-```
