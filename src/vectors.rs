@@ -128,7 +128,11 @@ pub fn render_osm_vector_shapes(tile: &Tile, image_width: u32, image_height: u32
         };
 
         // 502 wide road
-        if highway == "secondary" || highway == "tertiary" {
+        if highway == "primary"
+            || highway == "secondary"
+            || highway == "tertiary"
+            || highway == "residential"
+        {
             map_renderer = map_renderer.draw_line(&line, VECTOR_BLACK, WIDE_ROAD_OUTER_WIDTH);
             map_renderer =
                 map_renderer.draw_line(&line, VECTOR_PAVED_AREA_BROWN, WIDE_ROAD_INNER_WIDTH);
@@ -142,7 +146,12 @@ pub fn render_osm_vector_shapes(tile: &Tile, image_width: u32, image_height: u32
         }
 
         // 505 footpath
-        if highway == "path" || highway == "unclassified" {
+        if highway == "pedestrian"
+            || highway == "service"
+            || highway == "footway"
+            || highway == "path"
+            || highway == "unclassified"
+        {
             map_renderer = map_renderer.draw_dashed_line(
                 line,
                 VECTOR_BLACK,

@@ -21,10 +21,11 @@ pub fn batch(number_of_threads: usize, skip_lidar: bool, skip_vector: bool) {
 
     let tiles = get_tiles_with_neighbors();
     let tiles_arc = Arc::new(tiles.clone());
+    let chunk_size = (tiles.len() + number_of_threads - 1) / number_of_threads;
 
     if !skip_lidar {
         let tiles_chunks: Vec<Vec<TileWithNeighbors>> = tiles_arc
-            .chunks(number_of_threads)
+            .chunks(chunk_size)
             .map(|chunk| chunk.to_vec())
             .collect();
 
@@ -57,7 +58,7 @@ pub fn batch(number_of_threads: usize, skip_lidar: bool, skip_vector: bool) {
     }
 
     let tiles_chunks: Vec<Vec<TileWithNeighbors>> = tiles_arc
-        .chunks(number_of_threads)
+        .chunks(chunk_size)
         .map(|chunk| chunk.to_vec())
         .collect();
 
