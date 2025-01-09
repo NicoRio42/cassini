@@ -475,6 +475,10 @@ fn write_formline_shape_to_shapefile(
     elevation: f64,
     writer: &mut shapefile::Writer<std::io::BufWriter<File>>,
 ) {
+    if current_formline.len() < 2 {
+        return;
+    }
+
     let mut points: Vec<Point> = vec![];
 
     for (x, y) in current_formline {
