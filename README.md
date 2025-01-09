@@ -19,7 +19,7 @@ Install `miniconda`: [miniconda](https://docs.anaconda.com/miniconda/#quick-comm
 Create a virtual environment with PDAL and GDAL:
 
 ```sh
-conda create --yes --name cassni --channel conda-forge pdal gdal
+conda create --yes --name cassini --channel conda-forge pdal gdal
 ```
 
 Activate the environment when you open a new terminal:
@@ -38,4 +38,10 @@ Building the project:
 
 ```sh
 cargo build
+```
+
+On Ubuntu, install these libs:
+
+```sh
+sudo apt install libfontconfig1-dev libfreetype6-dev
 ```
