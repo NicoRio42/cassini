@@ -4,3 +4,7 @@ target
 pullautin
 data
 config.json
+tile
+osm
+*.laz
+*.las

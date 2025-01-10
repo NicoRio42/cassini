@@ -20,7 +20,7 @@ pub fn download_osm_files_for_all_tiles_if_needed(tiles: &Vec<TileWithNeighbors>
 }
 
 pub fn download_osm_file_if_needed(min_x: i64, min_y: i64, max_x: i64, max_y: i64) {
-    let in_path = Path::new("in");
+    let in_path = Path::new("osm");
 
     if !in_path.exists() {
         create_dir_all(in_path).unwrap();

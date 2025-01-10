@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{Parser, Subcommand};
 
 // Update the docs when modifying
 #[derive(Parser, Debug)]
@@ -8,25 +8,103 @@ use clap::Parser;
     long_about = "Cassini is a software that generates highly accurate topographic maps from LiDAR data and shapefile vector data in record times."
 )]
 pub struct Args {
-    #[arg(help = "The LiDAR file path When processing a single file.")]
-    pub file_path: Option<String>,
-    #[arg(
-        long,
-        help = "Enable batch mode for processing multiple LiDAR files placed in the in directory"
-    )]
-    pub batch: bool,
-    #[arg(
-        long,
-        help = "Skip the LiDAR processing stage of the pipeline (only if you already ran cassini once with the same input files)."
-    )]
-    pub skip_lidar: bool,
-    #[arg(long, help = "Skip the vector processing stage of the pipeline.")]
-    pub skip_vector: bool,
-    #[arg(
-        long,
-        help = "Number of threads used by Cassini to parallelize the work in batch mode (default 3)."
-    )]
-    pub threads: Option<usize>,
-    #[arg(long, help = "Output a default config.json file.")]
-    pub default_config: bool,
+    #[command(subcommand)]
+    pub command: Option<Commands>,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum Commands {
+    /// Generate a map from a single LiDAR file
+    Process {
+        #[arg(help = "The path to the LiDAR file to process")]
+        file_path: String,
+
+        #[arg(
+            long,
+            short,
+            help = "The output directory for the processed LiDAR file",
+            default_value = "tile"
+        )]
+        output_dir: String,
+
+        #[arg(long, short, help = "Skip the vector processing stage of the pipeline")]
+        skip_vector: bool,
+    },
+
+    /// Run only the LiDAR processing step for a single tile
+    Lidar {
+        #[arg(help = "The path to the LiDAR file to process")]
+        file_path: String,
+
+        #[arg(
+            long,
+            short,
+            help = "The output directory for the processed LiDAR file",
+            default_value = "tile"
+        )]
+        output_dir: String,
+    },
+
+    /// Run only the map generation step for a single tile
+    Render {
+        #[arg(
+            help = "The path to the directory containing the output of the LiDAR processing step"
+        )]
+        input_dir: String,
+
+        #[arg(
+            long,
+            short,
+            help = "The output directory for the processed LiDAR file",
+            default_value = "tile"
+        )]
+        output_dir: String,
+
+        #[arg(
+            long,
+            short,
+            help = "A list of directories containing the output of the LiDAR processing step for neighboring tiles"
+        )]
+        neighbors: Vec<String>,
+
+        #[arg(long, short, help = "Skip the vector processing stage of the pipeline")]
+        skip_vector: bool,
+    },
+
+    /// Process multiple LiDAR files at once
+    Batch {
+        #[arg(
+            help = "The path to the directory containing the LiDAR files to process",
+            default_value = "in"
+        )]
+        input_dir: String,
+
+        #[arg(
+            long,
+            short,
+            help = "The output directory for the processed LiDAR files",
+            default_value = "out"
+        )]
+        output_dir: String,
+
+        #[arg(
+            long,
+            short,
+            help = "Number of threads used by Cassini to parallelize the work in batch mode",
+            default_value = "3"
+        )]
+        threads: usize,
+
+        #[arg(
+            long,
+            help = "Skip the LiDAR processing stage of the pipeline (only if you already ran cassini once with the same input files)."
+        )]
+        skip_lidar: bool,
+
+        #[arg(long, help = "Skip the vector processing stage of the pipeline")]
+        skip_vector: bool,
+    },
+
+    /// Output a default config.json file.
+    DefaultConfig,
 }

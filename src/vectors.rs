@@ -30,7 +30,7 @@ pub fn render_osm_vector_shapes(tile: &Tile, image_width: u32, image_height: u32
 
     let scale_factor = config.dpi_resolution / INCH;
     let shapes_outlput_path = tile.dir_path.join("shapes");
-    let osm_path = Path::new("in").join(format!("{:0>7}_{:0>7}.osm", tile.min_x, tile.max_y));
+    let osm_path = Path::new("osm").join(format!("{:0>7}_{:0>7}.osm", tile.min_x, tile.max_y));
 
     let ogr2ogr_output = Command::new("ogr2ogr")
         .args([

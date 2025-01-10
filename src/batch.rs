@@ -15,11 +15,17 @@ use std::{
     time::Duration,
 };
 
-pub fn batch(number_of_threads: usize, skip_lidar: bool, skip_vector: bool) {
+pub fn batch(
+    input_dir: &str,
+    output_dir: &str,
+    number_of_threads: usize,
+    skip_lidar: bool,
+    skip_vector: bool,
+) {
     println!("Batch mode");
     println!("Generating raw rasters for every tiles");
 
-    let tiles = get_tiles_with_neighbors();
+    let tiles = get_tiles_with_neighbors(input_dir, output_dir);
     let tiles_arc = Arc::new(tiles.clone());
     let chunk_size = (tiles.len() + number_of_threads - 1) / number_of_threads;
 
@@ -91,8 +97,8 @@ pub fn batch(number_of_threads: usize, skip_lidar: bool, skip_vector: bool) {
     merge_maps(tiles);
 }
 
-pub fn get_tiles_with_neighbors() -> Vec<TileWithNeighbors> {
-    let paths = read_dir("in").expect("There is no in directory.");
+pub fn get_tiles_with_neighbors(input_dir: &str, output_dir: &str) -> Vec<TileWithNeighbors> {
+    let paths = read_dir(input_dir).expect(&format!("There is no {} directory.", input_dir));
     let mut tiles: Vec<TileWithNeighbors> = vec![];
     let mut tiles_map = HashMap::<(i64, i64, i64, i64), PathBuf>::new();
 
@@ -125,7 +131,9 @@ pub fn get_tiles_with_neighbors() -> Vec<TileWithNeighbors> {
     for ((min_x, min_y, max_x, max_y), laz_path) in tiles_map.clone().into_iter() {
         let width = max_x - min_x;
         let height = max_y - min_y;
-        let dir_path = Path::new("out").join(format!("{}_{}_{}_{}", min_x, min_y, max_x, max_y));
+
+        let dir_path =
+            Path::new(output_dir).join(format!("{}_{}_{}_{}", min_x, min_y, max_x, max_y));
 
         let tile = Tile {
             laz_path,
@@ -141,6 +149,7 @@ pub fn get_tiles_with_neighbors() -> Vec<TileWithNeighbors> {
             neighbors: NeighborTiles {
                 top: get_neighbor_tile_from_hash_map(
                     &tiles_map,
+                    output_dir,
                     min_x,
                     max_y,
                     max_x,
@@ -148,6 +157,7 @@ pub fn get_tiles_with_neighbors() -> Vec<TileWithNeighbors> {
                 ),
                 top_right: get_neighbor_tile_from_hash_map(
                     &tiles_map,
+                    output_dir,
                     max_x,
                     max_y,
                     max_x + width,
@@ -155,6 +165,7 @@ pub fn get_tiles_with_neighbors() -> Vec<TileWithNeighbors> {
                 ),
                 right: get_neighbor_tile_from_hash_map(
                     &tiles_map,
+                    output_dir,
                     max_x,
                     min_y,
                     max_x + width,
@@ -162,6 +173,7 @@ pub fn get_tiles_with_neighbors() -> Vec<TileWithNeighbors> {
                 ),
                 bottom_right: get_neighbor_tile_from_hash_map(
                     &tiles_map,
+                    output_dir,
                     max_x,
                     min_y - height,
                     max_x + width,
@@ -169,6 +181,7 @@ pub fn get_tiles_with_neighbors() -> Vec<TileWithNeighbors> {
                 ),
                 bottom: get_neighbor_tile_from_hash_map(
                     &tiles_map,
+                    output_dir,
                     min_x,
                     min_y - height,
                     max_x,
@@ -176,6 +189,7 @@ pub fn get_tiles_with_neighbors() -> Vec<TileWithNeighbors> {
                 ),
                 bottom_left: get_neighbor_tile_from_hash_map(
                     &tiles_map,
+                    output_dir,
                     min_x - width,
                     min_y - height,
                     min_x,
@@ -183,6 +197,7 @@ pub fn get_tiles_with_neighbors() -> Vec<TileWithNeighbors> {
                 ),
                 left: get_neighbor_tile_from_hash_map(
                     &tiles_map,
+                    output_dir,
                     min_x - width,
                     min_y,
                     min_x,
@@ -190,6 +205,7 @@ pub fn get_tiles_with_neighbors() -> Vec<TileWithNeighbors> {
                 ),
                 top_left: get_neighbor_tile_from_hash_map(
                     &tiles_map,
+                    output_dir,
                     min_x - width,
                     max_y,
                     min_x,
@@ -204,6 +220,7 @@ pub fn get_tiles_with_neighbors() -> Vec<TileWithNeighbors> {
 
 fn get_neighbor_tile_from_hash_map(
     tiles_map: &HashMap<(i64, i64, i64, i64), PathBuf>,
+    output_dir: &str,
     min_x: i64,
     min_y: i64,
     max_x: i64,
@@ -212,7 +229,8 @@ fn get_neighbor_tile_from_hash_map(
     return match tiles_map.get(&(min_x, min_y, max_x, max_y)) {
         Some(neighbor_path) => Some(Tile {
             laz_path: neighbor_path.clone(),
-            dir_path: Path::new("out").join(format!("{}_{}_{}_{}", min_x, min_y, max_x, max_y)),
+            dir_path: Path::new(output_dir)
+                .join(format!("{}_{}_{}_{}", min_x, min_y, max_x, max_y)),
             min_x,
             min_y,
             max_x,
