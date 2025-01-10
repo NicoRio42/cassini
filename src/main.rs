@@ -81,7 +81,7 @@ fn main() {
                     top_left: None,
                 };
 
-                if skip_vector {
+                if !skip_vector {
                     download_osm_file_if_needed(tile.min_x, tile.min_y, tile.max_x, tile.max_y);
                 }
 
