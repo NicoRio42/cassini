@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 pub struct TileWithNeighbors {
+    pub laz_path: PathBuf,
     pub tile: Tile,
     pub neighbors: NeighborTiles,
 }
@@ -9,7 +10,6 @@ pub struct TileWithNeighbors {
 #[derive(Debug, Clone)]
 pub struct Tile {
     pub dir_path: PathBuf,
-    pub laz_path: PathBuf,
     pub min_x: i64,
     pub min_y: i64,
     pub max_x: i64,

@@ -119,6 +119,13 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
 
     write(&pipeline_path, pdal_pipeline).expect("Unable to write pipeline file");
 
+    let mut extent_file = File::create(&output_dir_path.join("extent.txt"))
+        .expect("Could not create extent.txt file");
+
+    extent_file
+        .write_all(format!("{}|{}|{}|{}", min_x, min_y, max_x, max_y).as_bytes())
+        .expect("Could not write to the extent.txt file");
+
     let pdal_output = Command::new("pdal")
         .args(["pipeline", &pipeline_path.to_str().unwrap()])
         .output()

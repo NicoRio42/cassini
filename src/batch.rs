@@ -43,7 +43,7 @@ pub fn batch(
             let spawned_thread = spawn(move || {
                 for tile in chunk.iter() {
                     generate_dem_and_vegetation_density_tiff_images_from_laz_file(
-                        &tile.tile.laz_path,
+                        &tile.laz_path,
                         &tile.tile.dir_path,
                     );
                 }
@@ -136,7 +136,6 @@ pub fn get_tiles_with_neighbors(input_dir: &str, output_dir: &str) -> Vec<TileWi
             Path::new(output_dir).join(format!("{}_{}_{}_{}", min_x, min_y, max_x, max_y));
 
         let tile = Tile {
-            laz_path,
             dir_path,
             min_x,
             min_y,
@@ -145,6 +144,7 @@ pub fn get_tiles_with_neighbors(input_dir: &str, output_dir: &str) -> Vec<TileWi
         };
 
         tiles.push(TileWithNeighbors {
+            laz_path,
             tile,
             neighbors: NeighborTiles {
                 top: get_neighbor_tile_from_hash_map(
@@ -228,7 +228,6 @@ fn get_neighbor_tile_from_hash_map(
 ) -> Option<Tile> {
     return match tiles_map.get(&(min_x, min_y, max_x, max_y)) {
         Some(neighbor_path) => Some(Tile {
-            laz_path: neighbor_path.clone(),
             dir_path: Path::new(output_dir)
                 .join(format!("{}_{}_{}_{}", min_x, min_y, max_x, max_y)),
             min_x,
