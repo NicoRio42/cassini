@@ -22,7 +22,7 @@ pub fn render_cliffs(tile: &Tile, image_width: u32, image_height: u32, config: &
 
     let dem_block_size_pixel = DEM_BLOCK_SIZE as f32 * config.dpi_resolution / INCH;
 
-    let slopes_path = tile.dir_path.join("slopes.tif");
+    let slopes_path = tile.render_dir_path.join("slopes.tif");
     let slopes_tif_file = File::open(slopes_path).expect("Cannot find slopes tif image!");
 
     let mut slopes_img_decoder = Decoder::new(slopes_tif_file).expect("Cannot create decoder");
@@ -74,7 +74,7 @@ pub fn render_cliffs(tile: &Tile, image_width: u32, image_height: u32, config: &
         }
     }
 
-    let cliffs_path = tile.dir_path.join("cliffs.png");
+    let cliffs_path = tile.render_dir_path.join("cliffs.png");
 
     cliffs_layer_canvas
         .save(cliffs_path)

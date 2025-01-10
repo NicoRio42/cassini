@@ -1,24 +1,27 @@
-use crate::tile::{NeighborTiles, Tile};
-use std::process::{Command, ExitStatus};
+use crate::tile::Tile;
+use std::{
+    path::PathBuf,
+    process::{Command, ExitStatus},
+};
 
 pub fn create_tif_with_buffer(
     tile: &Tile,
-    neighbor_tiles: &NeighborTiles,
+    neighbor_tiles: &Vec<PathBuf>,
     buffer: i64,
     tif_filename_without_extension: &str,
 ) {
-    let vrt_with_buffer_path = tile.dir_path.join(format!(
+    let vrt_with_buffer_path = tile.render_dir_path.join(format!(
         "{}-with-buffer.vrt",
         tif_filename_without_extension
     ));
 
-    let raster_with_buffer_path = tile.dir_path.join(format!(
+    let raster_with_buffer_path = tile.render_dir_path.join(format!(
         "{}-with-buffer.tif",
         tif_filename_without_extension
     ));
 
     let tile_raster_path = tile
-        .dir_path
+        .lidar_dir_path
         .join(format!("{}.tif", tif_filename_without_extension));
 
     let mut rasters_paths: Vec<String> = vec![tile_raster_path
@@ -26,31 +29,13 @@ pub fn create_tif_with_buffer(
         .expect("Failed to convert path to string")
         .to_string()];
 
-    let neighbors = vec![
-        neighbor_tiles.top.as_ref(),
-        neighbor_tiles.top_right.as_ref(),
-        neighbor_tiles.right.as_ref(),
-        neighbor_tiles.bottom_right.as_ref(),
-        neighbor_tiles.bottom.as_ref(),
-        neighbor_tiles.bottom_left.as_ref(),
-        neighbor_tiles.left.as_ref(),
-        neighbor_tiles.top_left.as_ref(),
-    ];
+    for neighbor_tile in neighbor_tiles {
+        let path = neighbor_tile.join(format!("{}.tif", tif_filename_without_extension));
 
-    for neighbor in neighbors {
-        if let Some(neighbor_tile) = neighbor {
-            let path = neighbor_tile
-                .dir_path
-                .join(format!("{}.tif", tif_filename_without_extension));
-
-            if let Some(path_str) = path.to_str() {
-                rasters_paths.push(path_str.to_string());
-            } else {
-                eprintln!(
-                    "Failed to convert path to string for {:?}",
-                    neighbor_tile.dir_path
-                );
-            }
+        if let Some(path_str) = path.to_str() {
+            rasters_paths.push(path_str.to_string());
+        } else {
+            eprintln!("Failed to convert path to string for {:?}", neighbor_tile);
         }
     }
 

@@ -2,7 +2,7 @@ use crate::{
     buffer::create_tif_with_buffer,
     config::Config,
     constants::{BUFFER, GREEN_1, GREEN_2, GREEN_3, INCH, VEGETATION_BLOCK_SIZE, WHITE, YELLOW},
-    tile::{NeighborTiles, Tile},
+    tile::Tile,
 };
 use image::{Rgba, RgbaImage};
 use imageproc::{drawing::draw_filled_rect_mut, rect::Rect};
@@ -16,7 +16,7 @@ use tiff::decoder::{Decoder, DecodingResult};
 
 pub fn render_vegetation(
     tile: &Tile,
-    neighbor_tiles: &NeighborTiles,
+    neighbor_tiles: &Vec<PathBuf>,
     image_width: u32,
     image_height: u32,
     config: &Config,
@@ -32,9 +32,13 @@ pub fn render_vegetation(
     create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "medium-vegetation");
 
     let high_vegetation =
-        get_image_data_from_tif(&tile.dir_path.join("high-vegetation-with-buffer.tif"));
-    let medium_vegetation =
-        get_image_data_from_tif(&tile.dir_path.join("medium-vegetation-with-buffer.tif"));
+        get_image_data_from_tif(&tile.render_dir_path.join("high-vegetation-with-buffer.tif"));
+
+    let medium_vegetation = get_image_data_from_tif(
+        &tile
+            .render_dir_path
+            .join("medium-vegetation-with-buffer.tif"),
+    );
 
     let mut vegetation_layer_img = RgbaImage::from_pixel(image_width, image_height, WHITE);
 
@@ -88,7 +92,7 @@ pub fn render_vegetation(
         }
     }
 
-    let vegetation_output_path = tile.dir_path.join("vegetation.png");
+    let vegetation_output_path = tile.render_dir_path.join("vegetation.png");
 
     vegetation_layer_img
         .save(vegetation_output_path)

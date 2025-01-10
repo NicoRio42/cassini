@@ -3,7 +3,7 @@ use crate::{
     lidar::generate_dem_and_vegetation_density_tiff_images_from_laz_file,
     merge::merge_maps,
     png::generate_png_from_dem_vegetation_density_tiff_images_and_vector_file,
-    tile::{NeighborTiles, Tile, TileWithNeighbors},
+    tile::{Tile, TileWithNeighbors},
 };
 use las::raw::Header;
 use std::{
@@ -44,7 +44,7 @@ pub fn batch(
                 for tile in chunk.iter() {
                     generate_dem_and_vegetation_density_tiff_images_from_laz_file(
                         &tile.laz_path,
-                        &tile.tile.dir_path,
+                        &tile.tile.lidar_dir_path,
                     );
                 }
 
@@ -75,7 +75,7 @@ pub fn batch(
 
         let spawned_thread = spawn(move || {
             for tile in chunk.iter() {
-                println!("{:?}", tile.tile.dir_path);
+                println!("{:?}", tile.tile.render_dir_path);
 
                 generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
                     tile.tile.clone(),
@@ -94,7 +94,7 @@ pub fn batch(
         handle.join().unwrap();
     }
 
-    merge_maps(tiles);
+    merge_maps(output_dir, tiles);
 }
 
 pub fn get_tiles_with_neighbors(input_dir: &str, output_dir: &str) -> Vec<TileWithNeighbors> {
@@ -136,82 +136,88 @@ pub fn get_tiles_with_neighbors(input_dir: &str, output_dir: &str) -> Vec<TileWi
             Path::new(output_dir).join(format!("{}_{}_{}_{}", min_x, min_y, max_x, max_y));
 
         let tile = Tile {
-            dir_path,
+            lidar_dir_path: dir_path.to_path_buf(),
+            render_dir_path: dir_path,
             min_x,
             min_y,
             max_x,
             max_y,
         };
 
+        let neighbors: Vec<PathBuf> = vec![
+            get_neighbor_tile_from_hash_map(
+                &tiles_map,
+                output_dir,
+                min_x,
+                max_y,
+                max_x,
+                max_y + height,
+            ),
+            get_neighbor_tile_from_hash_map(
+                &tiles_map,
+                output_dir,
+                max_x,
+                max_y,
+                max_x + width,
+                max_y + height,
+            ),
+            get_neighbor_tile_from_hash_map(
+                &tiles_map,
+                output_dir,
+                max_x,
+                min_y,
+                max_x + width,
+                max_y,
+            ),
+            get_neighbor_tile_from_hash_map(
+                &tiles_map,
+                output_dir,
+                max_x,
+                min_y - height,
+                max_x + width,
+                min_y,
+            ),
+            get_neighbor_tile_from_hash_map(
+                &tiles_map,
+                output_dir,
+                min_x,
+                min_y - height,
+                max_x,
+                min_y,
+            ),
+            get_neighbor_tile_from_hash_map(
+                &tiles_map,
+                output_dir,
+                min_x - width,
+                min_y - height,
+                min_x,
+                min_y,
+            ),
+            get_neighbor_tile_from_hash_map(
+                &tiles_map,
+                output_dir,
+                min_x - width,
+                min_y,
+                min_x,
+                max_y,
+            ),
+            get_neighbor_tile_from_hash_map(
+                &tiles_map,
+                output_dir,
+                min_x - width,
+                max_y,
+                min_x,
+                max_y + height,
+            ),
+        ]
+        .into_iter()
+        .filter_map(|x| x)
+        .collect();
+
         tiles.push(TileWithNeighbors {
             laz_path,
             tile,
-            neighbors: NeighborTiles {
-                top: get_neighbor_tile_from_hash_map(
-                    &tiles_map,
-                    output_dir,
-                    min_x,
-                    max_y,
-                    max_x,
-                    max_y + height,
-                ),
-                top_right: get_neighbor_tile_from_hash_map(
-                    &tiles_map,
-                    output_dir,
-                    max_x,
-                    max_y,
-                    max_x + width,
-                    max_y + height,
-                ),
-                right: get_neighbor_tile_from_hash_map(
-                    &tiles_map,
-                    output_dir,
-                    max_x,
-                    min_y,
-                    max_x + width,
-                    max_y,
-                ),
-                bottom_right: get_neighbor_tile_from_hash_map(
-                    &tiles_map,
-                    output_dir,
-                    max_x,
-                    min_y - height,
-                    max_x + width,
-                    min_y,
-                ),
-                bottom: get_neighbor_tile_from_hash_map(
-                    &tiles_map,
-                    output_dir,
-                    min_x,
-                    min_y - height,
-                    max_x,
-                    min_y,
-                ),
-                bottom_left: get_neighbor_tile_from_hash_map(
-                    &tiles_map,
-                    output_dir,
-                    min_x - width,
-                    min_y - height,
-                    min_x,
-                    min_y,
-                ),
-                left: get_neighbor_tile_from_hash_map(
-                    &tiles_map,
-                    output_dir,
-                    min_x - width,
-                    min_y,
-                    min_x,
-                    max_y,
-                ),
-                top_left: get_neighbor_tile_from_hash_map(
-                    &tiles_map,
-                    output_dir,
-                    min_x - width,
-                    max_y,
-                    min_x,
-                    max_y + height,
-                ),
-            },
+            neighbors,
         })
     }
 
@@ -225,16 +231,11 @@ fn get_neighbor_tile_from_hash_map(
     min_y: i64,
     max_x: i64,
     max_y: i64,
-) -> Option<Tile> {
+) -> Option<PathBuf> {
     return match tiles_map.get(&(min_x, min_y, max_x, max_y)) {
-        Some(neighbor_path) => Some(Tile {
-            dir_path: Path::new(output_dir)
-                .join(format!("{}_{}_{}_{}", min_x, min_y, max_x, max_y)),
-            min_x,
-            min_y,
-            max_x,
-            max_y,
-        }),
+        Some(_) => {
+            Some(Path::new(output_dir).join(format!("{}_{}_{}_{}", min_x, min_y, max_x, max_y)))
+        }
         None => None,
     };
 }

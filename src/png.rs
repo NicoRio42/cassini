@@ -2,17 +2,14 @@ use crate::contours::generate_contours_with_pullautin_algorithme;
 use crate::vectors::render_osm_vector_shapes;
 use crate::INCH;
 use crate::{
-    cliffs::render_cliffs,
-    config::get_config,
-    dem::create_dem_with_buffer_and_slopes_tiff,
-    full_map::render_full_map_to_png,
-    tile::{NeighborTiles, Tile},
-    vegetation::render_vegetation,
+    cliffs::render_cliffs, config::get_config, dem::create_dem_with_buffer_and_slopes_tiff,
+    full_map::render_full_map_to_png, tile::Tile, vegetation::render_vegetation,
 };
+use std::path::PathBuf;
 
 pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
     tile: Tile,
-    neighbor_tiles: NeighborTiles,
+    neighbor_tiles: Vec<PathBuf>,
     skip_vector: bool,
 ) {
     let config = get_config();

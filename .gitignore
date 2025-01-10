@@ -8,3 +8,4 @@ tile
 osm
 *.laz
 *.las
+out-dir

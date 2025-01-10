@@ -50,7 +50,10 @@ pub fn pullautin_smooth_contours(tile: &Tile) -> (Vec<Vec<f64>>, Vec<(Vec<f64>, 
         }
     }
 
-    let contours_polylines_path = tile.dir_path.join("contours-raw").join("contours-raw.shp");
+    let contours_polylines_path = tile
+        .render_dir_path
+        .join("contours-raw")
+        .join("contours-raw.shp");
 
     let mut contours_polylines_reader: shapefile::Reader<BufReader<File>, BufReader<File>> =
         Reader::from_path(&contours_polylines_path).unwrap();
@@ -62,7 +65,7 @@ pub fn pullautin_smooth_contours(tile: &Tile) -> (Vec<Vec<f64>>, Vec<(Vec<f64>, 
 
     let table_info = contours_polylines_reader_for_table_info.into_table_info();
 
-    let contours_dir = tile.dir_path.join("contours");
+    let contours_dir = tile.render_dir_path.join("contours");
     create_dir_all(&contours_dir).expect("Could not create contours dir");
 
     let mut writer =
@@ -274,7 +277,9 @@ pub fn pullautin_smooth_contours(tile: &Tile) -> (Vec<Vec<f64>>, Vec<(Vec<f64>, 
 }
 
 fn get_elevation_matrix_from_dem(tile: &Tile) -> Vec<Vec<f64>> {
-    let dem_path = tile.dir_path.join("dem-low-resolution-with-buffer.tif");
+    let dem_path = tile
+        .render_dir_path
+        .join("dem-low-resolution-with-buffer.tif");
     let dem_tif_file = File::open(dem_path).expect("Cannot find dem tif image!");
 
     let mut dem_img_decoder = Decoder::new(dem_tif_file).expect("Cannot create decoder");

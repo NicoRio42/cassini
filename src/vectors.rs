@@ -29,7 +29,7 @@ pub fn render_osm_vector_shapes(tile: &Tile, image_width: u32, image_height: u32
     let start = Instant::now();
 
     let scale_factor = config.dpi_resolution / INCH;
-    let shapes_outlput_path = tile.dir_path.join("shapes");
+    let shapes_outlput_path = tile.render_dir_path.join("shapes");
     let osm_path = Path::new("osm").join(format!("{:0>7}_{:0>7}.osm", tile.min_x, tile.max_y));
 
     let ogr2ogr_output = Command::new("ogr2ogr")
@@ -176,7 +176,7 @@ pub fn render_osm_vector_shapes(tile: &Tile, image_width: u32, image_height: u32
         }
     }
 
-    map_renderer.save_as(tile.dir_path.join("vectors.png"));
+    map_renderer.save_as(tile.render_dir_path.join("vectors.png"));
 
     let duration = start.elapsed();
     println!(" -> Done in {:.1?}", duration);

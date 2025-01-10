@@ -1,22 +1,19 @@
-use crate::{
-    buffer::create_tif_with_buffer,
-    constants::BUFFER,
-    tile::{NeighborTiles, Tile},
-};
+use crate::{buffer::create_tif_with_buffer, constants::BUFFER, tile::Tile};
 use std::{
     fs::create_dir_all,
     io::{stdout, Write},
+    path::PathBuf,
     process::{Command, ExitStatus},
     time::Instant,
 };
 
-pub fn create_dem_with_buffer_and_slopes_tiff(tile: &Tile, neighbor_tiles: &NeighborTiles) {
+pub fn create_dem_with_buffer_and_slopes_tiff(tile: &Tile, neighbor_tiles: &Vec<PathBuf>) {
     print!("Generating dem with buffer");
     let _ = stdout().flush();
     let start = Instant::now();
 
-    let dem_with_buffer_path = tile.dir_path.join("dem-with-buffer.tif");
-    create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "dem");
+    let dem_with_buffer_path = tile.render_dir_path.join("dem-with-buffer.tif");
+    create_tif_with_buffer(tile, &neighbor_tiles, BUFFER as i64, "dem");
 
     // Filling holes
     let gdal_fillnodata_output = Command::new("gdal_fillnodata")
@@ -32,10 +29,11 @@ pub fn create_dem_with_buffer_and_slopes_tiff(tile: &Tile, neighbor_tiles: &Neig
         );
     }
 
-    let dem_low_resolution_with_buffer_path =
-        tile.dir_path.join("dem-low-resolution-with-buffer.tif");
+    let dem_low_resolution_with_buffer_path = tile
+        .render_dir_path
+        .join("dem-low-resolution-with-buffer.tif");
 
-    create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "dem-low-resolution");
+    create_tif_with_buffer(tile, &neighbor_tiles, BUFFER as i64, "dem-low-resolution");
 
     // Filling holes
     let gdal_fillnodata_output = Command::new("gdal_fillnodata")
@@ -58,7 +56,7 @@ pub fn create_dem_with_buffer_and_slopes_tiff(tile: &Tile, neighbor_tiles: &Neig
     let _ = stdout().flush();
     let start = Instant::now();
 
-    let contours_raw_dir = tile.dir_path.join("contours-raw");
+    let contours_raw_dir = tile.render_dir_path.join("contours-raw");
     create_dir_all(&contours_raw_dir).expect("Could not create contours-raw dir");
     let contours_raw_path = contours_raw_dir.join("contours-raw.shp");
 
@@ -88,7 +86,7 @@ pub fn create_dem_with_buffer_and_slopes_tiff(tile: &Tile, neighbor_tiles: &Neig
     let _ = stdout().flush();
     let start = Instant::now();
 
-    let slopes_path = tile.dir_path.join("slopes.tif");
+    let slopes_path = tile.render_dir_path.join("slopes.tif");
 
     let gdaldem_output = Command::new("gdaldem")
         .args([

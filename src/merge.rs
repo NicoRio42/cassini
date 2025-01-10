@@ -2,7 +2,7 @@ use std::path::Path;
 
 use crate::{canvas::Canvas, config::get_config, constants::INCH, tile::TileWithNeighbors};
 
-pub fn merge_maps(tiles_with_neighbors: Vec<TileWithNeighbors>) {
+pub fn merge_maps(output_dir: &str, tiles_with_neighbors: Vec<TileWithNeighbors>) {
     println!("Merging maps");
 
     let config = get_config();
@@ -39,7 +39,13 @@ pub fn merge_maps(tiles_with_neighbors: Vec<TileWithNeighbors>) {
     let mut merge_image = Canvas::new(merge_image_width as i32, merge_image_height as i32);
 
     for tile in tiles_with_neighbors {
-        let mut map = Canvas::load_from(tile.tile.dir_path.join("full-map.png").to_str().unwrap());
+        let mut map = Canvas::load_from(
+            tile.tile
+                .render_dir_path
+                .join("full-map.png")
+                .to_str()
+                .unwrap(),
+        );
 
         merge_image.overlay(
             &mut map,
@@ -49,5 +55,10 @@ pub fn merge_maps(tiles_with_neighbors: Vec<TileWithNeighbors>) {
         )
     }
 
-    merge_image.save_as(Path::new("out").join("merged-map.png").to_str().unwrap())
+    merge_image.save_as(
+        Path::new(output_dir)
+            .join("merged-map.png")
+            .to_str()
+            .unwrap(),
+    )
 }

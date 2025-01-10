@@ -174,14 +174,17 @@ pub fn pullautin_cull_formlines_render_contours(
     }
 
     let mut id: i32 = 0;
-    let contours_polylines_path = tile.dir_path.join("contours-raw").join("contours-raw.shp");
+    let contours_polylines_path = tile
+        .render_dir_path
+        .join("contours-raw")
+        .join("contours-raw.shp");
 
     let contours_polylines_reader: shapefile::Reader<BufReader<File>, BufReader<File>> =
         Reader::from_path(&contours_polylines_path).unwrap();
 
     let table_info = contours_polylines_reader.into_table_info();
 
-    let formlines_dir = tile.dir_path.join("formlines");
+    let formlines_dir = tile.render_dir_path.join("formlines");
     create_dir_all(&formlines_dir).expect("Could not create formlines dir");
 
     let mut writer =
@@ -462,7 +465,7 @@ pub fn pullautin_cull_formlines_render_contours(
     }
 
     // TODO: img.save takes 8 seconds, maybe mutualize with other images saving
-    img.save(tile.dir_path.join("contours.png"))
+    img.save(tile.render_dir_path.join("contours.png"))
         .expect("could not save output png");
 
     let duration = start.elapsed();
