@@ -8,6 +8,11 @@ export interface Props {
 }
 
 const glossaryEntry = await getEntry("glossary", Astro.props.slug);
+
+if (glossaryEntry === undefined) {
+  throw new Error("There is no glossary entry for this key.");
+}
+
 const { Content } = await glossaryEntry.render();
 ---
 

@@ -3,7 +3,7 @@ import type { Props } from "@astrojs/starlight/props";
 import Default from "@astrojs/starlight/components/PageSidebar.astro";
 import { getCollection } from "astro:content";
 
-const isGlossaryPage = Astro.props.slug === "reference/glossary";
+const isGlossaryPage = Astro.props.id.startsWith("reference/glossary");
 
 const toc = isGlossaryPage
   ? {
