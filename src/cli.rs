@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand};
 #[derive(Parser, Debug)]
 #[command(
     version,
-    about = "A software that generates highly accurate topographic maps from LiDAR data. See documentation: https://cassini-map.com",
+    about = "A software that generates highly accurate topographic maps from LiDAR data. See documentation: https://cassini-map.com. GDAL and PDAL must be installed on the system for this program to work.",
     long_about = "Cassini is a software that generates highly accurate topographic maps from LiDAR data and shapefile vector data in record times."
 )]
 pub struct Args {
