@@ -106,5 +106,5 @@ pub enum Commands {
     },
 
     /// Output a default config.json file.
-    DefaultConfig,
+    Config,
 }

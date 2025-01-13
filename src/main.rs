@@ -42,7 +42,7 @@ fn main() {
 
     if let Some(command) = args.command {
         match command {
-            Commands::DefaultConfig {} => {
+            Commands::Config {} => {
                 generate_default_config();
             }
 

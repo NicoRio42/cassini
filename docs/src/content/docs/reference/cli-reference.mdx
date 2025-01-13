@@ -6,17 +6,17 @@ description: The reference for the Cassini Command-Line Interface.
 import GlossaryLink from "../../../components/GlossaryLink.astro";
 import { Tabs, TabItem } from "@astrojs/starlight/components";
 
-The following reference covers all arguments you can pass to the `cassini` program.
+The following reference covers all subcommands and flags you can pass to the `cassini` program.
 
-## Anonymous argument
+## `cassini process`
 
-If you pass a <GlossaryLink slug="lidar" /> file path to `cassini`, it will generate the map for this file.
+Generate a map from a single <GlossaryLink slug="lidar" /> file. The `process` subcommand takes the path to the <GlossaryLink slug="lidar" /> file to process as an argument:
 
 <Tabs syncKey="os">
   <TabItem label="Windows" icon="seti:windows">
 
 ```sh frame="none"
-cassini path\to\my\tile.laz
+cassini process path\to\my\tile.laz
 ```
 
   </TabItem>
@@ -24,7 +24,7 @@ cassini path\to\my\tile.laz
   <TabItem label="macOS" icon="apple">
 
 ```sh frame="none"
-cassini ./path/to/my/tile.laz
+cassini process ./path/to/my/tile.laz
 ```
 
   </TabItem>
@@ -32,43 +32,26 @@ cassini ./path/to/my/tile.laz
   <TabItem label="Linux" icon="linux">
 
 ```sh frame="none"
-cassini ./path/to/my/tile.laz
+cassini process ./path/to/my/tile.laz
 ```
 
   </TabItem>
 </Tabs>
 
-## Flags
+### Flags
 
-### `--batch`
-
-<p>
-
-**Type:** `boolean`<br />
-
-</p>
-
-The `--batch` flag will enable batch processing several <GlossaryLink slug="lidar" /> files at a time. You should put them in a directory named `in` at the root of the directory where you are executing Cassini. The output tiles and the merged map will be put in a directory named `out`:
-
-```sh frame="none"
-cassini --batch
-```
-
-### `--skip-lidar`
+#### `--output-dir` or `-o`
 
 <p>
 
-**Type:** `boolean`<br />
+**Type:** `string`<br />
+**Default:** `tile`
 
 </p>
 
-The `--skip-lidar` flag will skip the <GlossaryLink slug="lidar" /> processing stage of the pipeline. It will only work if you allready ran Cassini once with the same input files, as it will reuse some temp files.
+The output directory for the processed LiDAR file.
 
-```sh frame="none"
-cassini --skip-lidar
-```
-
-### `--skip-vector`
+#### `--skip-vector` or `-s`
 
 <p>
 
@@ -78,11 +61,134 @@ cassini --skip-lidar
 
 The `--skip-vector` flag will skip the vector processing stage of the pipeline. No file will be downloaded from <GlossaryLink slug="osm" /> and no vector features will be drawn on the map (roads, lakes...).
 
+## `cassini lidar`
+
+Run only the LiDAR processing step for a single tile. The `lidar` subcommand takes the path to the <GlossaryLink slug="lidar" /> file to process as an argument:
+
+<Tabs syncKey="os">
+  <TabItem label="Windows" icon="seti:windows">
+
 ```sh frame="none"
-cassini --skip-vector
+cassini lidar path\to\my\tile.laz
 ```
 
-### `--threads`
+  </TabItem>
+  
+  <TabItem label="macOS" icon="apple">
+
+```sh frame="none"
+cassini lidar ./path/to/my/tile.laz
+```
+
+  </TabItem>
+
+  <TabItem label="Linux" icon="linux">
+
+```sh frame="none"
+cassini lidar ./path/to/my/tile.laz
+```
+
+  </TabItem>
+</Tabs>
+
+### Flags
+
+#### `--output-dir` or `-o`
+
+<p>
+
+**Type:** `string`<br />
+**Default:** `lidar`
+
+</p>
+
+The output directory for the processed <GlossaryLink slug="lidar" /> file.
+
+## `cassini render`
+
+Run only the map rendering step for a single tile. The `render` subcommand takes the path to the directory containing the output of the <GlossaryLink slug="lidar" /> processing step as an argument:
+
+<Tabs syncKey="os">
+  <TabItem label="Windows" icon="seti:windows">
+
+```sh frame="none"
+cassini render path\lidar\step\output\directory
+```
+
+  </TabItem>
+  
+  <TabItem label="macOS" icon="apple">
+
+```sh frame="none"
+cassini render ./path/to/lidar/step/output/directory
+```
+
+  </TabItem>
+
+  <TabItem label="Linux" icon="linux">
+
+```sh frame="none"
+cassini render ./path/to/lidar/step/output/directory
+```
+
+  </TabItem>
+</Tabs>
+
+### Flags
+
+#### `--output-dir` or `-o`
+
+<p>
+
+**Type:** `string`<br />
+**Default:** `tile`
+
+</p>
+
+The output directory for the processed tile.
+
+#### `--neighbors` or `-n`
+
+<p>
+
+**Type:** `string[]`<br />
+
+</p>
+
+A list of directories containing the output of the <GlossaryLink slug="lidar" /> processing step for neighboring tiles (see [this post](/what-and-why#the-edges-artifacts-problem)).
+
+#### `--skip-vector` or `-s`
+
+<p>
+
+**Type:** `boolean`<br />
+
+</p>
+
+The `--skip-vector` flag will skip the vector processing stage of the pipeline. No file will be downloaded from <GlossaryLink slug="osm" /> and no vector features will be drawn on the map (roads, lakes...).
+
+## `cassini batch`
+
+Process multiple <GlossaryLink slug="lidar" /> files at once. The `batch` subcommand takes the path to the directory containing the <GlossaryLink slug="lidar" /> files to process as an argument. This argument is optional, its default value is `in`:
+
+```sh frame="none"
+cassini batch
+```
+
+### Flags
+
+#### `--output-dir` or `-o`
+
+<p>
+
+**Type:** `string`<br />
+**Default:** `out`
+
+</p>
+
+The output directory for the processed LiDAR files.
+
+#### `--threads` or `-t`
 
 <p>
 
@@ -94,10 +200,10 @@ cassini --skip-vector
 In batch mode, you can specify the number of <GlossaryLink slug="thread" label="threads" /> used by Cassini to parallelize the work.
 
 ```sh frame="none"
-cassini --batch --threads 6
+cassini batch --threads 6
 ```
 
-### `--default-config`
+#### `--skip-lidar`
 
 <p>
 
@@ -105,8 +211,72 @@ cassini --batch --threads 6
 
 </p>
 
-Use this flag to output a default `config.json` file.
+The `--skip-lidar` flag will skip the <GlossaryLink slug="lidar" /> processing stage of the pipeline. It will only work if you allready ran `cassini` once with the same input files, as it will reuse some temp files.
+
+#### `--skip-vector`
+
+<p>
+
+**Type:** `boolean`<br />
+
+</p>
+
+The `--skip-vector` flag will skip the vector processing stage of the pipeline. No file will be downloaded from <GlossaryLink slug="osm" /> and no vector features will be drawn on the map (roads, lakes...).
+
+## `cassini config`
+
+Output a default config.json file, that you can edit to modify the map rendering parameters.
 
 ```sh frame="none"
-cassini --default-config
+cassini config
+```
+
+```json
+{
+  "yellow_threshold": 0.5,
+  "green_threshold_1": 0.2,
+  "green_threshold_2": 1.0,
+  "green_threshold_3": 2.0,
+  "cliff_threshold_1": 45.0,
+  "cliff_threshold_2": 55.0,
+  "dpi_resolution": 600.0
+}
+```
+
+## `cassini help`
+
+Print a help message:
+
+```
+A software that generates highly accurate topographic maps from LiDAR data. See documentation: https://cassini-map.com. GDAL and PDAL must be installed on the system for this program to work.
+
+Usage: cassini [COMMAND]
+
+Commands:
+  process         Generate a map from a single LiDAR file
+  lidar           Run only the LiDAR processing step for a single tile
+  render          Run only the map generation step for a single tile
+  batch           Process multiple LiDAR files at once
+  config          Output a default config.json file
+  help            Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help (see more with '--help')
+  -V, --version  Print version
+```
+
+The help message is olso printed if cassini is called without any arguments.
+
+## Common flags
+
+### `--help` or `-h`
+
+Same than `cassini help` or `cassini`
+
+### `--version` or `-V`
+
+Print the `cassini` version
+
+```
+cassini 0.3.8
 ```

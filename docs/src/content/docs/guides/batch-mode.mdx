@@ -5,16 +5,16 @@ description: A guide to generate a map with Cassini in batch mode.
 
 import GlossaryLink from "../../../components/GlossaryLink.astro";
 
-If you want to generate a map for a large area, you might need to process several <GlossaryLink slug="lidar" /> files together. You can do so by passing the `--batch` flag to the `cassini` command.
+If you want to generate a map for a large area, you might need to process several <GlossaryLink slug="lidar" /> files together. You can do so by using the `batch` subcommand.
 
 ```sh frame="none"
-cassini --batch
+cassini batch
 ```
 
-You will need to put your <GlossaryLink slug="lidar" /> files in a directory named `in` at the root of the directory in which you are executing Cassini. The output tiles and the merged map will be put in a directory named `out`.
+You will need to put your <GlossaryLink slug="lidar" /> files in a directory named `in` at the root of the directory in which you are executing Cassini. The output tiles and the merged map will be put in a directory named `out`. You can specify the input and output directories with the `--input-dir` and the `--output-dir` arguments.
 
-If you are not happy with the result (too few cliffs, too much green...), you can modify the configuration and re-generate the map while skipping the <GlossaryLink slug="lidar" /> preprocessing step (which is the most time consuming part) with the `--skip-lidar` flag. Check the [configuration reference](/reference/configuration-reference/) to learn more about all the configuration options.
+If you are not happy with the result (too few cliffs, too much green...), you can modify the configuration and re-generate the map while skipping the <GlossaryLink slug="lidar" /> preprocessing step (which is the most time consuming part) with the `--skip-lidar` argument. Check the [configuration reference](/reference/configuration-reference/) to learn more about all the configuration options.
 
 ```sh frame="none"
-cassini --batch --skip-lidar
+cassini batch --skip-lidar
 ```

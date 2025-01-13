@@ -6,13 +6,13 @@ description: A guide to generate a map with Cassini.
 import GlossaryLink from "../../../components/GlossaryLink.astro";
 import { Tabs, TabItem } from "@astrojs/starlight/components";
 
-The simplest way to use Cassini is to pass a single <GlossaryLink slug="lidar" /> file path to the `cassini` command:
+The simplest way to use Cassini is to pass a single <GlossaryLink slug="lidar" /> file path to the `cassini process` subcommand:
 
 <Tabs syncKey="os">
   <TabItem label="Windows" icon="seti:windows">
 
 ```sh frame="none"
-cassini path\to\my\tile.laz
+cassini process path\to\my\tile.laz
 ```
 
   </TabItem>
@@ -20,7 +20,7 @@ cassini path\to\my\tile.laz
   <TabItem label="macOS" icon="apple">
 
 ```sh frame="none"
-cassini ./path/to/my/tile.laz
+cassini process ./path/to/my/tile.laz
 ```
 
   </TabItem>
@@ -28,21 +28,21 @@ cassini ./path/to/my/tile.laz
   <TabItem label="Linux" icon="linux">
 
 ```sh frame="none"
-cassini ./path/to/my/tile.laz
+cassini process ./path/to/my/tile.laz
 ```
 
   </TabItem>
 </Tabs>
 
-It will generate a png map in the `out/tile` directory.
+It will generate a png map in the `tile` directory (you can specify the out directory with the `--output-dir` argument).
 
-If you are not happy with the result (too few cliffs, too much green...), you can modify the configuration and re-generate the map while skipping the LiDAR preprocessing step (which is the most time consuming part) with the `--skip-lidar` flag. Check the [configuration reference](/reference/configuration-reference/) to learn more about all the configuration options.
+If you are not happy with the result (too few cliffs, too much green...), you can modify the configuration and re-generate the map while skipping the LiDAR preprocessing step (which is the most time consuming part) with the `cassini render` subcommand. Check the [configuration reference](/reference/configuration-reference/) to learn more about all the configuration options.
 
 <Tabs syncKey="os">
   <TabItem label="Windows" icon="seti:windows">
 
 ```sh frame="none"
-cassini path\to\my\tile.laz --skip-lidar
+cassini render tile
 ```
 
   </TabItem>
@@ -50,7 +50,7 @@ cassini path\to\my\tile.laz --skip-lidar
   <TabItem label="macOS" icon="apple">
 
 ```sh frame="none"
-cassini ./path/to/my/tile.laz --skip-lidar
+cassini render ./tile
 ```
 
   </TabItem>
@@ -58,7 +58,7 @@ cassini ./path/to/my/tile.laz --skip-lidar
   <TabItem label="Linux" icon="linux">
 
 ```sh frame="none"
-cassini ./path/to/my/tile.laz --skip-lidar
+cassini render ./tile
 ```
 
   </TabItem>
