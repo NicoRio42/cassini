@@ -25,7 +25,7 @@ pub enum Commands {
             help = "The output directory for the processed LiDAR file",
             default_value = "tile"
         )]
-        output_dir: String,
+        output_dir: Option<String>,
 
         #[arg(long, short, help = "Skip the vector processing stage of the pipeline")]
         skip_vector: bool,
@@ -40,9 +40,9 @@ pub enum Commands {
             long,
             short,
             help = "The output directory for the processed LiDAR file",
-            default_value = "tile"
+            default_value = "lidar"
         )]
-        output_dir: String,
+        output_dir: Option<String>,
     },
 
     /// Run only the map generation step for a single tile
@@ -58,7 +58,7 @@ pub enum Commands {
             help = "The output directory for the processed LiDAR file",
             default_value = "tile"
         )]
-        output_dir: String,
+        output_dir: Option<String>,
 
         #[arg(
             long,
@@ -77,7 +77,7 @@ pub enum Commands {
             help = "The path to the directory containing the LiDAR files to process",
             default_value = "in"
         )]
-        input_dir: String,
+        input_dir: Option<String>,
 
         #[arg(
             long,
@@ -85,7 +85,7 @@ pub enum Commands {
             help = "The output directory for the processed LiDAR files",
             default_value = "out"
         )]
-        output_dir: String,
+        output_dir: Option<String>,
 
         #[arg(
             long,
@@ -93,7 +93,7 @@ pub enum Commands {
             help = "Number of threads used by Cassini to parallelize the work in batch mode",
             default_value = "3"
         )]
-        threads: usize,
+        threads: Option<usize>,
 
         #[arg(
             long,

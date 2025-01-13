@@ -5,7 +5,9 @@ pullautin
 data
 config.json
 tile
+tiles
 osm
 *.laz
 *.las
 out-dir
+lidar

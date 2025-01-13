@@ -27,7 +27,7 @@ use download::download_osm_file_if_needed;
 use las::raw::Header;
 use lidar::generate_dem_and_vegetation_density_tiff_images_from_laz_file;
 use png::generate_png_from_dem_vegetation_density_tiff_images_and_vector_file;
-use std::io::Read;
+use std::fs::create_dir_all;
 use std::path::PathBuf;
 use std::{fs::File, path::Path, time::Instant};
 use tile::{get_extent_from_lidar_dir_path, Tile};
@@ -48,10 +48,11 @@ fn main() {
 
             Commands::Process {
                 file_path,
-                output_dir,
+                output_dir: maybe_output_dir,
                 skip_vector,
             } => {
                 let start = Instant::now();
+                let output_dir = maybe_output_dir.unwrap_or("tile".to_owned());
                 let laz_path = Path::new(&file_path);
                 let dir_path = Path::new(&output_dir);
 
@@ -88,9 +89,10 @@ fn main() {
 
             Commands::Lidar {
                 file_path,
-                output_dir,
+                output_dir: maybe_output_dir,
             } => {
                 let start = Instant::now();
+                let output_dir = maybe_output_dir.unwrap_or("lidar".to_owned());
                 let laz_path = Path::new(&file_path);
                 let dir_path = Path::new(&output_dir);
 
@@ -105,13 +107,15 @@ fn main() {
 
             Commands::Render {
                 input_dir,
-                output_dir,
+                output_dir: maybe_output_dir,
                 neighbors,
                 skip_vector,
             } => {
                 let start = Instant::now();
+                let output_dir = maybe_output_dir.unwrap_or("tile".to_owned());
                 let input_dir_path = Path::new(&input_dir);
                 let output_dir_path = Path::new(&output_dir);
+                create_dir_all(&output_dir_path).expect("Could not create out dir");
 
                 let (min_x, min_y, max_x, max_y) =
                     get_extent_from_lidar_dir_path(&input_dir_path.to_path_buf());
@@ -152,13 +156,16 @@ fn main() {
             }
 
             Commands::Batch {
-                input_dir,
-                output_dir,
-                threads,
+                input_dir: maybe_input_dir,
+                output_dir: maybe_output_dir,
+                threads: maybe_threads,
                 skip_lidar,
                 skip_vector,
             } => {
                 let start = Instant::now();
+                let input_dir = maybe_input_dir.unwrap_or("in".to_owned());
+                let output_dir = maybe_output_dir.unwrap_or("out".to_owned());
+                let threads = maybe_threads.unwrap_or(3);
                 batch(&input_dir, &output_dir, threads, skip_lidar, skip_vector);
                 let duration = start.elapsed();
                 println!("Tiles generated in {:.1?}", duration);

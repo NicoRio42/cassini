@@ -1,6 +1,6 @@
+use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
-use std::{fs::File, path::Path, time::Instant};
 
 #[derive(Debug, Clone)]
 pub struct TileWithNeighbors {
