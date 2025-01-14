@@ -6,16 +6,7 @@ description = "A software that generates highly accurate topographic maps from L
 readme = "README.md"
 repository = "https://github.com/NicoRio42/cassini"
 license-file = "LICENCE.md"
-keywords = [
-    "gdal",
-    "lidar",
-    "topographic-maps",
-    "orienteering",
-    "topography",
-    "orienteering-maps",
-    "lidar-point-cloud",
-    "pdal",
-]
+keywords = ["lidar", "topographic-maps", "orienteering", "orienteering"]
 
 [dependencies]
 clap = { version = "4.5.7", features = ["derive"] }
