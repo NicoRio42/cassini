@@ -66,13 +66,13 @@ So for example, if your terminal is in a directory with a LiDAR file named `tile
 > On the command prompt:
 >
 > ```sh frame="none"
-> docker run --rm -it -v "%cd%":/app nicorio42/cassini tile.laz
+> docker run --rm -it -v "%cd%":/app nicorio42/cassini process tile.laz
 > ```
 >
 > On Powershell:
 >
 > ```sh frame="none"
-> docker run --rm -it --name cassini -v "${PWD}:/app" nicorio42/cassini tile.laz
+> docker run --rm -it --name cassini -v "${PWD}:/app" nicorio42/cassini process tile.laz
 > ```
 
   </TabItem>
@@ -80,7 +80,7 @@ So for example, if your terminal is in a directory with a LiDAR file named `tile
   <TabItem label="macOS" icon="apple">
 
 > ```sh frame="none"
-> docker run --rm -it -v "$(pwd)":/app nicorio42/cassini ./tile.laz
+> docker run --rm -it -v "$(pwd)":/app nicorio42/cassini process ./tile.laz
 > ```
 
   </TabItem>
@@ -88,7 +88,7 @@ So for example, if your terminal is in a directory with a LiDAR file named `tile
   <TabItem label="Linux" icon="linux">
 
 > ```sh frame="none"
-> docker run --rm -it -v "$(pwd)":/app nicorio42/cassini ./tile.laz
+> docker run --rm -it -v "$(pwd)":/app nicorio42/cassini process ./tile.laz
 > ```
 
   </TabItem>
