@@ -1,6 +1,6 @@
+use crate::constants::INCH;
 use crate::contours::generate_contours_with_pullautin_algorithme;
 use crate::vectors::render_osm_vector_shapes;
-use crate::INCH;
 use crate::{
     cliffs::render_cliffs, config::get_config, dem::create_dem_with_buffer_and_slopes_tiff,
     full_map::render_full_map_to_png, tile::Tile, vegetation::render_vegetation,

@@ -113,7 +113,7 @@ pub fn get_config() -> Config {
     return serde_json::from_str(&raw_config).unwrap();
 }
 
-pub fn generate_default_config() {
+pub fn default_config() {
     let default_config: Config = serde_json::from_str("{}").unwrap();
     let json_string = serde_json::to_string_pretty(&default_config).unwrap();
     let mut file = File::create("config.json").unwrap();

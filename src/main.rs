@@ -1,36 +1,118 @@
-mod batch;
-mod buffer;
-mod canvas;
-mod cli;
-mod cliffs;
-mod config;
-mod constants;
-mod contours;
-mod dem;
-mod download;
-mod full_map;
-mod lidar;
-mod merge;
-mod png;
-mod pullautin_contours_render;
-mod pullautin_smooth_contours;
-mod tile;
-mod vectors;
-mod vegetation;
+use cassini::{
+    batch_process_tiles, generate_default_config, process_single_tile,
+    process_single_tile_lidar_step, process_single_tile_render_step,
+};
+use clap::{CommandFactory, Parser, Subcommand};
+use std::time::Instant;
 
-use batch::batch;
-use clap::{CommandFactory, Parser};
-use cli::{Args, Commands};
-use config::generate_default_config;
-use constants::INCH;
-use download::download_osm_file_if_needed;
-use las::raw::Header;
-use lidar::generate_dem_and_vegetation_density_tiff_images_from_laz_file;
-use png::generate_png_from_dem_vegetation_density_tiff_images_and_vector_file;
-use std::fs::create_dir_all;
-use std::path::PathBuf;
-use std::{fs::File, path::Path, time::Instant};
-use tile::{get_extent_from_lidar_dir_path, Tile};
+// Update the docs when modifying
+#[derive(Parser, Debug)]
+#[command(
+    version,
+    about = "A software that generates highly accurate topographic maps from LiDAR data. See documentation: https://cassini-map.com. GDAL and PDAL must be installed on the system for this program to work.",
+    long_about = "Cassini is a software that generates highly accurate topographic maps from LiDAR data and shapefile vector data in record times."
+)]
+pub struct Args {
+    #[command(subcommand)]
+    pub command: Option<Commands>,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum Commands {
+    /// Generate a map from a single LiDAR file
+    Process {
+        #[arg(help = "The path to the LiDAR file to process")]
+        file_path: String,
+
+        #[arg(
+            long,
+            short,
+            help = "The output directory for the processed LiDAR file",
+            default_value = "tile"
+        )]
+        output_dir: Option<String>,
+
+        #[arg(long, short, help = "Skip the vector processing stage of the pipeline")]
+        skip_vector: bool,
+    },
+
+    /// Run only the LiDAR processing step for a single tile
+    Lidar {
+        #[arg(help = "The path to the LiDAR file to process")]
+        file_path: String,
+
+        #[arg(
+            long,
+            short,
+            help = "The output directory for the processed LiDAR file",
+            default_value = "lidar"
+        )]
+        output_dir: Option<String>,
+    },
+
+    /// Run only the map generation step for a single tile
+    Render {
+        #[arg(
+            help = "The path to the directory containing the output of the LiDAR processing step"
+        )]
+        input_dir: String,
+
+        #[arg(
+            long,
+            short,
+            help = "The output directory for the processed LiDAR file",
+            default_value = "tile"
+        )]
+        output_dir: Option<String>,
+
+        #[arg(
+            long,
+            short,
+            help = "A list of directories containing the output of the LiDAR processing step for neighboring tiles"
+        )]
+        neighbors: Vec<String>,
+
+        #[arg(long, short, help = "Skip the vector processing stage of the pipeline")]
+        skip_vector: bool,
+    },
+
+    /// Process multiple LiDAR files at once
+    Batch {
+        #[arg(
+            help = "The path to the directory containing the LiDAR files to process",
+            default_value = "in"
+        )]
+        input_dir: Option<String>,
+
+        #[arg(
+            long,
+            short,
+            help = "The output directory for the processed LiDAR files",
+            default_value = "out"
+        )]
+        output_dir: Option<String>,
+
+        #[arg(
+            long,
+            short,
+            help = "Number of threads used by Cassini to parallelize the work in batch mode",
+            default_value = "3"
+        )]
+        threads: Option<usize>,
+
+        #[arg(
+            long,
+            help = "Skip the LiDAR processing stage of the pipeline (only if you already ran cassini once with the same input files)."
+        )]
+        skip_lidar: bool,
+
+        #[arg(long, help = "Skip the vector processing stage of the pipeline")]
+        skip_vector: bool,
+    },
+
+    /// Output a default config.json file.
+    Config,
+}
 
 fn main() {
     let args = Args::parse();
@@ -53,36 +135,7 @@ fn main() {
             } => {
                 let start = Instant::now();
                 let output_dir = maybe_output_dir.unwrap_or("tile".to_owned());
-                let laz_path = Path::new(&file_path);
-                let dir_path = Path::new(&output_dir);
-
-                generate_dem_and_vegetation_density_tiff_images_from_laz_file(
-                    &laz_path.to_path_buf(),
-                    &dir_path.to_path_buf(),
-                );
-
-                let mut file = File::open(&laz_path).expect("Cound not open laz file");
-                let header = Header::read_from(&mut file).unwrap();
-
-                let tile = Tile {
-                    lidar_dir_path: dir_path.to_path_buf(),
-                    render_dir_path: dir_path.to_path_buf(),
-                    min_x: header.min_x.round() as i64,
-                    min_y: header.min_y.round() as i64,
-                    max_x: header.max_x.round() as i64,
-                    max_y: header.max_y.round() as i64,
-                };
-
-                if !skip_vector {
-                    download_osm_file_if_needed(tile.min_x, tile.min_y, tile.max_x, tile.max_y);
-                }
-
-                generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
-                    tile,
-                    vec![],
-                    skip_vector,
-                );
-
+                process_single_tile(file_path, output_dir, skip_vector);
                 let duration = start.elapsed();
                 println!("Tile generated in {:.1?}", duration);
             }
@@ -93,14 +146,7 @@ fn main() {
             } => {
                 let start = Instant::now();
                 let output_dir = maybe_output_dir.unwrap_or("lidar".to_owned());
-                let laz_path = Path::new(&file_path);
-                let dir_path = Path::new(&output_dir);
-
-                generate_dem_and_vegetation_density_tiff_images_from_laz_file(
-                    &laz_path.to_path_buf(),
-                    &dir_path.to_path_buf(),
-                );
-
+                process_single_tile_lidar_step(file_path, output_dir);
                 let duration = start.elapsed();
                 println!("LiDAR file processed in {:.1?}", duration);
             }
@@ -113,44 +159,7 @@ fn main() {
             } => {
                 let start = Instant::now();
                 let output_dir = maybe_output_dir.unwrap_or("tile".to_owned());
-                let input_dir_path = Path::new(&input_dir);
-                let output_dir_path = Path::new(&output_dir);
-                create_dir_all(&output_dir_path).expect("Could not create out dir");
-
-                let (min_x, min_y, max_x, max_y) =
-                    get_extent_from_lidar_dir_path(&input_dir_path.to_path_buf());
-
-                let tile = Tile {
-                    lidar_dir_path: input_dir_path.to_path_buf(),
-                    render_dir_path: output_dir_path.to_path_buf(),
-                    min_x,
-                    min_y,
-                    max_x,
-                    max_y,
-                };
-
-                if !skip_vector {
-                    download_osm_file_if_needed(tile.min_x, tile.min_y, tile.max_x, tile.max_y);
-                }
-
-                let mut neighbor_tiles: Vec<PathBuf> = vec![];
-
-                for neighbor in neighbors {
-                    let neighbor_path = Path::new(&neighbor).to_path_buf();
-
-                    if !neighbor_path.exists() {
-                        panic!("{} does not exist", neighbor)
-                    }
-
-                    neighbor_tiles.push(neighbor_path);
-                }
-
-                generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
-                    tile,
-                    neighbor_tiles,
-                    skip_vector,
-                );
-
+                process_single_tile_render_step(input_dir, output_dir, neighbors, skip_vector);
                 let duration = start.elapsed();
                 println!("Tile generated in {:.1?}", duration);
             }
@@ -166,7 +175,7 @@ fn main() {
                 let input_dir = maybe_input_dir.unwrap_or("in".to_owned());
                 let output_dir = maybe_output_dir.unwrap_or("out".to_owned());
                 let threads = maybe_threads.unwrap_or(3);
-                batch(&input_dir, &output_dir, threads, skip_lidar, skip_vector);
+                batch_process_tiles(&input_dir, &output_dir, threads, skip_lidar, skip_vector);
                 let duration = start.elapsed();
                 println!("Tiles generated in {:.1?}", duration);
             }
