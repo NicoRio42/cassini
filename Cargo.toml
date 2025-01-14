@@ -2,6 +2,20 @@
 name = "cassini"
 version = "0.4.1"
 edition = "2021"
+description = "A software that generates highly accurate topographic maps from LiDAR and Shapefile data."
+readme = "README.md"
+repository = "https://github.com/NicoRio42/cassini"
+license-file = "LICENSE.md"
+keywords = [
+    "gdal",
+    "lidar",
+    "topographic-maps",
+    "orienteering",
+    "topography",
+    "orienteering-maps",
+    "lidar-point-cloud",
+    "pdal",
+]
 
 [dependencies]
 clap = { version = "4.5.7", features = ["derive"] }
