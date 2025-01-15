@@ -19,6 +19,6 @@ jobs:
         shell: bash
         run: |
           cargo clean
-          RUSTFLAGS='-C target-feature=+crt-static' cargo publish --token ${CRATES_TOKEN}
+          cargo publish --token ${CRATES_TOKEN}
         env:
           CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
