@@ -3,7 +3,10 @@ use cassini::{
     process_single_tile_lidar_step, process_single_tile_render_step,
 };
 use clap::{CommandFactory, Parser, Subcommand};
-use std::time::Instant;
+use std::{
+    path::{Path, PathBuf},
+    time::Instant,
+};
 
 // Update the docs when modifying
 #[derive(Parser, Debug)]
@@ -135,7 +138,9 @@ fn main() {
             } => {
                 let start = Instant::now();
                 let output_dir = maybe_output_dir.unwrap_or("tile".to_owned());
-                process_single_tile(file_path, output_dir, skip_vector);
+                let laz_path = Path::new(&file_path).to_path_buf();
+                let dir_path = Path::new(&output_dir).to_path_buf();
+                process_single_tile(&laz_path, &dir_path, skip_vector);
                 let duration = start.elapsed();
                 println!("Tile generated in {:.1?}", duration);
             }
@@ -146,7 +151,9 @@ fn main() {
             } => {
                 let start = Instant::now();
                 let output_dir = maybe_output_dir.unwrap_or("lidar".to_owned());
-                process_single_tile_lidar_step(file_path, output_dir);
+                let laz_path = Path::new(&file_path).to_path_buf();
+                let dir_path = Path::new(&output_dir).to_path_buf();
+                process_single_tile_lidar_step(&laz_path, &dir_path);
                 let duration = start.elapsed();
                 println!("LiDAR file processed in {:.1?}", duration);
             }
@@ -159,7 +166,28 @@ fn main() {
             } => {
                 let start = Instant::now();
                 let output_dir = maybe_output_dir.unwrap_or("tile".to_owned());
-                process_single_tile_render_step(input_dir, output_dir, neighbors, skip_vector);
+                let input_dir_path = Path::new(&input_dir).to_path_buf();
+                let output_dir_path = Path::new(&output_dir).to_path_buf();
+
+                let mut neighbor_tiles: Vec<PathBuf> = vec![];
+
+                for neighbor in neighbors {
+                    let neighbor_path = Path::new(&neighbor).to_path_buf();
+
+                    if !neighbor_path.exists() {
+                        panic!("{} does not exist", neighbor)
+                    }
+
+                    neighbor_tiles.push(neighbor_path);
+                }
+
+                process_single_tile_render_step(
+                    &input_dir_path,
+                    &output_dir_path,
+                    neighbor_tiles,
+                    skip_vector,
+                );
+
                 let duration = start.elapsed();
                 println!("Tile generated in {:.1?}", duration);
             }

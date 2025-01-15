@@ -25,25 +25,22 @@ use lidar::generate_dem_and_vegetation_density_tiff_images_from_laz_file;
 use png::generate_png_from_dem_vegetation_density_tiff_images_and_vector_file;
 use std::{
     fs::{create_dir_all, File},
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 use tile::{get_extent_from_lidar_dir_path, Tile};
 
-pub fn process_single_tile(file_path: String, output_dir: String, skip_vector: bool) {
-    let laz_path = Path::new(&file_path);
-    let dir_path = Path::new(&output_dir);
-
+pub fn process_single_tile(file_path: &PathBuf, output_dir_path: &PathBuf, skip_vector: bool) {
     generate_dem_and_vegetation_density_tiff_images_from_laz_file(
-        &laz_path.to_path_buf(),
-        &dir_path.to_path_buf(),
+        &file_path.to_path_buf(),
+        &output_dir_path.to_path_buf(),
     );
 
-    let mut file = File::open(&laz_path).expect("Cound not open laz file");
+    let mut file = File::open(&file_path).expect("Cound not open laz file");
     let header = Header::read_from(&mut file).unwrap();
 
     let tile = Tile {
-        lidar_dir_path: dir_path.to_path_buf(),
-        render_dir_path: dir_path.to_path_buf(),
+        lidar_dir_path: output_dir_path.to_path_buf(),
+        render_dir_path: output_dir_path.to_path_buf(),
         min_x: header.min_x.round() as i64,
         min_y: header.min_y.round() as i64,
         max_x: header.max_x.round() as i64,
@@ -57,24 +54,16 @@ pub fn process_single_tile(file_path: String, output_dir: String, skip_vector: b
     generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(tile, vec![], skip_vector);
 }
 
-pub fn process_single_tile_lidar_step(file_path: String, output_dir: String) {
-    let laz_path = Path::new(&file_path);
-    let dir_path = Path::new(&output_dir);
-
-    generate_dem_and_vegetation_density_tiff_images_from_laz_file(
-        &laz_path.to_path_buf(),
-        &dir_path.to_path_buf(),
-    );
+pub fn process_single_tile_lidar_step(file_path: &PathBuf, output_dir_path: &PathBuf) {
+    generate_dem_and_vegetation_density_tiff_images_from_laz_file(&file_path, &output_dir_path);
 }
 
 pub fn process_single_tile_render_step(
-    input_dir: String,
-    output_dir: String,
-    neighbors: Vec<String>,
+    input_dir_path: &PathBuf,
+    output_dir_path: &PathBuf,
+    neighbor_tiles: Vec<PathBuf>,
     skip_vector: bool,
 ) {
-    let input_dir_path = Path::new(&input_dir);
-    let output_dir_path = Path::new(&output_dir);
     create_dir_all(&output_dir_path).expect("Could not create out dir");
 
     let (min_x, min_y, max_x, max_y) =
@@ -91,18 +80,6 @@ pub fn process_single_tile_render_step(
 
     if !skip_vector {
         download_osm_file_if_needed(tile.min_x, tile.min_y, tile.max_x, tile.max_y);
-    }
-
-    let mut neighbor_tiles: Vec<PathBuf> = vec![];
-
-    for neighbor in neighbors {
-        let neighbor_path = Path::new(&neighbor).to_path_buf();
-
-        if !neighbor_path.exists() {
-            panic!("{} does not exist", neighbor)
-        }
-
-        neighbor_tiles.push(neighbor_path);
     }
 
     generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
