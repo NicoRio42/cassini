@@ -75,8 +75,9 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
         "raster": {:?}
     }},
     {{
-        "type":"filters.sample",
-        "cell": 0.5
+        "type":"filters.voxeldownsize",
+        "cell": 0.5,
+        "mode": "first"
     }},
     {{
         "type": "filters.assign",
