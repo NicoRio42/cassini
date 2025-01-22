@@ -6,6 +6,7 @@ use crate::{
     tile::{Tile, TileWithNeighbors},
 };
 use las::raw::Header;
+use log::info;
 use std::{
     collections::HashMap,
     fs::{read_dir, File},
@@ -22,9 +23,6 @@ pub fn batch(
     skip_lidar: bool,
     skip_vector: bool,
 ) {
-    println!("Batch mode");
-    println!("Generating raw rasters for every tiles");
-
     let tiles = get_tiles_with_neighbors(input_dir, output_dir);
     let tiles_arc = Arc::new(tiles.clone());
     let chunk_size = (tiles.len() + number_of_threads - 1) / number_of_threads;
@@ -42,6 +40,11 @@ pub fn batch(
 
             let spawned_thread = spawn(move || {
                 for tile in chunk.iter() {
+                    info!(
+                        "Tile min_x={} min_y={} max_x={} max_y={}. Generating raw rasters",
+                        tile.tile.min_x, tile.tile.min_y, tile.tile.max_x, tile.tile.max_y
+                    );
+
                     generate_dem_and_vegetation_density_tiff_images_from_laz_file(
                         &tile.laz_path,
                         &tile.tile.lidar_dir_path,
@@ -75,7 +78,10 @@ pub fn batch(
 
         let spawned_thread = spawn(move || {
             for tile in chunk.iter() {
-                println!("{:?}", tile.tile.render_dir_path);
+                info!(
+                    "Tile min_x={} min_y={} max_x={} max_y={}. Rendering map",
+                    tile.tile.min_x, tile.tile.min_y, tile.tile.max_x, tile.tile.max_y
+                );
 
                 generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
                     tile.tile.clone(),

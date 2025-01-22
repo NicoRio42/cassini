@@ -1,14 +1,16 @@
-use std::path::Path;
+use log::{info, warn};
+use std::{path::Path, time::Instant};
 
 use crate::{canvas::Canvas, config::get_config, constants::INCH, tile::TileWithNeighbors};
 
 pub fn merge_maps(output_dir: &str, tiles_with_neighbors: Vec<TileWithNeighbors>) {
-    println!("Merging maps");
+    info!("Merging maps");
+    let start = Instant::now();
 
     let config = get_config();
 
     if tiles_with_neighbors.len() == 0 {
-        println!("No map to merge.");
+        warn!("No map to merge.");
         return;
     }
 
@@ -60,5 +62,8 @@ pub fn merge_maps(output_dir: &str, tiles_with_neighbors: Vec<TileWithNeighbors>
             .join("merged-map.png")
             .to_str()
             .unwrap(),
-    )
+    );
+
+    let duration = start.elapsed();
+    info!("Map merged in {:.1?}", duration);
 }

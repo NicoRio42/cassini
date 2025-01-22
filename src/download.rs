@@ -1,6 +1,7 @@
+use log::info;
 use std::{
     fs::{create_dir_all, File},
-    io::{copy, stdout, Write},
+    io::{copy, Write},
     path::Path,
     process::{Command, Stdio},
     time::Instant,
@@ -29,12 +30,19 @@ pub fn download_osm_file_if_needed(min_x: i64, min_y: i64, max_x: i64, max_y: i6
     let osm_file_path = in_path.join(format!("{:0>7}_{:0>7}.osm", min_x, max_y));
 
     if osm_file_path.exists() {
-        println!("Osm file already downloaded");
+        info!(
+            "Tile min_x={} min_y={} max_x={} max_y={}. Osm file already downloaded",
+            min_x, min_y, max_x, max_y
+        );
+
         return;
     }
 
-    print!("Downloading osm file");
-    let _ = stdout().flush();
+    info!(
+        "Tile min_x={} min_y={} max_x={} max_y={}. Downloading osm file",
+        min_x, min_y, max_x, max_y
+    );
+
     let start = Instant::now();
 
     let (min_lon, min_lat) = convert_coords_from_lambert_93_to_gps(
@@ -57,7 +65,11 @@ pub fn download_osm_file_if_needed(min_x: i64, min_y: i64, max_x: i64, max_y: i6
     copy(&mut response, &mut file).expect("Could not copy file content.");
 
     let duration = start.elapsed();
-    println!(" -> Done in {:.1?}", duration);
+
+    info!(
+        "Tile min_x={} min_y={} max_x={} max_y={}. Osm files downloaded in {:.1?}",
+        min_x, min_y, max_x, max_y, duration
+    );
 }
 
 fn convert_coords_from_lambert_93_to_gps(x: f64, y: f64) -> (f64, f64) {

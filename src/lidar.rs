@@ -1,6 +1,7 @@
 use las::raw::Header;
+use log::{error, info};
 use std::fs::{create_dir_all, write, File};
-use std::io::{stdout, Write};
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, ExitStatus};
 use std::time::Instant;
@@ -9,8 +10,6 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
     laz_path: &PathBuf,
     output_dir_path: &PathBuf,
 ) {
-    print!("Executing PDAL pipeline");
-    let _ = stdout().flush();
     let start = Instant::now();
 
     let mut file = File::open(&laz_path).unwrap();
@@ -19,6 +18,11 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
     let min_y = header.min_y.round() as i64;
     let max_x = header.max_x.round() as i64;
     let max_y = header.max_y.round() as i64;
+
+    info!(
+        "Tile min_x={} min_y={} max_x={} max_y={}. Executing PDAL pipeline",
+        min_x, min_y, max_x, max_y
+    );
 
     let dem_path = output_dir_path.join("dem.tif");
     let dem_low_resolution_path = output_dir_path.join("dem-low-resolution.tif");
@@ -133,9 +137,20 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
         .expect("failed to execute pdal pipeline command");
 
     if !ExitStatus::success(&pdal_output.status) {
-        println!("{}", String::from_utf8(pdal_output.stderr).unwrap());
+        error!(
+            "Tile min_x={} min_y={} max_x={} max_y={}. Pdal command failed {:?}",
+            min_x,
+            min_y,
+            max_x,
+            max_y,
+            String::from_utf8(pdal_output.stderr).unwrap()
+        );
     }
 
     let duration = start.elapsed();
-    println!(" -> Done in {:.1?}", duration);
+
+    info!(
+        "Tile min_x={} min_y={} max_x={} max_y={}. PDAL pipeline executed in {:.1?}",
+        min_x, min_y, max_x, max_y, duration
+    );
 }

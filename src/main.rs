@@ -3,6 +3,7 @@ use cassini::{
     process_single_tile_lidar_step, process_single_tile_render_step,
 };
 use clap::{CommandFactory, Parser, Subcommand};
+use log::info;
 use std::{
     path::{Path, PathBuf},
     time::Instant,
@@ -118,6 +119,23 @@ pub enum Commands {
 }
 
 fn main() {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format(|buf, record| {
+            use std::io::Write;
+            let ts = buf.timestamp_seconds();
+            let level_style = buf.default_level_style(record.level());
+
+            writeln!(
+                buf,
+                "[{} {:?} {level_style}{}{level_style:#}] {}",
+                ts,
+                std::thread::current().id(),
+                record.level(),
+                record.args()
+            )
+        })
+        .init();
+
     let args = Args::parse();
 
     if std::env::args().len() == 1 {
@@ -136,26 +154,32 @@ fn main() {
                 output_dir: maybe_output_dir,
                 skip_vector,
             } => {
+                info!("Tile processing");
                 let start = Instant::now();
+
                 let output_dir = maybe_output_dir.unwrap_or("tile".to_owned());
                 let laz_path = Path::new(&file_path).to_path_buf();
                 let dir_path = Path::new(&output_dir).to_path_buf();
                 process_single_tile(&laz_path, &dir_path, skip_vector);
+
                 let duration = start.elapsed();
-                println!("Tile generated in {:.1?}", duration);
+                info!("Tile generated in {:.1?}", duration);
             }
 
             Commands::Lidar {
                 file_path,
                 output_dir: maybe_output_dir,
             } => {
+                info!("LiDAR processing");
                 let start = Instant::now();
+
                 let output_dir = maybe_output_dir.unwrap_or("lidar".to_owned());
                 let laz_path = Path::new(&file_path).to_path_buf();
                 let dir_path = Path::new(&output_dir).to_path_buf();
                 process_single_tile_lidar_step(&laz_path, &dir_path);
+
                 let duration = start.elapsed();
-                println!("LiDAR file processed in {:.1?}", duration);
+                info!("LiDAR file processed in {:.1?}", duration);
             }
 
             Commands::Render {
@@ -164,7 +188,9 @@ fn main() {
                 neighbors,
                 skip_vector,
             } => {
+                info!("Map rendering");
                 let start = Instant::now();
+
                 let output_dir = maybe_output_dir.unwrap_or("tile".to_owned());
                 let input_dir_path = Path::new(&input_dir).to_path_buf();
                 let output_dir_path = Path::new(&output_dir).to_path_buf();
@@ -189,7 +215,7 @@ fn main() {
                 );
 
                 let duration = start.elapsed();
-                println!("Tile generated in {:.1?}", duration);
+                info!("Map rendered in {:.1?}", duration);
             }
 
             Commands::Batch {
@@ -199,13 +225,16 @@ fn main() {
                 skip_lidar,
                 skip_vector,
             } => {
+                info!("Batch processing");
                 let start = Instant::now();
+
                 let input_dir = maybe_input_dir.unwrap_or("in".to_owned());
                 let output_dir = maybe_output_dir.unwrap_or("out".to_owned());
                 let threads = maybe_threads.unwrap_or(3);
                 batch_process_tiles(&input_dir, &output_dir, threads, skip_lidar, skip_vector);
+
                 let duration = start.elapsed();
-                println!("Tiles generated in {:.1?}", duration);
+                info!("Tiles generated in {:.1?}", duration);
             }
         }
     }

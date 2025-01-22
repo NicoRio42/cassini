@@ -1,10 +1,11 @@
 use image::RgbaImage;
 use imageproc::drawing::draw_line_segment_mut;
+use log::info;
 use shapefile::dbase::{FieldIOError, FieldWriter, WritableRecord};
 use shapefile::record::polyline::GenericPolyline;
 use shapefile::{Point, Reader, Writer};
 use std::fs::{create_dir_all, File};
-use std::io::{stdout, BufReader, Write};
+use std::io::{BufReader, Write};
 use std::time::Instant;
 
 struct FormLineRecord {
@@ -38,8 +39,11 @@ pub fn pullautin_cull_formlines_render_contours(
     avg_alt: Vec<Vec<f64>>,
     smoothed_contours: Vec<(Vec<f64>, Vec<f64>, f64)>,
 ) {
-    print!("Culling formlines and rendering contours");
-    let _ = stdout().flush();
+    info!(
+        "Tile min_x={} min_y={} max_x={} max_y={}. Culling formlines and rendering contours",
+        tile.min_x, tile.min_y, tile.max_x, tile.max_y
+    );
+
     let start = Instant::now();
 
     let scalefactor = 1.0;
@@ -469,7 +473,11 @@ pub fn pullautin_cull_formlines_render_contours(
         .expect("could not save output png");
 
     let duration = start.elapsed();
-    println!(" -> Done in {:.1?}", duration);
+
+    info!(
+        "Tile min_x={} min_y={} max_x={} max_y={}. Formlines and contours generated in {:.1?}",
+        tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
+    );
 }
 
 fn write_formline_shape_to_shapefile(

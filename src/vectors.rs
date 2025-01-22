@@ -10,6 +10,7 @@ use crate::{
     },
     tile::Tile,
 };
+use log::{error, info};
 use shapefile::{
     dbase::{FieldValue, Record},
     read_as,
@@ -17,15 +18,17 @@ use shapefile::{
     Point, Polygon, Polyline,
 };
 use std::{
-    io::{stdout, Write},
     path::{Path, PathBuf},
     process::{Command, ExitStatus},
     time::Instant,
 };
 
 pub fn render_osm_vector_shapes(tile: &Tile, image_width: u32, image_height: u32, config: &Config) {
-    print!("Transforming osm file to shapefiles");
-    let _ = stdout().flush();
+    info!(
+        "Tile min_x={} min_y={} max_x={} max_y={}. Transforming osm file to shapefiles",
+        tile.min_x, tile.min_y, tile.max_x, tile.max_y
+    );
+
     let start = Instant::now();
 
     let scale_factor = config.dpi_resolution / INCH;
@@ -50,14 +53,28 @@ pub fn render_osm_vector_shapes(tile: &Tile, image_width: u32, image_height: u32
         .expect("failed to execute ogr2ogr command");
 
     if !ExitStatus::success(&ogr2ogr_output.status) {
-        println!("{}", String::from_utf8(ogr2ogr_output.stderr).unwrap());
+        error!(
+            "Tile min_x={} min_y={} max_x={} max_y={}. Ogr2ogr command failed {:?}",
+            tile.min_x,
+            tile.min_y,
+            tile.max_x,
+            tile.max_y,
+            String::from_utf8(ogr2ogr_output.stderr).unwrap()
+        );
     }
 
     let duration = start.elapsed();
-    println!(" -> Done in {:.1?}", duration);
 
-    print!("Rendering vectors");
-    let _ = stdout().flush();
+    info!(
+        "Tile min_x={} min_y={} max_x={} max_y={}. Osm files transformed to shapefiles in {:.1?}",
+        tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
+    );
+
+    info!(
+        "Tile min_x={} min_y={} max_x={} max_y={}. Rendering vectors",
+        tile.min_x, tile.min_y, tile.max_x, tile.max_y
+    );
+
     let start = Instant::now();
 
     let multipolygons_path = shapes_outlput_path.join("multipolygons.shp");
@@ -179,7 +196,11 @@ pub fn render_osm_vector_shapes(tile: &Tile, image_width: u32, image_height: u32
     map_renderer.save_as(tile.render_dir_path.join("vectors.png"));
 
     let duration = start.elapsed();
-    println!(" -> Done in {:.1?}", duration);
+
+    info!(
+        "Tile min_x={} min_y={} max_x={} max_y={}. Vectors rendered in {:.1?}",
+        tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
+    );
 }
 
 struct MapRenderer {

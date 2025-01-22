@@ -6,12 +6,8 @@ use crate::{
 };
 use image::{Rgba, RgbaImage};
 use imageproc::{drawing::draw_filled_rect_mut, rect::Rect};
-use std::{
-    fs::File,
-    io::{stdout, Write},
-    path::PathBuf,
-    time::Instant,
-};
+use log::info;
+use std::{fs::File, path::PathBuf, time::Instant};
 use tiff::decoder::{Decoder, DecodingResult};
 
 pub fn render_vegetation(
@@ -21,8 +17,11 @@ pub fn render_vegetation(
     image_height: u32,
     config: &Config,
 ) {
-    print!("Rendering vegetation");
-    let _ = stdout().flush();
+    info!(
+        "Tile min_x={} min_y={} max_x={} max_y={}. Rendering vegetation",
+        tile.min_x, tile.min_y, tile.max_x, tile.max_y
+    );
+
     let start = Instant::now();
 
     let vegetation_block_size_pixel = VEGETATION_BLOCK_SIZE as f32 * config.dpi_resolution / INCH;
@@ -66,8 +65,6 @@ pub fn render_vegetation(
 
             let mut green_color: Option<Rgba<u8>> = None;
 
-            // println!("{}", medium_vegetation_density);
-
             if medium_vegetation_density > config.green_threshold_3 {
                 green_color = Some(GREEN_3);
             } else if medium_vegetation_density > config.green_threshold_2 {
@@ -99,7 +96,11 @@ pub fn render_vegetation(
         .expect("could not save output png");
 
     let duration = start.elapsed();
-    println!(" -> Done in {:.1?}", duration);
+
+    info!(
+        "Tile min_x={} min_y={} max_x={} max_y={}. Vegetation rendered in {:.1?}",
+        tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
+    );
 }
 
 fn get_average_pixel_value(

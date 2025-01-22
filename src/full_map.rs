@@ -1,13 +1,14 @@
-use std::{
-    io::{stdout, Write},
-    time::Instant,
-};
+use log::info;
+use std::time::Instant;
 
 use crate::{canvas::Canvas, tile::Tile};
 
 pub fn render_full_map_to_png(tile: &Tile, image_width: u32, image_height: u32, skip_vector: bool) {
-    print!("Rendering map to png");
-    let _ = stdout().flush();
+    info!(
+        "Tile min_x={} min_y={} max_x={} max_y={}. Rendering map to png",
+        tile.min_x, tile.min_y, tile.max_x, tile.max_y
+    );
+
     let start = Instant::now();
 
     let mut full_map_canvas = Canvas::new(image_width as i32, image_height as i32);
@@ -33,5 +34,9 @@ pub fn render_full_map_to_png(tile: &Tile, image_width: u32, image_height: u32, 
     full_map_canvas.save_as(&full_map_path.to_str().unwrap());
 
     let duration = start.elapsed();
-    println!(" -> Done in {:.1?}", duration);
+
+    info!(
+        "Tile min_x={} min_y={} max_x={} max_y={}. Map rendered to png in {:.1?}",
+        tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
+    );
 }

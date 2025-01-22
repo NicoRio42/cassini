@@ -1,3 +1,5 @@
+use log::error;
+
 use crate::tile::Tile;
 use std::{
     path::PathBuf,
@@ -35,7 +37,10 @@ pub fn create_tif_with_buffer(
         if let Some(path_str) = path.to_str() {
             rasters_paths.push(path_str.to_string());
         } else {
-            eprintln!("Failed to convert path to string for {:?}", neighbor_tile);
+            error!(
+                "Tile min_x={} min_y={} max_x={} max_y={}. Failed to convert path to string for {:?}",
+               tile.min_x,tile.min_y,tile.max_x,tile.max_y, neighbor_tile
+            );
         }
     }
 
@@ -48,7 +53,14 @@ pub fn create_tif_with_buffer(
         .expect("failed to execute gdalbuildvrt command");
 
     if !ExitStatus::success(&gdalbuildvrt_output.status) {
-        println!("{}", String::from_utf8(gdalbuildvrt_output.stderr).unwrap());
+        error!(
+            "Tile min_x={} min_y={} max_x={} max_y={}. Gdalbuildvrt command failed {:?}",
+            tile.min_x,
+            tile.min_y,
+            tile.max_x,
+            tile.max_y,
+            String::from_utf8(gdalbuildvrt_output.stderr).unwrap()
+        );
     }
 
     // Then outpouting croped tif with buffer
@@ -68,8 +80,12 @@ pub fn create_tif_with_buffer(
         .expect("failed to execute gdal_translate command");
 
     if !ExitStatus::success(&gdal_translate_output.status) {
-        println!(
-            "{}",
+        error!(
+            "Tile min_x={} min_y={} max_x={} max_y={}. Gdal_translate command failed {:?}",
+            tile.min_x,
+            tile.min_y,
+            tile.max_x,
+            tile.max_y,
             String::from_utf8(gdal_translate_output.stderr).unwrap()
         );
     }
