@@ -47,7 +47,7 @@ pub fn render_vegetation(
             let y_pixel = ((y_index - BUFFER) as f32 * vegetation_block_size_pixel) as i32;
 
             let high_vegetation_density =
-                get_average_pixel_value(&high_vegetation, x_index, y_index, 3);
+                get_average_pixel_value(&high_vegetation, x_index, y_index);
 
             if high_vegetation_density < config.yellow_threshold {
                 draw_filled_rect_mut(
@@ -61,7 +61,7 @@ pub fn render_vegetation(
             }
 
             let medium_vegetation_density =
-                get_average_pixel_value(&medium_vegetation, x_index, y_index, 3);
+                get_average_pixel_value(&medium_vegetation, x_index, y_index);
 
             let mut green_color: Option<Rgba<u8>> = None;
 
@@ -103,13 +103,73 @@ pub fn render_vegetation(
     );
 }
 
-fn get_average_pixel_value(
-    tif_image: &TifImage,
-    x_index: usize,
-    y_index: usize,
-    distance: usize,
-) -> f64 {
-    // TODO: fix this naive averaging function
+const CONVOLUTION_MATRIX_7_LINEAR: [[f64; 7]; 7] = [
+    [
+        0.,
+        0.1501634144012025,
+        0.25464400750007,
+        0.2928932188134524,
+        0.25464400750007,
+        0.1501634144012025,
+        0.,
+    ],
+    [
+        0.1501634144012025,
+        0.33333333333333326,
+        0.4729537233052701,
+        0.5285954792089682,
+        0.4729537233052701,
+        0.33333333333333326,
+        0.1501634144012025,
+    ],
+    [
+        0.25464400750007,
+        0.4729537233052701,
+        0.6666666666666666,
+        0.7642977396044841,
+        0.6666666666666666,
+        0.4729537233052701,
+        0.25464400750007,
+    ],
+    [
+        0.2928932188134524,
+        0.5285954792089682,
+        0.7642977396044841,
+        1.,
+        0.7642977396044841,
+        0.5285954792089682,
+        0.2928932188134524,
+    ],
+    [
+        0.25464400750007,
+        0.4729537233052701,
+        0.6666666666666666,
+        0.7642977396044841,
+        0.6666666666666666,
+        0.4729537233052701,
+        0.25464400750007,
+    ],
+    [
+        0.1501634144012025,
+        0.33333333333333326,
+        0.4729537233052701,
+        0.5285954792089682,
+        0.4729537233052701,
+        0.33333333333333326,
+        0.1501634144012025,
+    ],
+    [
+        0.,
+        0.1501634144012025,
+        0.25464400750007,
+        0.2928932188134524,
+        0.25464400750007,
+        0.1501634144012025,
+        0.,
+    ],
+];
+
+fn get_average_pixel_value(tif_image: &TifImage, x_index: usize, y_index: usize) -> f64 {
     let mut count = 0.0;
     let mut sum = 0.0;
     let width = tif_image.width as usize;
@@ -119,31 +179,21 @@ fn get_average_pixel_value(
         panic!("Image with no pixels")
     }
 
-    let min_x = if distance > x_index {
-        0
-    } else {
-        x_index - distance
-    };
-    let max_x = if x_index + distance > width as usize {
-        width as usize
-    } else {
-        x_index + distance + 1
-    };
-    let min_y = if distance > y_index {
-        0
-    } else {
-        y_index - distance
-    };
-    let max_y = if y_index + distance > height as usize {
-        height as usize
-    } else {
-        y_index + distance + 1
-    };
+    for (y_matrix, row) in CONVOLUTION_MATRIX_7_LINEAR.iter().enumerate() {
+        for (x_matrix, coef) in row.iter().enumerate() {
+            if x_index + x_matrix < 3 || y_index + y_matrix < 3 {
+                continue;
+            }
 
-    for x in min_x..max_x {
-        for y in min_y..max_y {
-            count += 1.0;
-            sum += tif_image.pixels[y * width + x];
+            let x = x_index + x_matrix - 3;
+            let y = y_index + y_matrix - 3;
+
+            if x > width || y > height {
+                continue;
+            }
+
+            count += coef;
+            sum += tif_image.pixels[y * width + x] * coef;
         }
     }
 
