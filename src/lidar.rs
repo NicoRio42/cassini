@@ -1,8 +1,8 @@
 use las::raw::Header;
 use log::{error, info};
-use std::fs::{create_dir_all, write, File};
-use std::io::Write;
-use std::path::PathBuf;
+use std::fs::{create_dir_all, read_dir, remove_dir_all, remove_file, write, File};
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 use std::time::Instant;
 
@@ -24,12 +24,18 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
         min_x, min_y, max_x, max_y
     );
 
+    // Cleaning up output directory to fix https://github.com/NicoRio42/cassini/issues/7
+    if output_dir_path.exists() {
+        remove_dir_content(output_dir_path).unwrap();
+    } else {
+        create_dir_all(&output_dir_path).expect("Could not create out dir");
+    }
+
     let dem_path = output_dir_path.join("dem.tif");
     let dem_low_resolution_path = output_dir_path.join("dem-low-resolution.tif");
     let medium_vegetation_path = output_dir_path.join("medium-vegetation.tif");
     let high_vegetation_path = output_dir_path.join("high-vegetation.tif");
     let pipeline_path = output_dir_path.join("pipeline.json");
-    create_dir_all(&output_dir_path).expect("Could not create out dir");
 
     let gdal_common_options = format!(
         r#""binmode": true,
@@ -153,4 +159,19 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
         "Tile min_x={} min_y={} max_x={} max_y={}. PDAL pipeline executed in {:.1?}",
         min_x, min_y, max_x, max_y, duration
     );
+}
+
+fn remove_dir_content<P: AsRef<Path>>(path: P) -> io::Result<()> {
+    for entry in read_dir(path)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        if path.is_dir() {
+            remove_dir_all(&path)?;
+        } else {
+            remove_file(path)?;
+        }
+    }
+
+    Ok(())
 }
