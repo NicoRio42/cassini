@@ -27,7 +27,9 @@ use std::{
     fs::{create_dir_all, File},
     path::PathBuf,
 };
-use tile::{get_extent_from_lidar_dir_path, Tile};
+use tile::Tile;
+
+pub use tile::get_extent_from_lidar_dir_path;
 
 pub fn process_single_tile(file_path: &PathBuf, output_dir_path: &PathBuf, skip_vector: bool) {
     generate_dem_and_vegetation_density_tiff_images_from_laz_file(
