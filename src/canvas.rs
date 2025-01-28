@@ -1,6 +1,6 @@
 use skia_safe::{
     surfaces, Color, Data, EncodedImageFormat, Image, Paint, PaintCap, PaintStyle, Path,
-    PathEffect, Surface,
+    PathEffect, PathFillType, Surface,
 };
 use std::fs::File;
 use std::io::Write;
@@ -89,9 +89,45 @@ impl Canvas {
         let _ = mem::replace(&mut self.path, new_path);
         self.paint.set_style(PaintStyle::StrokeAndFill);
         self.path.move_to((pts[0].0, pts[0].1));
+
         for pt in pts.iter() {
             self.path.line_to((pt.0, pt.1));
         }
+
+        self.surface.canvas().draw_path(&self.path, &self.paint);
+        self.save();
+    }
+
+    #[inline]
+    pub fn draw_filled_polygon_with_holes(
+        &mut self,
+        outer_geometry: &[(f32, f32)],
+        holes: &Vec<Vec<(f32, f32)>>,
+    ) {
+        let new_path = Path::new();
+        let _ = mem::replace(&mut self.path, new_path);
+        self.paint.set_style(PaintStyle::StrokeAndFill);
+        self.path
+            .move_to((outer_geometry[0].0, outer_geometry[0].1));
+
+        for pt in outer_geometry.iter() {
+            self.path.line_to((pt.0, pt.1));
+        }
+
+        self.path.close();
+
+        for hole in holes {
+            self.path.move_to((hole[0].0, hole[0].1));
+
+            for pt in hole.iter() {
+                self.path.line_to((pt.0, pt.1));
+            }
+
+            self.path.close();
+        }
+
+        self.path.set_fill_type(PathFillType::EvenOdd);
+
         self.surface.canvas().draw_path(&self.path, &self.paint);
         self.save();
     }
