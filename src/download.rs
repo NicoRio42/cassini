@@ -1,4 +1,5 @@
 use log::info;
+use reqwest::blocking::Client;
 use std::{
     fs::{create_dir_all, File},
     io::{copy, Write},
@@ -55,11 +56,49 @@ pub fn download_osm_file_if_needed(min_x: i64, min_y: i64, max_x: i64, max_y: i6
         (max_y + BUFFER as i64) as f64,
     );
 
-    let mut response = reqwest::blocking::get(&format!(
-        "https://www.openstreetmap.org/api/0.6/map?bbox={}%2C{}%2C{}%2C{}",
-        min_lon, min_lat, max_lon, max_lat,
-    ))
-    .expect("Could not download osm file.");
+    // Overpass Query
+    let query = r#"
+[out:xml][timeout:25];
+(
+  way["building"]({{bbox}});
+  relation["building"]({{bbox}});
+  way["natural"="water"]({{bbox}});
+  relation["natural"="water"]({{bbox}});
+  way["natural"="wetland"]({{bbox}});
+  relation["natural"="wetland"]({{bbox}});
+  way["natural"="bay"]({{bbox}});
+  relation["natural"="bay"]({{bbox}});
+  way["natural"="strait"]({{bbox}});
+  relation["natural"="strait"]({{bbox}});
+  way["landuse"="residential"]({{bbox}});
+  relation["landuse"="residential"]({{bbox}});
+  way["landuse"="railway"]({{bbox}});
+  relation["landuse"="railway"]({{bbox}});
+  way["landuse"="industrial"]({{bbox}});
+  relation["landuse"="industrial"]({{bbox}});
+  way["natural"="coastline"]({{bbox}});
+  way["highway"]({{bbox}});
+  way["waterway"]({{bbox}});
+  way["railway"]({{bbox}});
+  way["power"]({{bbox}});
+  way["aerialway"]({{bbox}});
+);
+out body;
+>;
+out skel qt;
+"#;
+
+    // Replace {{bbox}} with your bounding box (south, west, north, east)
+    let bbox = format!("{},{},{},{}", min_lat, min_lon, max_lat, max_lon);
+    let formatted_query = query.replace("{{bbox}}", &bbox);
+    let client = Client::new();
+
+    let mut response = client
+        .post("https://overpass-api.de/api/interpreter")
+        .body(formatted_query)
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .send()
+        .expect("Could not get osm data from Overpass API.");
 
     let mut file = File::create(&osm_file_path).expect("Could not create file for osm download.");
     copy(&mut response, &mut file).expect("Could not copy file content.");

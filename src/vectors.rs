@@ -46,13 +46,14 @@ pub fn render_osm_vector_shapes(tile: &Tile, image_width: u32, image_height: u32
             "--config",
             "OSM_USE_CUSTOM_INDEXING",
             "NO",
-            "-skipfailures",
             "-f",
             "ESRI Shapefile",
             &shapes_outlput_path.to_str().unwrap(),
             &osm_path.to_str().unwrap(),
             "-t_srs",
             "EPSG:2154",
+            "-nlt",
+            "MULTIPOLYGON",
         ])
         .arg("--quiet")
         .output()
