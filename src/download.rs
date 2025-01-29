@@ -2,8 +2,8 @@ use log::info;
 use reqwest::blocking::Client;
 use std::{
     fs::{create_dir_all, File},
-    io::{copy, Write},
-    path::Path,
+    io::{copy, BufRead, BufReader, BufWriter, Write},
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     time::Instant,
 };
@@ -28,6 +28,7 @@ pub fn download_osm_file_if_needed(min_x: i64, min_y: i64, max_x: i64, max_y: i6
         create_dir_all(in_path).unwrap();
     }
 
+    let raw_osm_file_path = in_path.join(format!("{:0>7}_{:0>7}_raw.osm", min_x, max_y));
     let osm_file_path = in_path.join(format!("{:0>7}_{:0>7}.osm", min_x, max_y));
 
     if osm_file_path.exists() {
@@ -100,8 +101,12 @@ out skel qt;
         .send()
         .expect("Could not get osm data from Overpass API.");
 
-    let mut file = File::create(&osm_file_path).expect("Could not create file for osm download.");
+    let mut file =
+        File::create(&raw_osm_file_path).expect("Could not create file for osm download.");
+
     copy(&mut response, &mut file).expect("Could not copy file content.");
+
+    fix_osm_file(&raw_osm_file_path, &osm_file_path);
 
     let duration = start.elapsed();
 
@@ -142,4 +147,44 @@ fn convert_coords_from_lambert_93_to_gps(x: f64, y: f64) -> (f64, f64) {
     let lat: f64 = coords[1].parse().expect("Failed to parse latitude");
 
     return (lon, lat);
+}
+
+fn fix_osm_file(input: &PathBuf, output: &PathBuf) {
+    let reader = BufReader::new(File::open(&input).unwrap());
+    let mut writer = BufWriter::new(File::create(&output).unwrap());
+    let mut relations_lines: Vec<String> = vec![];
+
+    let mut is_inside_relation = false;
+
+    for line in reader.lines() {
+        let line = line.unwrap();
+
+        if line.contains("</osm>") {
+            for relations_line in &relations_lines {
+                writeln!(writer, "{}", relations_line).unwrap();
+            }
+
+            writeln!(writer, "{}", line).unwrap();
+            break;
+        }
+
+        if line.contains("</relation>") {
+            is_inside_relation = false;
+            relations_lines.push(line);
+            continue;
+        }
+
+        if line.contains("<relation") {
+            is_inside_relation = true;
+            relations_lines.push(line);
+            continue;
+        }
+
+        if is_inside_relation {
+            relations_lines.push(line);
+            continue;
+        }
+
+        writeln!(writer, "{}", line).unwrap();
+    }
 }

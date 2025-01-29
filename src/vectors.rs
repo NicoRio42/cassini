@@ -54,6 +54,39 @@ pub fn render_osm_vector_shapes(tile: &Tile, image_width: u32, image_height: u32
             "EPSG:2154",
             "-nlt",
             "MULTIPOLYGON",
+            "-sql",
+            "SELECT * FROM multipolygons",
+        ])
+        .arg("--quiet")
+        .output()
+        .expect("failed to execute ogr2ogr command");
+
+    if !ExitStatus::success(&ogr2ogr_output.status) {
+        error!(
+            "Tile min_x={} min_y={} max_x={} max_y={}. Ogr2ogr command failed {:?}",
+            tile.min_x,
+            tile.min_y,
+            tile.max_x,
+            tile.max_y,
+            String::from_utf8(ogr2ogr_output.stderr).unwrap()
+        );
+    }
+
+    let ogr2ogr_output = Command::new("ogr2ogr")
+        .args([
+            "--config",
+            "OSM_USE_CUSTOM_INDEXING",
+            "NO",
+            "-f",
+            "ESRI Shapefile",
+            &shapes_outlput_path.to_str().unwrap(),
+            &osm_path.to_str().unwrap(),
+            "-t_srs",
+            "EPSG:2154",
+            "-nlt",
+            "LINESTRING",
+            "-sql",
+            "SELECT * FROM lines",
         ])
         .arg("--quiet")
         .output()
