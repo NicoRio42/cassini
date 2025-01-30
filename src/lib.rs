@@ -7,7 +7,6 @@ mod constants;
 mod contours;
 mod dem;
 mod download;
-mod full_map;
 mod lidar;
 mod merge;
 mod png;
@@ -31,7 +30,12 @@ use tile::Tile;
 
 pub use tile::get_extent_from_lidar_dir_path;
 
-pub fn process_single_tile(file_path: &PathBuf, output_dir_path: &PathBuf, skip_vector: bool) {
+pub fn process_single_tile(
+    file_path: &PathBuf,
+    output_dir_path: &PathBuf,
+    skip_vector: bool,
+    skip_520: bool,
+) {
     generate_dem_and_vegetation_density_tiff_images_from_laz_file(
         &file_path.to_path_buf(),
         &output_dir_path.to_path_buf(),
@@ -53,7 +57,12 @@ pub fn process_single_tile(file_path: &PathBuf, output_dir_path: &PathBuf, skip_
         download_osm_file_if_needed(tile.min_x, tile.min_y, tile.max_x, tile.max_y);
     }
 
-    generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(tile, vec![], skip_vector);
+    generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
+        tile,
+        vec![],
+        skip_vector,
+        skip_520,
+    );
 }
 
 pub fn process_single_tile_lidar_step(file_path: &PathBuf, output_dir_path: &PathBuf) {
@@ -65,6 +74,7 @@ pub fn process_single_tile_render_step(
     output_dir_path: &PathBuf,
     neighbor_tiles: Vec<PathBuf>,
     skip_vector: bool,
+    skip_520: bool,
 ) {
     create_dir_all(&output_dir_path).expect("Could not create out dir");
 
@@ -88,6 +98,7 @@ pub fn process_single_tile_render_step(
         tile,
         neighbor_tiles,
         skip_vector,
+        skip_520,
     );
 }
 
@@ -97,6 +108,7 @@ pub fn batch_process_tiles(
     number_of_threads: usize,
     skip_lidar: bool,
     skip_vector: bool,
+    skip_520: bool,
 ) {
     batch(
         &input_dir,
@@ -104,6 +116,7 @@ pub fn batch_process_tiles(
         number_of_threads,
         skip_lidar,
         skip_vector,
+        skip_520,
     );
 }
 

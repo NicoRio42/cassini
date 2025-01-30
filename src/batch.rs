@@ -22,6 +22,7 @@ pub fn batch(
     number_of_threads: usize,
     skip_lidar: bool,
     skip_vector: bool,
+    skip_520: bool,
 ) {
     let tiles = get_tiles_with_neighbors(input_dir, output_dir);
     let tiles_arc = Arc::new(tiles.clone());
@@ -87,6 +88,7 @@ pub fn batch(
                     tile.tile.clone(),
                     tile.neighbors.clone(),
                     skip_vector,
+                    skip_520,
                 );
             }
 

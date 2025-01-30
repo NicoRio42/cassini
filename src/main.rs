@@ -36,8 +36,14 @@ pub enum Commands {
         )]
         output_dir: Option<String>,
 
-        #[arg(long, short, help = "Skip the vector processing stage of the pipeline")]
+        #[arg(long, help = "Skip the vector processing stage of the pipeline")]
         skip_vector: bool,
+
+        #[arg(
+            long,
+            help = "Prevent the vector renderer to draw the 520 (area that shall not be entered) symbol"
+        )]
+        skip_520: bool,
     },
 
     /// Run only the LiDAR processing step for a single tile
@@ -76,8 +82,14 @@ pub enum Commands {
         )]
         neighbors: Vec<String>,
 
-        #[arg(long, short, help = "Skip the vector processing stage of the pipeline")]
+        #[arg(long, help = "Skip the vector processing stage of the pipeline")]
         skip_vector: bool,
+
+        #[arg(
+            long,
+            help = "Prevent the vector renderer to draw the 520 (area that shall not be entered) symbol"
+        )]
+        skip_520: bool,
     },
 
     /// Process multiple LiDAR files at once
@@ -112,6 +124,12 @@ pub enum Commands {
 
         #[arg(long, help = "Skip the vector processing stage of the pipeline")]
         skip_vector: bool,
+
+        #[arg(
+            long,
+            help = "Prevent the vector renderer to draw the 520 (area that shall not be entered) symbol"
+        )]
+        skip_520: bool,
     },
 
     /// Output a default config.json file.
@@ -153,6 +171,7 @@ fn main() {
                 file_path,
                 output_dir: maybe_output_dir,
                 skip_vector,
+                skip_520,
             } => {
                 info!("Tile processing");
                 let start = Instant::now();
@@ -160,7 +179,7 @@ fn main() {
                 let output_dir = maybe_output_dir.unwrap_or("tile".to_owned());
                 let laz_path = Path::new(&file_path).to_path_buf();
                 let dir_path = Path::new(&output_dir).to_path_buf();
-                process_single_tile(&laz_path, &dir_path, skip_vector);
+                process_single_tile(&laz_path, &dir_path, skip_vector, skip_520);
 
                 let duration = start.elapsed();
                 info!("Tile generated in {:.1?}", duration);
@@ -187,6 +206,7 @@ fn main() {
                 output_dir: maybe_output_dir,
                 neighbors,
                 skip_vector,
+                skip_520,
             } => {
                 info!("Map rendering");
                 let start = Instant::now();
@@ -212,6 +232,7 @@ fn main() {
                     &output_dir_path,
                     neighbor_tiles,
                     skip_vector,
+                    skip_520,
                 );
 
                 let duration = start.elapsed();
@@ -224,6 +245,7 @@ fn main() {
                 threads: maybe_threads,
                 skip_lidar,
                 skip_vector,
+                skip_520,
             } => {
                 info!("Batch processing");
                 let start = Instant::now();
@@ -231,7 +253,14 @@ fn main() {
                 let input_dir = maybe_input_dir.unwrap_or("in".to_owned());
                 let output_dir = maybe_output_dir.unwrap_or("out".to_owned());
                 let threads = maybe_threads.unwrap_or(3);
-                batch_process_tiles(&input_dir, &output_dir, threads, skip_lidar, skip_vector);
+                batch_process_tiles(
+                    &input_dir,
+                    &output_dir,
+                    threads,
+                    skip_lidar,
+                    skip_vector,
+                    skip_520,
+                );
 
                 let duration = start.elapsed();
                 info!("Tiles generated in {:.1?}", duration);

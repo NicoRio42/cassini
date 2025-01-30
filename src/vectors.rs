@@ -29,7 +29,16 @@ use std::{
     time::Instant,
 };
 
-pub fn render_osm_vector_shapes(tile: &Tile, image_width: u32, image_height: u32, config: &Config) {
+pub fn render_map_with_osm_vector_shapes(
+    tile: &Tile,
+    image_width: u32,
+    image_height: u32,
+    config: &Config,
+    vegetation_path: &PathBuf,
+    contours_path: &PathBuf,
+    cliffs_path: &PathBuf,
+    skip_520: bool,
+) {
     info!(
         "Tile min_x={} min_y={} max_x={} max_y={}. Transforming osm file to shapefiles",
         tile.min_x, tile.min_y, tile.max_x, tile.max_y
@@ -128,6 +137,9 @@ pub fn render_osm_vector_shapes(tile: &Tile, image_width: u32, image_height: u32
         image_height,
         scale_factor,
         config.dpi_resolution,
+        vegetation_path,
+        contours_path,
+        cliffs_path,
     );
 
     for (polygon, record) in multipolygons {
@@ -161,16 +173,18 @@ pub fn render_osm_vector_shapes(tile: &Tile, image_width: u32, image_height: u32
             continue;
         }
 
-        let landuse = match record.get("landuse") {
-            Some(FieldValue::Character(Some(x))) => x,
-            Some(_) => "",
-            None => "",
-        };
+        if !skip_520 {
+            let landuse = match record.get("landuse") {
+                Some(FieldValue::Character(Some(x))) => x,
+                Some(_) => "",
+                None => "",
+            };
 
-        // 520 area that shall not be entered
-        if landuse == "residential" || landuse == "railway" || landuse == "industrial" {
-            map_renderer = map_renderer.area_that_shall_not_be_entered_520(polygon);
-            continue;
+            // 520 area that shall not be entered
+            if landuse == "residential" || landuse == "railway" || landuse == "industrial" {
+                map_renderer = map_renderer.area_that_shall_not_be_entered_520(polygon);
+                continue;
+            }
         }
     }
 
@@ -318,7 +332,7 @@ pub fn render_osm_vector_shapes(tile: &Tile, image_width: u32, image_height: u32
         }
     }
 
-    map_renderer.save_as(tile.render_dir_path.join("vectors.png"));
+    map_renderer.save_as(tile.render_dir_path.join("full-map.png"));
 
     let duration = start.elapsed();
 
@@ -354,12 +368,18 @@ fn get_and_parse_other_tags(record: &Record) -> HashMap<String, String> {
 }
 
 struct MapRenderer {
-    blue_img: Canvas,
-    black_img: Canvas,
-    top_black_img: Canvas,
+    vegetation_img: Canvas,
     olive_green_img: Canvas,
     light_brown_img: Canvas,
+    blue_img: Canvas,
     striped_blue_img: Canvas,
+    black_road_outlines_img: Canvas,
+    light_brown_road_infill_img: Canvas,
+    gray_img: Canvas,
+    contours_img: Canvas,
+    blue_lines_and_points_img: Canvas,
+    cliffs_img: Canvas,
+    black_img: Canvas,
     min_x: i64,
     min_y: i64,
     image_width: u32,
@@ -376,14 +396,23 @@ impl MapRenderer {
         image_height: u32,
         scale_factor: f32,
         dpi_resolution: f32,
+        vegetation_path: &PathBuf,
+        contours_path: &PathBuf,
+        cliffs_path: &PathBuf,
     ) -> MapRenderer {
         return MapRenderer {
-            blue_img: Canvas::new(image_width as i32, image_height as i32),
-            black_img: Canvas::new(image_width as i32, image_height as i32),
-            top_black_img: Canvas::new(image_width as i32, image_height as i32),
+            vegetation_img: Canvas::load_from(vegetation_path.to_str().unwrap()),
             olive_green_img: Canvas::new(image_width as i32, image_height as i32),
             light_brown_img: Canvas::new(image_width as i32, image_height as i32),
+            blue_img: Canvas::new(image_width as i32, image_height as i32),
             striped_blue_img: Canvas::new(image_width as i32, image_height as i32),
+            black_road_outlines_img: Canvas::new(image_width as i32, image_height as i32),
+            light_brown_road_infill_img: Canvas::new(image_width as i32, image_height as i32),
+            gray_img: Canvas::new(image_width as i32, image_height as i32),
+            contours_img: Canvas::load_from(contours_path.to_str().unwrap()),
+            blue_lines_and_points_img: Canvas::new(image_width as i32, image_height as i32),
+            cliffs_img: Canvas::load_from(cliffs_path.to_str().unwrap()),
+            black_img: Canvas::new(image_width as i32, image_height as i32),
             min_x,
             min_y,
             image_width,
@@ -394,7 +423,7 @@ impl MapRenderer {
     }
 
     #[inline]
-    fn uncrossable_body_of_water_301(mut self, polygon: GenericPolygon<Point>) -> MapRenderer {
+    pub fn uncrossable_body_of_water_301(mut self, polygon: GenericPolygon<Point>) -> MapRenderer {
         let (outer_geometry, holes) = self.get_outer_geometry_and_holes_from_polygon(polygon);
 
         self.blue_img.set_color(VECTOR_BLUE);
@@ -415,40 +444,43 @@ impl MapRenderer {
     }
 
     #[inline]
-    fn crossable_watercourse_304(mut self, line: &GenericPolyline<Point>) -> MapRenderer {
+    pub fn crossable_watercourse_304(mut self, line: &GenericPolyline<Point>) -> MapRenderer {
         for part in line.parts() {
             let points = self.get_points_from_line_part(part);
 
-            self.blue_img.set_color(VECTOR_BLUE);
-            self.blue_img
+            self.blue_lines_and_points_img.set_color(VECTOR_BLUE);
+            self.blue_lines_and_points_img
                 .set_line_width(CROSSABLE_WATERCOURSE_WIDTH * self.dpi_resolution * 10.0 / INCH);
-            self.blue_img.draw_polyline(&points);
+            self.blue_lines_and_points_img.draw_polyline(&points);
         }
 
         return self;
     }
 
     #[inline]
-    fn minor_seasonal_water_channel_306(mut self, line: &GenericPolyline<Point>) -> MapRenderer {
+    pub fn minor_seasonal_water_channel_306(
+        mut self,
+        line: &GenericPolyline<Point>,
+    ) -> MapRenderer {
         for part in line.parts() {
             let points = self.get_points_from_line_part(part);
 
-            self.blue_img.set_color(VECTOR_BLUE);
-            self.blue_img
+            self.blue_lines_and_points_img.set_color(VECTOR_BLUE);
+            self.blue_lines_and_points_img
                 .set_line_width(MINOR_WATERCOURSE_WIDTH * self.dpi_resolution * 10.0 / INCH);
-            self.blue_img.set_dash(
+            self.blue_lines_and_points_img.set_dash(
                 MINOR_WATERCOURSE_DASH_LENGTH * self.dpi_resolution * 10.0 / INCH,
                 MINOR_WATERCOURSE_DASH_INTERVAL_LENGTH * self.dpi_resolution * 10.0 / INCH,
             );
-            self.blue_img.draw_polyline(&points);
-            self.blue_img.unset_dash();
+            self.blue_lines_and_points_img.draw_polyline(&points);
+            self.blue_lines_and_points_img.unset_dash();
         }
 
         return self;
     }
 
     #[inline]
-    fn marsh_308(mut self, polygon: GenericPolygon<Point>) -> MapRenderer {
+    pub fn marsh_308(mut self, polygon: GenericPolygon<Point>) -> MapRenderer {
         let (outer_geometry, holes) = self.get_outer_geometry_and_holes_from_polygon(polygon);
         self.striped_blue_img.set_color(VECTOR_BLUE);
         self.striped_blue_img
@@ -466,35 +498,37 @@ impl MapRenderer {
     ) -> MapRenderer {
         for part in line.parts() {
             let points = self.get_points_from_line_part(part);
-            self.black_img.set_color(VECTOR_BLACK);
-            self.black_img
+            self.black_road_outlines_img.set_color(VECTOR_BLACK);
+            self.black_road_outlines_img
                 .set_line_width(outer_width * self.dpi_resolution * 10.0 / INCH);
-            self.black_img.draw_polyline(&points);
+            self.black_road_outlines_img.draw_polyline(&points);
 
-            self.light_brown_img.set_color(VECTOR_PAVED_AREA_BROWN);
-            self.light_brown_img
+            self.light_brown_road_infill_img
+                .set_color(VECTOR_PAVED_AREA_BROWN);
+            self.light_brown_road_infill_img
                 .set_line_width(inner_width * self.dpi_resolution * 10.0 / INCH);
-            self.light_brown_img.draw_polyline(&points);
+            self.light_brown_road_infill_img.draw_polyline(&points);
         }
 
         return self;
     }
 
     #[inline]
-    fn double_track_wide_road_502(mut self, line: &GenericPolyline<Point>) -> MapRenderer {
+    pub fn double_track_wide_road_502(mut self, line: &GenericPolyline<Point>) -> MapRenderer {
         for part in line.parts() {
             let points = self.get_points_from_line_part(part);
-            self.black_img.set_color(VECTOR_BLACK);
-            self.black_img.set_line_width(
+            self.black_road_outlines_img.set_color(VECTOR_BLACK);
+            self.black_road_outlines_img.set_line_width(
                 DOUBLE_TRACK_WIDE_ROAD_OUTER_WIDTH * self.dpi_resolution * 10.0 / INCH,
             );
-            self.black_img.draw_polyline(&points);
+            self.black_road_outlines_img.draw_polyline(&points);
 
-            self.light_brown_img.set_color(VECTOR_PAVED_AREA_BROWN);
-            self.light_brown_img.set_line_width(
+            self.light_brown_road_infill_img
+                .set_color(VECTOR_PAVED_AREA_BROWN);
+            self.light_brown_road_infill_img.set_line_width(
                 DOUBLE_TRACK_WIDE_ROAD_INNER_WIDTH * self.dpi_resolution * 10.0 / INCH,
             );
-            self.light_brown_img.draw_polyline(&points);
+            self.light_brown_road_infill_img.draw_polyline(&points);
 
             // TODO
             // self.light_brown_img.set_transparent_color();
@@ -508,36 +542,36 @@ impl MapRenderer {
     }
 
     #[inline]
-    fn wide_road_502(self, line: &GenericPolyline<Point>) -> MapRenderer {
+    pub fn wide_road_502(self, line: &GenericPolyline<Point>) -> MapRenderer {
         return self.wide_road(line, WIDE_ROAD_INNER_WIDTH, WIDE_ROAD_OUTER_WIDTH);
     }
 
     #[inline]
-    fn xl_wide_road_502(self, line: &GenericPolyline<Point>) -> MapRenderer {
+    pub fn xl_wide_road_502(self, line: &GenericPolyline<Point>) -> MapRenderer {
         return self.wide_road(line, XL_WIDE_ROAD_INNER_WIDTH, XL_WIDE_ROAD_OUTER_WIDTH);
     }
 
     #[inline]
-    fn xxl_wide_road_502(self, line: &GenericPolyline<Point>) -> MapRenderer {
+    pub fn xxl_wide_road_502(self, line: &GenericPolyline<Point>) -> MapRenderer {
         return self.wide_road(line, XXL_WIDE_ROAD_INNER_WIDTH, XXL_WIDE_ROAD_OUTER_WIDTH);
     }
 
     #[inline]
-    fn road_503(mut self, line: &GenericPolyline<Point>) -> MapRenderer {
+    pub fn road_503(mut self, line: &GenericPolyline<Point>) -> MapRenderer {
         for part in line.parts() {
             let points = self.get_points_from_line_part(part);
 
-            self.black_img.set_color(VECTOR_BLACK);
-            self.black_img
+            self.black_road_outlines_img.set_color(VECTOR_BLACK);
+            self.black_road_outlines_img
                 .set_line_width(ROAD_WIDTH * self.dpi_resolution * 10.0 / INCH);
-            self.black_img.draw_polyline(&points);
+            self.black_road_outlines_img.draw_polyline(&points);
         }
 
         return self;
     }
 
     #[inline]
-    fn footpath_505(mut self, line: &GenericPolyline<Point>) -> MapRenderer {
+    pub fn footpath_505(mut self, line: &GenericPolyline<Point>) -> MapRenderer {
         for part in line.parts() {
             let points = self.get_points_from_line_part(part);
 
@@ -556,38 +590,41 @@ impl MapRenderer {
     }
 
     #[inline]
-    fn railway_509(mut self, line: &GenericPolyline<Point>) -> MapRenderer {
+    pub fn railway_509(mut self, line: &GenericPolyline<Point>) -> MapRenderer {
         for part in line.parts() {
             let points = self.get_points_from_line_part(part);
 
-            self.top_black_img.set_color(VECTOR_BLACK);
-            self.top_black_img
+            self.black_img.set_color(VECTOR_BLACK);
+            self.black_img
                 .set_line_width(RAILWAY_OUTER_WIDTH * self.dpi_resolution * 10.0 / INCH);
-            self.top_black_img.draw_polyline(&points);
+            self.black_img.draw_polyline(&points);
 
-            self.top_black_img.set_color(VECTOR_WHITE);
-            self.top_black_img
+            self.black_img.set_color(VECTOR_WHITE);
+            self.black_img
                 .set_line_width(RAILWAY_INNER_WIDTH * self.dpi_resolution * 10.0 / INCH);
-            self.top_black_img.set_dash(
+            self.black_img.set_dash(
                 RAILWAY_DASH_LENGTH * self.dpi_resolution * 10.0 / INCH,
                 RAILWAY_DASH_INTERVAL_LENGTH * self.dpi_resolution * 10.0 / INCH,
             );
-            self.top_black_img.draw_polyline(&points);
-            self.top_black_img.unset_dash();
+            self.black_img.draw_polyline(&points);
+            self.black_img.unset_dash();
         }
 
         return self;
     }
 
     #[inline]
-    fn power_line_cableway_or_skilift_510(mut self, line: &GenericPolyline<Point>) -> MapRenderer {
+    pub fn power_line_cableway_or_skilift_510(
+        mut self,
+        line: &GenericPolyline<Point>,
+    ) -> MapRenderer {
         for part in line.parts() {
             let points = self.get_points_from_line_part(part);
 
-            self.top_black_img.set_color(VECTOR_BLACK);
-            self.top_black_img
+            self.black_img.set_color(VECTOR_BLACK);
+            self.black_img
                 .set_line_width(POWERLINE_WIDTH * self.dpi_resolution * 10.0 / INCH);
-            self.top_black_img.draw_polyline(&points);
+            self.black_img.draw_polyline(&points);
         }
 
         return self;
@@ -612,11 +649,25 @@ impl MapRenderer {
     }
 
     #[inline]
-    fn building_521(mut self, polygon: GenericPolygon<Point>) -> MapRenderer {
+    pub fn area_that_shall_not_be_entered_520(
+        mut self,
+        polygon: GenericPolygon<Point>,
+    ) -> MapRenderer {
         let (outer_geometry, holes) = self.get_outer_geometry_and_holes_from_polygon(polygon);
 
-        self.black_img.set_color(VECTOR_BUILDING_GRAY);
-        self.black_img
+        self.olive_green_img.set_color(VECTOR_OLIVE_GREEN);
+        self.olive_green_img
+            .draw_filled_polygon_with_holes(&outer_geometry, &holes);
+
+        return self;
+    }
+
+    #[inline]
+    pub fn building_521(mut self, polygon: GenericPolygon<Point>) -> MapRenderer {
+        let (outer_geometry, holes) = self.get_outer_geometry_and_holes_from_polygon(polygon);
+
+        self.gray_img.set_color(VECTOR_BUILDING_GRAY);
+        self.gray_img
             .draw_filled_polygon_with_holes(&outer_geometry, &holes);
 
         self.black_img.set_color(VECTOR_BLACK);
@@ -627,17 +678,6 @@ impl MapRenderer {
         for hole in holes {
             self.black_img.draw_polyline(&hole);
         }
-
-        return self;
-    }
-
-    #[inline]
-    fn area_that_shall_not_be_entered_520(mut self, polygon: GenericPolygon<Point>) -> MapRenderer {
-        let (outer_geometry, holes) = self.get_outer_geometry_and_holes_from_polygon(polygon);
-
-        self.olive_green_img.set_color(VECTOR_OLIVE_GREEN);
-        self.olive_green_img
-            .draw_filled_polygon_with_holes(&outer_geometry, &holes);
 
         return self;
     }
@@ -681,7 +721,7 @@ impl MapRenderer {
     }
 
     #[inline]
-    fn save_as(mut self, path: PathBuf) {
+    pub fn save_as(mut self, path: PathBuf) {
         let pixel_marsh_interval =
             (MARSH_LINE_WIDTH + MARSH_LINE_SPACING) * self.dpi_resolution * 10.0 / INCH;
 
@@ -703,14 +743,24 @@ impl MapRenderer {
             ])
         }
 
-        self.olive_green_img.overlay(&mut self.blue_img, 0., 0.);
-        self.olive_green_img
-            .overlay(&mut self.striped_blue_img, 0., 0.);
-        self.olive_green_img.overlay(&mut self.black_img, 0., 0.);
-        self.olive_green_img
+        self.vegetation_img
+            .overlay(&mut self.olive_green_img, 0., 0.);
+        self.vegetation_img
             .overlay(&mut self.light_brown_img, 0., 0.);
-        self.olive_green_img
-            .overlay(&mut self.top_black_img, 0., 0.);
-        self.olive_green_img.save_as(path.to_str().unwrap());
+        self.vegetation_img.overlay(&mut self.blue_img, 0., 0.);
+        self.vegetation_img
+            .overlay(&mut self.striped_blue_img, 0., 0.);
+        self.vegetation_img
+            .overlay(&mut self.black_road_outlines_img, 0., 0.);
+        self.vegetation_img
+            .overlay(&mut self.light_brown_road_infill_img, 0., 0.);
+        self.vegetation_img.overlay(&mut self.gray_img, 0., 0.);
+        self.vegetation_img.overlay(&mut self.contours_img, 0., 0.);
+        self.vegetation_img
+            .overlay(&mut self.blue_lines_and_points_img, 0., 0.);
+        self.vegetation_img.overlay(&mut self.cliffs_img, 0., 0.);
+        self.vegetation_img.overlay(&mut self.black_img, 0., 0.);
+
+        self.vegetation_img.save_as(path.to_str().unwrap());
     }
 }

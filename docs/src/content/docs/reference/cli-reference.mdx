@@ -51,7 +51,7 @@ cassini process ./path/to/my/tile.laz
 
 The output directory for the processed LiDAR file.
 
-#### `--skip-vector` or `-s`
+#### `--skip-vector`
 
 <p>
 
@@ -60,6 +60,16 @@ The output directory for the processed LiDAR file.
 </p>
 
 The `--skip-vector` flag will skip the vector processing stage of the pipeline. No file will be downloaded from <GlossaryLink slug="osm" /> and no vector features will be drawn on the map (roads, lakes...).
+
+#### `--skip-520`
+
+<p>
+
+**Type:** `boolean`<br />
+
+</p>
+
+The `--skip-520` will prevent the vector renderer to draw the [520 area that shall not be entered](https://omapwiki.orienteering.sport/symbols/520-area-that-shall-not-be-entered/) symbol.
 
 ## `cassini lidar`
 
@@ -157,7 +167,7 @@ The output directory for the processed tile.
 
 A list of directories containing the output of the <GlossaryLink slug="lidar" /> processing step for neighboring tiles (see [this post](/what-and-why#the-edges-artifacts-problem)).
 
-#### `--skip-vector` or `-s`
+#### `--skip-vector`
 
 <p>
 
@@ -166,6 +176,16 @@ A list of directories containing the output of the <GlossaryLink slug="lidar" />
 </p>
 
 The `--skip-vector` flag will skip the vector processing stage of the pipeline. No file will be downloaded from <GlossaryLink slug="osm" /> and no vector features will be drawn on the map (roads, lakes...).
+
+#### `--skip-520`
+
+<p>
+
+**Type:** `boolean`<br />
+
+</p>
+
+The `--skip-520` will prevent the vector renderer to draw the [520 area that shall not be entered](https://omapwiki.orienteering.sport/symbols/520-area-that-shall-not-be-entered/) symbol.
 
 ## `cassini batch`
 
@@ -222,6 +242,16 @@ The `--skip-lidar` flag will skip the <GlossaryLink slug="lidar" /> processing s
 </p>
 
 The `--skip-vector` flag will skip the vector processing stage of the pipeline. No file will be downloaded from <GlossaryLink slug="osm" /> and no vector features will be drawn on the map (roads, lakes...).
+
+#### `--skip-520`
+
+<p>
+
+**Type:** `boolean`<br />
+
+</p>
+
+The `--skip-520` will prevent the vector renderer to draw the [520 area that shall not be entered](https://omapwiki.orienteering.sport/symbols/520-area-that-shall-not-be-entered/) symbol.
 
 ## `cassini config`
 
