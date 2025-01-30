@@ -133,22 +133,6 @@ impl Canvas {
     }
 
     #[inline]
-    pub fn _draw_filled_polygons(&mut self, apts: &Vec<Vec<(f32, f32)>>) {
-        let new_path = Path::new();
-        let _ = mem::replace(&mut self.path, new_path);
-        self.paint.set_stroke_width(1.0);
-        self.paint.set_style(PaintStyle::StrokeAndFill);
-        for pts in apts {
-            self.path.move_to((pts[0].0, pts[0].1));
-            for pt in pts.iter() {
-                self.path.line_to((pt.0, pt.1));
-            }
-        }
-        self.surface.canvas().draw_path(&self.path, &self.paint);
-        self.save();
-    }
-
-    #[inline]
     pub fn data(&mut self) -> Data {
         let image = self.surface.image_snapshot();
         let mut context = self.surface.direct_context();

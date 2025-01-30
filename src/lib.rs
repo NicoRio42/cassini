@@ -8,6 +8,7 @@ mod contours;
 mod dem;
 mod download;
 mod lidar;
+mod map_renderer;
 mod merge;
 mod png;
 mod pullautin_contours_render;
