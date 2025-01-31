@@ -1,6 +1,5 @@
 use log::error;
 use shapefile::{record::polygon::GenericPolygon, Point, PolygonRing};
-use std::{collections::HashMap, thread::sleep, time::Duration};
 
 pub fn get_polygon_with_holes_from_coastlines(
     coastlines: Vec<Vec<(f32, f32)>>,
@@ -64,34 +63,28 @@ pub fn get_polygon_with_holes_from_coastlines(
                             max_y,
                         ) {
                             CoastlineIndexOrTileVertexOrPolygonStart::TopRigth => {
-                                println!("TopRigth");
                                 polygon.push((max_x as f32, max_y as f32));
                                 should_append_current_coastline = false;
                             }
                             CoastlineIndexOrTileVertexOrPolygonStart::BottomRigth => {
-                                println!("BottomRigth");
                                 polygon.push((max_x as f32, min_y as f32));
                                 should_append_current_coastline = false;
                             }
                             CoastlineIndexOrTileVertexOrPolygonStart::BottomLeft => {
-                                println!("BottomLeft");
                                 polygon.push((min_x as f32, min_y as f32));
                                 should_append_current_coastline = false;
                             }
                             CoastlineIndexOrTileVertexOrPolygonStart::TopLeft => {
-                                println!("TopLeft");
                                 polygon.push((min_x as f32, max_y as f32));
                                 should_append_current_coastline = false;
                             }
                             CoastlineIndexOrTileVertexOrPolygonStart::CoastlineIndex(
                                 next_coastline_index,
                             ) => {
-                                println!("CoastlineIndex");
                                 current_coastline_index = next_coastline_index;
                                 should_append_current_coastline = true;
                             }
                             CoastlineIndexOrTileVertexOrPolygonStart::PolygonStart => {
-                                println!("PolygonStart");
                                 polygon.push(polygon_first_point);
                                 break;
                             }
@@ -304,91 +297,18 @@ fn get_next_coastline_index_or_tile_vertex(
     max_x: i64,
     max_y: i64,
 ) -> CoastlineIndexOrTileVertexOrPolygonStart {
-    println!("{:?}", last_point_of_last_coastline);
-
     // Last point on top edge
-    if last_point_of_last_coastline.1 == max_y as f32 && last_point_of_last_coastline.0 != min_x as f32 {
-        println!("Top edge");
-        let mut next_coastline_index_or_tile_vertex = CoastlineIndexOrTileVertexOrPolygonStart::TopLeft;
+    if last_point_of_last_coastline.1 == max_y as f32 && last_point_of_last_coastline.0 != max_x as f32 {
+        let mut next_coastline_index_or_tile_vertex = CoastlineIndexOrTileVertexOrPolygonStart::TopRigth;
         let mut distance_to_next_coastline = f32::MAX;
 
         for (index, next_coastline) in remaining_coastlines.iter().enumerate() {
             let does_next_coastline_start_on_top_edge = next_coastline[0].1 == max_y as f32;
 
-            let does_next_coastline_start_left_to_previous_coastline_end =
-                next_coastline[0].0 < last_point_of_last_coastline.0;
-
-            if !does_next_coastline_start_on_top_edge
-                || !does_next_coastline_start_left_to_previous_coastline_end
-            {
-                continue;
-            }
-
-            let distance = last_point_of_last_coastline.0 - next_coastline[0].0;
-
-            if distance < distance_to_next_coastline {
-                next_coastline_index_or_tile_vertex =
-                    CoastlineIndexOrTileVertexOrPolygonStart::CoastlineIndex(index);
-
-                distance_to_next_coastline = distance;
-            }
-        }
-
-        if last_point_of_last_coastline.0 - first_point_of_polygon.0 == distance_to_next_coastline {
-            return CoastlineIndexOrTileVertexOrPolygonStart::PolygonStart;
-        }
-
-        return next_coastline_index_or_tile_vertex;
-    }
-
-    // Last point on right edge
-    if last_point_of_last_coastline.0 == max_x as f32 && last_point_of_last_coastline.1 != max_y as f32 {
-        println!("Right edge");
-        let mut next_coastline_index_or_tile_vertex = CoastlineIndexOrTileVertexOrPolygonStart::TopRigth;
-        let mut distance_to_next_coastline = f32::MAX;
-
-        for (index, next_coastline) in remaining_coastlines.iter().enumerate() {
-            let does_next_coastline_start_on_right_edge = next_coastline[0].0 == max_x as f32;
-
-            let does_next_coastline_start_above_previous_coastline_end =
-                next_coastline[0].1 > last_point_of_last_coastline.1;
-
-            if !does_next_coastline_start_on_right_edge
-                || !does_next_coastline_start_above_previous_coastline_end
-            {
-                continue;
-            }
-
-            let distance = next_coastline[0].1 - last_point_of_last_coastline.1;
-
-            if distance < distance_to_next_coastline {
-                next_coastline_index_or_tile_vertex =
-                    CoastlineIndexOrTileVertexOrPolygonStart::CoastlineIndex(index);
-
-                distance_to_next_coastline = distance;
-            }
-        }
-
-        if first_point_of_polygon.1 - last_point_of_last_coastline.1 == distance_to_next_coastline {
-            return CoastlineIndexOrTileVertexOrPolygonStart::PolygonStart;
-        }
-
-        return next_coastline_index_or_tile_vertex;
-    }
-
-    // Last point on bottom edge
-    if last_point_of_last_coastline.1 == min_y as f32 && last_point_of_last_coastline.0 != max_x as f32 {
-        println!("Bottom edge");
-        let mut next_coastline_index_or_tile_vertex = CoastlineIndexOrTileVertexOrPolygonStart::BottomRigth;
-        let mut distance_to_next_coastline = f32::MAX;
-
-        for (index, next_coastline) in remaining_coastlines.iter().enumerate() {
-            let does_next_coastline_start_on_bottom_edge = next_coastline[0].1 == min_y as f32;
-
             let does_next_coastline_start_right_to_previous_coastline_end =
                 next_coastline[0].0 > last_point_of_last_coastline.0;
 
-            if !does_next_coastline_start_on_bottom_edge
+            if !does_next_coastline_start_on_top_edge
                 || !does_next_coastline_start_right_to_previous_coastline_end
             {
                 continue;
@@ -411,19 +331,18 @@ fn get_next_coastline_index_or_tile_vertex(
         return next_coastline_index_or_tile_vertex;
     }
 
-    // Last point on left edge
-    if last_point_of_last_coastline.0 == min_x as f32 && last_point_of_last_coastline.1 != min_y as f32 {
-        println!("Left edge");
-        let mut next_coastline_index_or_tile_vertex = CoastlineIndexOrTileVertexOrPolygonStart::BottomLeft;
+    // Last point on right edge
+    if last_point_of_last_coastline.0 == max_x as f32 && last_point_of_last_coastline.1 != min_y as f32 {
+        let mut next_coastline_index_or_tile_vertex = CoastlineIndexOrTileVertexOrPolygonStart::BottomRigth;
         let mut distance_to_next_coastline = f32::MAX;
 
         for (index, next_coastline) in remaining_coastlines.iter().enumerate() {
-            let does_next_coastline_start_on_left_edge = next_coastline[0].0 == min_x as f32;
+            let does_next_coastline_start_on_right_edge = next_coastline[0].0 == max_x as f32;
 
             let does_next_coastline_start_below_previous_coastline_end =
                 next_coastline[0].1 < last_point_of_last_coastline.1;
 
-            if !does_next_coastline_start_on_left_edge
+            if !does_next_coastline_start_on_right_edge
                 || !does_next_coastline_start_below_previous_coastline_end
             {
                 continue;
@@ -440,6 +359,74 @@ fn get_next_coastline_index_or_tile_vertex(
         }
 
         if last_point_of_last_coastline.1 - first_point_of_polygon.1 == distance_to_next_coastline {
+            return CoastlineIndexOrTileVertexOrPolygonStart::PolygonStart;
+        }
+
+        return next_coastline_index_or_tile_vertex;
+    }
+
+    // Last point on bottom edge
+    if last_point_of_last_coastline.1 == min_y as f32 && last_point_of_last_coastline.0 != min_x as f32 {
+        let mut next_coastline_index_or_tile_vertex = CoastlineIndexOrTileVertexOrPolygonStart::BottomLeft;
+        let mut distance_to_next_coastline = f32::MAX;
+
+        for (index, next_coastline) in remaining_coastlines.iter().enumerate() {
+            let does_next_coastline_start_on_bottom_edge = next_coastline[0].1 == min_y as f32;
+
+            let does_next_coastline_start_left_to_previous_coastline_end =
+                next_coastline[0].0 < last_point_of_last_coastline.0;
+
+            if !does_next_coastline_start_on_bottom_edge
+                || !does_next_coastline_start_left_to_previous_coastline_end
+            {
+                continue;
+            }
+
+            let distance = last_point_of_last_coastline.0 - next_coastline[0].0;
+
+            if distance < distance_to_next_coastline {
+                next_coastline_index_or_tile_vertex =
+                    CoastlineIndexOrTileVertexOrPolygonStart::CoastlineIndex(index);
+
+                distance_to_next_coastline = distance;
+            }
+        }
+
+        if last_point_of_last_coastline.0 - first_point_of_polygon.0 == distance_to_next_coastline {
+            return CoastlineIndexOrTileVertexOrPolygonStart::PolygonStart;
+        }
+
+        return next_coastline_index_or_tile_vertex;
+    }
+
+    // Last point on left edge
+    if last_point_of_last_coastline.0 == min_x as f32 && last_point_of_last_coastline.1 != max_y as f32 {
+        let mut next_coastline_index_or_tile_vertex = CoastlineIndexOrTileVertexOrPolygonStart::TopLeft;
+        let mut distance_to_next_coastline = f32::MAX;
+
+        for (index, next_coastline) in remaining_coastlines.iter().enumerate() {
+            let does_next_coastline_start_on_left_edge = next_coastline[0].0 == min_x as f32;
+
+            let does_next_coastline_start_above_previous_coastline_end =
+                next_coastline[0].1 > last_point_of_last_coastline.1;
+
+            if !does_next_coastline_start_on_left_edge
+                || !does_next_coastline_start_above_previous_coastline_end
+            {
+                continue;
+            }
+
+            let distance = next_coastline[0].1 - last_point_of_last_coastline.1;
+
+            if distance < distance_to_next_coastline {
+                next_coastline_index_or_tile_vertex =
+                    CoastlineIndexOrTileVertexOrPolygonStart::CoastlineIndex(index);
+
+                distance_to_next_coastline = distance;
+            }
+        }
+
+        if first_point_of_polygon.1 - last_point_of_last_coastline.1 == distance_to_next_coastline {
             return CoastlineIndexOrTileVertexOrPolygonStart::PolygonStart;
         }
 
