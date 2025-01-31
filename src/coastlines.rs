@@ -111,7 +111,7 @@ pub fn get_polygon_with_holes_from_coastlines(
 
             let mut rings: Vec<PolygonRing<Point>> = vec![PolygonRing::Outer(points)];
             let mut island_rings_copy = island_rings.clone();
-            // rings.append(&mut island_rings_copy);
+            rings.append(&mut island_rings_copy);
             let generic_polygon = GenericPolygon::with_rings(rings);
             polygons.push(generic_polygon);
         }
@@ -138,87 +138,74 @@ fn find_missing(first: &[usize], second: &[usize]) -> Option<usize> {
     second.iter().find(|&&x| !first.contains(&x)).copied()
 }
 
-fn float_to_key(f: f32) -> i32 {
-    (f * 1_000_000.0) as i32 // Multiply by 1_000_000 for precision
+fn merge_linestrings(mut linestrings: Vec<Vec<(f32, f32)>>) -> Vec<Vec<(f32, f32)>> {
+    let mut merged = false;
+
+    loop {
+        let len = linestrings.len();
+        merged = false;
+
+        'outer: for i in 0..len {
+            for j in 0..len {
+                if i != j {
+                    match try_to_merge_two_linestrings(&linestrings[i], &linestrings[j]) {
+                        Some(merged_linestringes) => {
+                            linestrings.remove(i);
+                            linestrings.remove(j - 1);
+                            linestrings.push(merged_linestringes);
+                            merged = true;
+                            break 'outer;
+                        }
+                        None => continue,
+                    }
+                }
+            }
+        }
+
+        if !merged {
+            break;
+        }
+    }
+
+    linestrings
+}
+
+fn try_to_merge_two_linestrings(
+    linestrings_1: &Vec<(f32, f32)>,
+    linestrings_2: &Vec<(f32, f32)>,
+) -> Option<Vec<(f32, f32)>> {
+    let linestring_1_first_point = linestrings_1[0];
+    let linestring_2_first_point = linestrings_2[0];
+    let linestring_1_last_point = linestrings_1[linestrings_1.len() - 1];
+    let linestring_2_last_point = linestrings_2[linestrings_2.len() - 1];
+
+    if linestring_1_first_point.0 == linestring_2_last_point.0
+        && linestring_1_first_point.1 == linestring_2_last_point.1
+    {
+        let mut merged = linestrings_2.clone();
+        merged.append(&mut (linestrings_1.clone()));
+        return Some(merged);
+    }
+
+    if linestring_2_first_point.0 == linestring_1_last_point.0
+        && linestring_2_first_point.1 == linestring_1_last_point.1
+    {
+        let mut merged = linestrings_1.clone();
+        merged.append(&mut (linestrings_2.clone()));
+        return Some(merged);
+    }
+
+    return None;
 }
 
 fn assemble_and_clip_linestrings(
-    mut linestrings: Vec<Vec<(f32, f32)>>,
+    linestrings: Vec<Vec<(f32, f32)>>,
     min_x: i64,
     min_y: i64,
     max_x: i64,
     max_y: i64,
 ) -> Vec<Vec<(f32, f32)>> {
-    let mut start_map: HashMap<(i32, i32), usize> = HashMap::new();
-    let mut end_map: HashMap<(i32, i32), usize> = HashMap::new();
-    let mut merged_linestrings: Vec<Vec<(f32, f32)>> = Vec::new();
-
-    while !linestrings.is_empty() {
-        let mut line = linestrings.pop().unwrap();
-
-        loop {
-            let start = line.first().unwrap();
-            let end = line.last().unwrap();
-            let start_key = (float_to_key(start.0), float_to_key(start.1));
-            let end_key = (float_to_key(end.0), float_to_key(end.1));
-            let mut merged_something = false;
-
-            if let Some(&idx) = end_map.get(&start_key) {
-                // Merge at the beginning
-                let mut other = merged_linestrings.remove(idx);
-                other.extend(line);
-                line = other;
-                merged_something = true;
-            } else if let Some(&idx) = start_map.get(&end_key) {
-                // Merge at the end
-                let other = merged_linestrings.remove(idx);
-                line.extend(other);
-                merged_something = true;
-            }
-
-            if merged_something {
-                // Rebuild maps
-                start_map.clear();
-                end_map.clear();
-                for (i, l) in merged_linestrings.iter().enumerate() {
-                    start_map.insert(
-                        (
-                            float_to_key(l.first().unwrap().0),
-                            float_to_key(l.first().unwrap().1),
-                        ),
-                        i,
-                    );
-                    end_map.insert(
-                        (
-                            float_to_key(l.last().unwrap().0),
-                            float_to_key(l.last().unwrap().1),
-                        ),
-                        i,
-                    );
-                }
-            } else {
-                break;
-            }
-        }
-
-        start_map.insert(
-            (
-                float_to_key(line.first().unwrap().0),
-                float_to_key(line.first().unwrap().1),
-            ),
-            merged_linestrings.len(),
-        );
-        end_map.insert(
-            (
-                float_to_key(line.last().unwrap().0),
-                float_to_key(line.last().unwrap().1),
-            ),
-            merged_linestrings.len(),
-        );
-
-        merged_linestrings.push(line);
-    }
-
+    let merged_linestrings = merge_linestrings(linestrings);
     let mut clipped_and_merged_linestrings: Vec<Vec<(f32, f32)>> = Vec::new();
 
     for linestring in merged_linestrings {

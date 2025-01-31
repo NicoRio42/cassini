@@ -113,7 +113,7 @@ pub fn render_map_with_osm_vector_shapes(
 
     let multipolygons_path = shapes_outlput_path.join("multipolygons.shp");
     let multipolygons =
-        read_as::<_, Polygon, Record>(multipolygons_path).expect("Could not open multipolygons shapefile");
+        read_as::<_, Polygon, Record>(&multipolygons_path).expect("Could not open multipolygons shapefile");
 
     let mut map_renderer = MapRenderer::new(
         tile.min_x,
