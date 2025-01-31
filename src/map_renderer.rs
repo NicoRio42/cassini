@@ -78,6 +78,8 @@ impl MapRenderer {
     pub fn uncrossable_body_of_water_301(mut self, polygon: &GenericPolygon<Point>) -> MapRenderer {
         let (outer_geometry, holes) = self.get_outer_geometry_and_holes_from_polygon(polygon);
 
+        println!("{}", holes.len());
+
         self.blue_img.set_color(VECTOR_BLUE);
         self.blue_img
             .draw_filled_polygon_with_holes(&outer_geometry, &holes);

@@ -132,11 +132,9 @@ fn find_missing(first: &[usize], second: &[usize]) -> Option<usize> {
 }
 
 fn merge_linestrings(mut linestrings: Vec<Vec<(f32, f32)>>) -> Vec<Vec<(f32, f32)>> {
-    let mut merged = false;
-
     loop {
         let len = linestrings.len();
-        merged = false;
+        let mut merged = false;
 
         'outer: for i in 0..len {
             for j in 0..len {
