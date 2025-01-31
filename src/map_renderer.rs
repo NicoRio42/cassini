@@ -5,14 +5,13 @@ use crate::{
     constants::{
         BUILDING_OUTLINE_WIDTH, CROSSABLE_WATERCOURSE_WIDTH, DOUBLE_TRACK_WIDE_ROAD_INNER_WIDTH,
         DOUBLE_TRACK_WIDE_ROAD_OUTER_WIDTH, FOOTPATH_DASH_INTERVAL_LENGTH, FOOTPATH_DASH_LENGTH,
-        FOOTPATH_WIDTH, INCH, INCROSSABLE_BODY_OF_WATER_OUTLINE_WIDTH, MARSH_LINE_SPACING,
-        MARSH_LINE_WIDTH, MINOR_WATERCOURSE_DASH_INTERVAL_LENGTH, MINOR_WATERCOURSE_DASH_LENGTH,
-        MINOR_WATERCOURSE_WIDTH, POWERLINE_WIDTH, RAILWAY_DASH_INTERVAL_LENGTH,
-        RAILWAY_DASH_LENGTH, RAILWAY_INNER_WIDTH, RAILWAY_OUTER_WIDTH, ROAD_WIDTH, VECTOR_BLACK,
-        VECTOR_BLUE, VECTOR_BUILDING_GRAY, VECTOR_OLIVE_GREEN, VECTOR_PAVED_AREA_BROWN,
-        VECTOR_WHITE, WIDE_ROAD_INNER_WIDTH, WIDE_ROAD_OUTER_WIDTH, XL_WIDE_ROAD_INNER_WIDTH,
-        XL_WIDE_ROAD_OUTER_WIDTH, XXL_WIDE_ROAD_INNER_WIDTH, XXL_WIDE_ROAD_OUTER_WIDTH,
-        _MAJOR_POWERLINE_INNER_WIDTH, _MAJOR_POWERLINE_OUTER_WIDTH,
+        FOOTPATH_WIDTH, INCH, INCROSSABLE_BODY_OF_WATER_OUTLINE_WIDTH, MARSH_LINE_SPACING, MARSH_LINE_WIDTH,
+        MINOR_WATERCOURSE_DASH_INTERVAL_LENGTH, MINOR_WATERCOURSE_DASH_LENGTH, MINOR_WATERCOURSE_WIDTH,
+        POWERLINE_WIDTH, RAILWAY_DASH_INTERVAL_LENGTH, RAILWAY_DASH_LENGTH, RAILWAY_INNER_WIDTH,
+        RAILWAY_OUTER_WIDTH, ROAD_WIDTH, VECTOR_BLACK, VECTOR_BLUE, VECTOR_BUILDING_GRAY, VECTOR_OLIVE_GREEN,
+        VECTOR_PAVED_AREA_BROWN, VECTOR_WHITE, WIDE_ROAD_INNER_WIDTH, WIDE_ROAD_OUTER_WIDTH,
+        XL_WIDE_ROAD_INNER_WIDTH, XL_WIDE_ROAD_OUTER_WIDTH, XXL_WIDE_ROAD_INNER_WIDTH,
+        XXL_WIDE_ROAD_OUTER_WIDTH, _MAJOR_POWERLINE_INNER_WIDTH, _MAJOR_POWERLINE_OUTER_WIDTH,
     },
 };
 use shapefile::{
@@ -76,7 +75,7 @@ impl MapRenderer {
     }
 
     #[inline]
-    pub fn uncrossable_body_of_water_301(mut self, polygon: GenericPolygon<Point>) -> MapRenderer {
+    pub fn uncrossable_body_of_water_301(mut self, polygon: &GenericPolygon<Point>) -> MapRenderer {
         let (outer_geometry, holes) = self.get_outer_geometry_and_holes_from_polygon(polygon);
 
         self.blue_img.set_color(VECTOR_BLUE);
@@ -92,9 +91,8 @@ impl MapRenderer {
             .draw_filled_polygon_with_holes(&outer_geometry, &holes);
 
         self.black_img.set_color(VECTOR_BLACK);
-        self.black_img.set_line_width(
-            INCROSSABLE_BODY_OF_WATER_OUTLINE_WIDTH * self.dpi_resolution * 10.0 / INCH,
-        );
+        self.black_img
+            .set_line_width(INCROSSABLE_BODY_OF_WATER_OUTLINE_WIDTH * self.dpi_resolution * 10.0 / INCH);
         self.black_img.draw_polyline(&outer_geometry);
 
         for hole in holes {
@@ -119,10 +117,7 @@ impl MapRenderer {
     }
 
     #[inline]
-    pub fn minor_seasonal_water_channel_306(
-        mut self,
-        line: &GenericPolyline<Point>,
-    ) -> MapRenderer {
+    pub fn minor_seasonal_water_channel_306(mut self, line: &GenericPolyline<Point>) -> MapRenderer {
         for part in line.parts() {
             let points = self.get_points_from_line_part(part);
 
@@ -141,7 +136,7 @@ impl MapRenderer {
     }
 
     #[inline]
-    pub fn marsh_308(mut self, polygon: GenericPolygon<Point>) -> MapRenderer {
+    pub fn marsh_308(mut self, polygon: &GenericPolygon<Point>) -> MapRenderer {
         let (outer_geometry, holes) = self.get_outer_geometry_and_holes_from_polygon(polygon);
         self.striped_blue_img.set_color(VECTOR_BLUE);
         self.striped_blue_img
@@ -151,12 +146,7 @@ impl MapRenderer {
     }
 
     #[inline]
-    fn wide_road(
-        mut self,
-        line: &GenericPolyline<Point>,
-        inner_width: f32,
-        outer_width: f32,
-    ) -> MapRenderer {
+    fn wide_road(mut self, line: &GenericPolyline<Point>, inner_width: f32, outer_width: f32) -> MapRenderer {
         for part in line.parts() {
             let points = self.get_points_from_line_part(part);
             self.black_road_outlines_img.set_color(VECTOR_BLACK);
@@ -179,16 +169,14 @@ impl MapRenderer {
         for part in line.parts() {
             let points = self.get_points_from_line_part(part);
             self.black_road_outlines_img.set_color(VECTOR_BLACK);
-            self.black_road_outlines_img.set_line_width(
-                DOUBLE_TRACK_WIDE_ROAD_OUTER_WIDTH * self.dpi_resolution * 10.0 / INCH,
-            );
+            self.black_road_outlines_img
+                .set_line_width(DOUBLE_TRACK_WIDE_ROAD_OUTER_WIDTH * self.dpi_resolution * 10.0 / INCH);
             self.black_road_outlines_img.draw_polyline(&points);
 
             self.light_brown_road_infill_img
                 .set_color(VECTOR_PAVED_AREA_BROWN);
-            self.light_brown_road_infill_img.set_line_width(
-                DOUBLE_TRACK_WIDE_ROAD_INNER_WIDTH * self.dpi_resolution * 10.0 / INCH,
-            );
+            self.light_brown_road_infill_img
+                .set_line_width(DOUBLE_TRACK_WIDE_ROAD_INNER_WIDTH * self.dpi_resolution * 10.0 / INCH);
             self.light_brown_road_infill_img.draw_polyline(&points);
 
             // TODO
@@ -275,10 +263,7 @@ impl MapRenderer {
     }
 
     #[inline]
-    pub fn power_line_cableway_or_skilift_510(
-        mut self,
-        line: &GenericPolyline<Point>,
-    ) -> MapRenderer {
+    pub fn power_line_cableway_or_skilift_510(mut self, line: &GenericPolyline<Point>) -> MapRenderer {
         for part in line.parts() {
             let points = self.get_points_from_line_part(part);
 
@@ -310,10 +295,7 @@ impl MapRenderer {
     }
 
     #[inline]
-    pub fn area_that_shall_not_be_entered_520(
-        mut self,
-        polygon: GenericPolygon<Point>,
-    ) -> MapRenderer {
+    pub fn area_that_shall_not_be_entered_520(mut self, polygon: &GenericPolygon<Point>) -> MapRenderer {
         let (outer_geometry, holes) = self.get_outer_geometry_and_holes_from_polygon(polygon);
 
         self.olive_green_img.set_color(VECTOR_OLIVE_GREEN);
@@ -324,7 +306,7 @@ impl MapRenderer {
     }
 
     #[inline]
-    pub fn building_521(mut self, polygon: GenericPolygon<Point>) -> MapRenderer {
+    pub fn building_521(mut self, polygon: &GenericPolygon<Point>) -> MapRenderer {
         let (outer_geometry, holes) = self.get_outer_geometry_and_holes_from_polygon(polygon);
 
         self.gray_img.set_color(VECTOR_BUILDING_GRAY);
@@ -350,8 +332,7 @@ impl MapRenderer {
         for point in line_part {
             points.push((
                 (point.x as i64 - self.min_x) as f32 * self.scale_factor,
-                (self.image_height as f32
-                    - ((point.y as i64 - self.min_y) as f32 * self.scale_factor)),
+                (self.image_height as f32 - ((point.y as i64 - self.min_y) as f32 * self.scale_factor)),
             ))
         }
 
@@ -361,7 +342,7 @@ impl MapRenderer {
     #[inline]
     fn get_outer_geometry_and_holes_from_polygon(
         &self,
-        polygon: GenericPolygon<Point>,
+        polygon: &GenericPolygon<Point>,
     ) -> (Vec<(f32, f32)>, Vec<Vec<(f32, f32)>>) {
         let mut outer_geometry: Vec<(f32, f32)> = vec![];
         let mut holes: Vec<Vec<(f32, f32)>> = vec![];
@@ -392,8 +373,8 @@ impl MapRenderer {
         for i in 0..number_of_stripes {
             let min_y = i as f32 * pixel_marsh_interval;
 
-            let max_y = i as f32 * pixel_marsh_interval
-                + MARSH_LINE_SPACING * self.dpi_resolution * 10.0 / INCH;
+            let max_y =
+                i as f32 * pixel_marsh_interval + MARSH_LINE_SPACING * self.dpi_resolution * 10.0 / INCH;
 
             self.striped_blue_img.draw_filled_polygon(&vec![
                 (0., min_y),
@@ -404,13 +385,10 @@ impl MapRenderer {
             ])
         }
 
-        self.vegetation_img
-            .overlay(&mut self.olive_green_img, 0., 0.);
-        self.vegetation_img
-            .overlay(&mut self.light_brown_img, 0., 0.);
+        self.vegetation_img.overlay(&mut self.olive_green_img, 0., 0.);
+        self.vegetation_img.overlay(&mut self.light_brown_img, 0., 0.);
         self.vegetation_img.overlay(&mut self.blue_img, 0., 0.);
-        self.vegetation_img
-            .overlay(&mut self.striped_blue_img, 0., 0.);
+        self.vegetation_img.overlay(&mut self.striped_blue_img, 0., 0.);
         self.vegetation_img
             .overlay(&mut self.black_road_outlines_img, 0., 0.);
         self.vegetation_img

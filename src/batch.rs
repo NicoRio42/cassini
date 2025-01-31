@@ -2,7 +2,7 @@ use crate::{
     download::download_osm_files_for_all_tiles_if_needed,
     lidar::generate_dem_and_vegetation_density_tiff_images_from_laz_file,
     merge::merge_maps,
-    png::generate_png_from_dem_vegetation_density_tiff_images_and_vector_file,
+    render::generate_png_from_dem_vegetation_density_tiff_images_and_vector_file,
     tile::{Tile, TileWithNeighbors},
 };
 use las::raw::Header;

@@ -1,5 +1,6 @@
 {
   "files.associations": {
     "*.mdx": "markdown"
-  }
+  },
+  "rust-analyzer.rustfmt.extraArgs": ["--config", "max_width=110"]
 }

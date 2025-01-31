@@ -1,4 +1,7 @@
-use crate::{config::Config, constants::INCH, map_renderer::MapRenderer, tile::Tile};
+use crate::{
+    coastlines::get_polygon_with_holes_from_coastlines, config::Config, constants::INCH,
+    map_renderer::MapRenderer, tile::Tile,
+};
 use log::{error, info};
 use shapefile::{
     dbase::{FieldValue, Record},
@@ -109,8 +112,8 @@ pub fn render_map_with_osm_vector_shapes(
     let start = Instant::now();
 
     let multipolygons_path = shapes_outlput_path.join("multipolygons.shp");
-    let multipolygons = read_as::<_, Polygon, Record>(multipolygons_path)
-        .expect("Could not open multipolygons shapefile");
+    let multipolygons =
+        read_as::<_, Polygon, Record>(multipolygons_path).expect("Could not open multipolygons shapefile");
 
     let mut map_renderer = MapRenderer::new(
         tile.min_x,
@@ -124,6 +127,8 @@ pub fn render_map_with_osm_vector_shapes(
         cliffs_path,
     );
 
+    let mut islands: Vec<Vec<(f32, f32)>> = vec![];
+
     for (polygon, record) in multipolygons {
         let natural = match record.get("natural") {
             Some(FieldValue::Character(Some(x))) => x,
@@ -133,13 +138,27 @@ pub fn render_map_with_osm_vector_shapes(
 
         // 308 marsh
         if natural == "wetland" {
-            map_renderer = map_renderer.marsh_308(polygon);
+            map_renderer = map_renderer.marsh_308(&polygon);
             continue;
         }
 
         // 301 uncrossable body of water
-        if natural == "water" || natural == "bay" || natural == "strait" {
-            map_renderer = map_renderer.uncrossable_body_of_water_301(polygon);
+        if natural == "water" {
+            map_renderer = map_renderer.uncrossable_body_of_water_301(&polygon);
+            continue;
+        }
+
+        if natural == "coastline" {
+            let mut points: Vec<(f32, f32)> = vec![];
+
+            for point in polygon.rings()[0].points() {
+                points.push((
+                    (point.x as i64 - tile.min_x) as f32 * scale_factor,
+                    (image_height as f32 - ((point.y as i64 - tile.min_y) as f32 * scale_factor)),
+                ))
+            }
+
+            islands.push(points);
             continue;
         }
 
@@ -151,7 +170,7 @@ pub fn render_map_with_osm_vector_shapes(
 
         // 521 building
         if building != "" {
-            map_renderer = map_renderer.building_521(polygon);
+            map_renderer = map_renderer.building_521(&polygon);
             continue;
         }
 
@@ -164,7 +183,7 @@ pub fn render_map_with_osm_vector_shapes(
 
             // 520 area that shall not be entered
             if landuse == "residential" || landuse == "railway" || landuse == "industrial" {
-                map_renderer = map_renderer.area_that_shall_not_be_entered_520(polygon);
+                map_renderer = map_renderer.area_that_shall_not_be_entered_520(&polygon);
                 continue;
             }
         }
@@ -172,6 +191,8 @@ pub fn render_map_with_osm_vector_shapes(
 
     let lines_path = shapes_outlput_path.join("lines.shp");
     let lines = read_as::<_, Polyline, Record>(lines_path).expect("Could not open lines shapefile");
+
+    let mut coastlines: Vec<Vec<(f32, f32)>> = vec![];
 
     for (line, record) in lines {
         let highway = match record.get("highway") {
@@ -186,10 +207,7 @@ pub fn render_map_with_osm_vector_shapes(
             continue;
         }
 
-        if highway == "trunk"
-            || highway == "trunk_link"
-            || highway == "primary"
-            || highway == "primary_link"
+        if highway == "trunk" || highway == "trunk_link" || highway == "primary" || highway == "primary_link"
         {
             map_renderer = map_renderer.xxl_wide_road_502(&line);
             continue;
@@ -241,8 +259,7 @@ pub fn render_map_with_osm_vector_shapes(
             None => "",
         };
 
-        let should_draw_water_course =
-            waterway == "stream" || waterway == "drain" || waterway == "ditch";
+        let should_draw_water_course = waterway == "stream" || waterway == "drain" || waterway == "ditch";
 
         // 304 crossable watercourse
         if should_draw_water_course {
@@ -312,6 +329,30 @@ pub fn render_map_with_osm_vector_shapes(
             map_renderer = map_renderer.power_line_cableway_or_skilift_510(&line);
             continue;
         }
+
+        let natural = match other_tags.get("natural") {
+            Some(p) => p,
+            None => "",
+        };
+
+        if natural == "coastline" {
+            let mut points: Vec<(f32, f32)> = vec![];
+
+            for point in line.parts()[0].clone() {
+                points.push((point.x as f32, point.y as f32));
+            }
+
+            coastlines.push(points);
+            continue;
+        }
+    }
+
+    let coastlines_polygons = get_polygon_with_holes_from_coastlines(
+        coastlines, islands, tile.min_x, tile.min_y, tile.max_x, tile.max_y,
+    );
+
+    for coastline_polygon in coastlines_polygons {
+        map_renderer = map_renderer.uncrossable_body_of_water_301(&coastline_polygon);
     }
 
     map_renderer.save_as(tile.render_dir_path.join("full-map.png"));
