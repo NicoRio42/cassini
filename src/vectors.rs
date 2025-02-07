@@ -349,7 +349,23 @@ pub fn render_map_with_osm_vector_shapes(
         }
     }
 
-    if coastlines.len() != 0 || islands.len() != 0 {
+    let are_some_islands_inside_tile = islands.iter().any(|island| {
+        island.iter().any(|&(x, y)| {
+            x > tile.min_x as f32 && y > tile.min_y as f32 && x < tile.max_x as f32 && y < tile.max_y as f32
+        })
+    });
+
+    let are_some_coastlines_inside_tile = coastlines.iter().any(|coastline| {
+        coastline.iter().any(|&(x, y)| {
+            x > tile.min_x as f32 && y > tile.min_y as f32 && x < tile.max_x as f32 && y < tile.max_y as f32
+        })
+    });
+
+    if coastlines.len() != 0
+        || islands.len() != 0
+        || are_some_islands_inside_tile
+        || are_some_coastlines_inside_tile
+    {
         let (coastlines_polygons, coastlines_edges) = get_polygon_with_holes_from_coastlines(
             coastlines, islands, tile.min_x, tile.min_y, tile.max_x, tile.max_y,
         );

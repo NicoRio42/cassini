@@ -4,6 +4,7 @@ pub const DEM_BLOCK_SIZE: u32 = 1;
 pub const VEGETATION_BLOCK_SIZE: u32 = 1;
 pub const INCH: f32 = 254.0;
 pub const BUFFER: usize = 200;
+pub const BUFFER_FOR_DOWNLOAD: usize = 10;
 
 pub const WHITE: Rgba<u8> = Rgba([255, 255, 255, 255]);
 pub const TRANSPARENT: Rgba<u8> = Rgba([255, 255, 255, 0]);
