@@ -30,7 +30,8 @@ pub fn get_polygon_with_holes_from_coastlines(
     }
 
     if coastlines.len() != 0 {
-        let (merged_linestrings, closed_merged_linestrings) = merge_linestrings(coastlines);
+        let (merged_linestrings, closed_merged_linestrings) =
+            merge_and_filter_linestrings(coastlines, min_x, min_y, max_x, max_y);
 
         for closed_merged_linestring in closed_merged_linestrings.clone() {
             let mut points: Vec<Point> = Vec::new();
@@ -41,6 +42,19 @@ pub fn get_polygon_with_holes_from_coastlines(
 
             coastlines_edges.push(GenericPolyline::new(points.clone()));
             island_rings.push(PolygonRing::Inner(points));
+        }
+
+        if merged_linestrings.len() == 0 {
+            return (
+                vec![generate_square_polygon_with_islands(
+                    island_rings,
+                    min_x,
+                    min_y,
+                    max_x,
+                    max_y,
+                )],
+                coastlines_edges,
+            );
         }
 
         for merged_linestring in merged_linestrings.clone() {
@@ -138,6 +152,25 @@ pub fn get_polygon_with_holes_from_coastlines(
         return (polygons, coastlines_edges);
     }
 
+    return (
+        vec![generate_square_polygon_with_islands(
+            island_rings,
+            min_x,
+            min_y,
+            max_x,
+            max_y,
+        )],
+        coastlines_edges,
+    );
+}
+
+fn generate_square_polygon_with_islands(
+    island_rings: Vec<PolygonRing<Point>>,
+    min_x: i64,
+    min_y: i64,
+    max_x: i64,
+    max_y: i64,
+) -> GenericPolygon<Point> {
     let mut rings: Vec<PolygonRing<Point>> = vec![PolygonRing::Outer(vec![
         Point::new(min_x as f64, min_y as f64),
         Point::new(min_x as f64, max_y as f64),
@@ -149,15 +182,20 @@ pub fn get_polygon_with_holes_from_coastlines(
     let mut island_rings_copy = island_rings.clone();
     rings.append(&mut island_rings_copy);
 
-    // Blue square with islands
-    return (vec![GenericPolygon::with_rings(rings)], coastlines_edges);
+    return GenericPolygon::with_rings(rings);
 }
 
 fn find_missing(first: &[usize], second: &[usize]) -> Option<usize> {
     second.iter().find(|&&x| !first.contains(&x)).copied()
 }
 
-fn merge_linestrings(mut linestrings: Vec<Vec<(f32, f32)>>) -> (Vec<Vec<(f32, f32)>>, Vec<Vec<(f32, f32)>>) {
+fn merge_and_filter_linestrings(
+    mut linestrings: Vec<Vec<(f32, f32)>>,
+    min_x: i64,
+    min_y: i64,
+    max_x: i64,
+    max_y: i64,
+) -> (Vec<Vec<(f32, f32)>>, Vec<Vec<(f32, f32)>>) {
     loop {
         let len = linestrings.len();
         let mut merged = false;
@@ -188,6 +226,14 @@ fn merge_linestrings(mut linestrings: Vec<Vec<(f32, f32)>>) -> (Vec<Vec<(f32, f3
     let mut closed_merged_linestrings: Vec<Vec<(f32, f32)>> = Vec::new();
 
     for linestring in linestrings {
+        let is_linestring_outside_tile = linestring
+            .iter()
+            .all(|&(x, y)| x < min_x as f32 || y < min_y as f32 || x > max_x as f32 || y > max_y as f32);
+
+        if is_linestring_outside_tile {
+            continue;
+        }
+
         let first_point = linestring[0];
         let last_point = linestring[linestring.len() - 1];
         let is_closed_coastline = first_point.0 == last_point.0 && first_point.1 == last_point.1;
