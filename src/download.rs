@@ -8,7 +8,7 @@ use std::{
     time::Instant,
 };
 
-use crate::{constants::BUFFER_FOR_DOWNLOAD, tile::TileWithNeighbors};
+use crate::{constants::BUFFER, tile::TileWithNeighbors};
 
 pub fn download_osm_files_for_all_tiles_if_needed(tiles: &Vec<TileWithNeighbors>) {
     for tile in tiles {
@@ -42,15 +42,11 @@ pub fn download_osm_file_if_needed(min_x: i64, min_y: i64, max_x: i64, max_y: i6
 
     let start = Instant::now();
 
-    let (min_lon, min_lat) = convert_coords_from_lambert_93_to_gps(
-        (min_x - BUFFER_FOR_DOWNLOAD as i64) as f64,
-        (min_y - BUFFER_FOR_DOWNLOAD as i64) as f64,
-    );
+    let (min_lon, min_lat) =
+        convert_coords_from_lambert_93_to_gps((min_x - BUFFER as i64) as f64, (min_y - BUFFER as i64) as f64);
 
-    let (max_lon, max_lat) = convert_coords_from_lambert_93_to_gps(
-        (max_x + BUFFER_FOR_DOWNLOAD as i64) as f64,
-        (max_y + BUFFER_FOR_DOWNLOAD as i64) as f64,
-    );
+    let (max_lon, max_lat) =
+        convert_coords_from_lambert_93_to_gps((max_x + BUFFER as i64) as f64, (max_y + BUFFER as i64) as f64);
 
     // Overpass Query
     let query = r#"

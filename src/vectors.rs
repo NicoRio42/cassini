@@ -1,7 +1,7 @@
 use crate::{
     coastlines::get_polygon_with_holes_from_coastlines,
     config::Config,
-    constants::INCH,
+    constants::{COASTLINE_EDGE_BUFFER, INCH},
     helpers::{does_polyline_intersect_tile, remove_dir_content},
     map_renderer::MapRenderer,
     tile::Tile,
@@ -353,12 +353,24 @@ pub fn render_map_with_osm_vector_shapes(
         }
     }
 
-    let are_some_islands_inside_tile = islands
-        .iter()
-        .any(|island| does_polyline_intersect_tile(island, tile.min_x, tile.min_y, tile.max_x, tile.max_y));
+    let are_some_islands_inside_tile = islands.iter().any(|island| {
+        does_polyline_intersect_tile(
+            island,
+            tile.min_x as f32 - COASTLINE_EDGE_BUFFER,
+            tile.min_y as f32 - COASTLINE_EDGE_BUFFER,
+            tile.max_x as f32 + COASTLINE_EDGE_BUFFER,
+            tile.max_y as f32 + COASTLINE_EDGE_BUFFER,
+        )
+    });
 
     let are_some_coastlines_inside_tile = coastlines.iter().any(|coastline| {
-        does_polyline_intersect_tile(coastline, tile.min_x, tile.min_y, tile.max_x, tile.max_y)
+        does_polyline_intersect_tile(
+            coastline,
+            tile.min_x as f32 - COASTLINE_EDGE_BUFFER,
+            tile.min_y as f32 - COASTLINE_EDGE_BUFFER,
+            tile.max_x as f32 + COASTLINE_EDGE_BUFFER,
+            tile.max_y as f32 + COASTLINE_EDGE_BUFFER,
+        )
     });
 
     if are_some_islands_inside_tile || are_some_coastlines_inside_tile {

@@ -1,6 +1,6 @@
 [package]
 name = "cassini"
-version = "0.12.4"
+version = "0.12.5"
 edition = "2021"
 description = "A software that generates highly accurate topographic maps from LiDAR and Shapefile data."
 readme = "README.md"

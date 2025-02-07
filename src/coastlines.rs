@@ -1,10 +1,12 @@
+use crate::{
+    constants::COASTLINE_EDGE_BUFFER,
+    helpers::{does_polyline_intersect_tile, does_segment_intersect_tile},
+};
 use log::error;
 use shapefile::{
     record::{polygon::GenericPolygon, polyline::GenericPolyline},
     Point, PolygonRing,
 };
-
-use crate::helpers::{does_polyline_intersect_tile, does_segment_intersect_tile};
 
 pub fn get_polygon_with_holes_from_coastlines(
     coastlines: Vec<Vec<(f32, f32)>>,
@@ -14,6 +16,11 @@ pub fn get_polygon_with_holes_from_coastlines(
     max_x: i64,
     max_y: i64,
 ) -> (Vec<GenericPolygon<Point>>, Vec<GenericPolyline<Point>>) {
+    let min_x = min_x as f32 - COASTLINE_EDGE_BUFFER;
+    let min_y = min_y as f32 - COASTLINE_EDGE_BUFFER;
+    let max_x = max_x as f32 + COASTLINE_EDGE_BUFFER;
+    let max_y = max_y as f32 + COASTLINE_EDGE_BUFFER;
+
     let mut island_rings: Vec<PolygonRing<Point>> = Vec::new();
     let mut coastlines_edges: Vec<GenericPolyline<Point>> = Vec::new();
 
@@ -168,10 +175,10 @@ pub fn get_polygon_with_holes_from_coastlines(
 
 fn generate_square_polygon_with_islands(
     island_rings: Vec<PolygonRing<Point>>,
-    min_x: i64,
-    min_y: i64,
-    max_x: i64,
-    max_y: i64,
+    min_x: f32,
+    min_y: f32,
+    max_x: f32,
+    max_y: f32,
 ) -> GenericPolygon<Point> {
     let mut rings: Vec<PolygonRing<Point>> = vec![PolygonRing::Outer(vec![
         Point::new(min_x as f64, min_y as f64),
@@ -193,10 +200,10 @@ fn find_missing(first: &[usize], second: &[usize]) -> Option<usize> {
 
 fn merge_and_filter_linestrings(
     mut linestrings: Vec<Vec<(f32, f32)>>,
-    min_x: i64,
-    min_y: i64,
-    max_x: i64,
-    max_y: i64,
+    min_x: f32,
+    min_y: f32,
+    max_x: f32,
+    max_y: f32,
 ) -> (Vec<Vec<(f32, f32)>>, Vec<Vec<(f32, f32)>>) {
     loop {
         let len = linestrings.len();
@@ -276,10 +283,10 @@ fn try_to_merge_two_linestrings(
 
 fn clip_linestrings(
     linestrings: Vec<Vec<(f32, f32)>>,
-    min_x: i64,
-    min_y: i64,
-    max_x: i64,
-    max_y: i64,
+    min_x: f32,
+    min_y: f32,
+    max_x: f32,
+    max_y: f32,
 ) -> Vec<Vec<(f32, f32)>> {
     let mut clipped_and_merged_linestrings: Vec<Vec<(f32, f32)>> = Vec::new();
 
@@ -393,18 +400,18 @@ fn get_next_coastline_index_or_tile_vertex(
     remaining_coastlines: &Vec<Vec<(f32, f32)>>,
     first_point_of_polygon: (f32, f32),
     last_point_of_last_coastline: (f32, f32),
-    min_x: i64,
-    min_y: i64,
-    max_x: i64,
-    max_y: i64,
+    min_x: f32,
+    min_y: f32,
+    max_x: f32,
+    max_y: f32,
 ) -> CoastlineIndexOrTileVertexOrPolygonStart {
     // Last point on top edge
-    if last_point_of_last_coastline.1 == max_y as f32 && last_point_of_last_coastline.0 != max_x as f32 {
+    if last_point_of_last_coastline.1 == max_y && last_point_of_last_coastline.0 != max_x {
         let mut next_coastline_index_or_tile_vertex = CoastlineIndexOrTileVertexOrPolygonStart::TopRigth;
         let mut distance_to_next_coastline = f32::MAX;
 
         for (index, next_coastline) in remaining_coastlines.iter().enumerate() {
-            let does_next_coastline_start_on_top_edge = next_coastline[0].1 == max_y as f32;
+            let does_next_coastline_start_on_top_edge = next_coastline[0].1 == max_y;
 
             let does_next_coastline_start_right_to_previous_coastline_end =
                 next_coastline[0].0 > last_point_of_last_coastline.0;
@@ -433,12 +440,12 @@ fn get_next_coastline_index_or_tile_vertex(
     }
 
     // Last point on right edge
-    if last_point_of_last_coastline.0 == max_x as f32 && last_point_of_last_coastline.1 != min_y as f32 {
+    if last_point_of_last_coastline.0 == max_x && last_point_of_last_coastline.1 != min_y {
         let mut next_coastline_index_or_tile_vertex = CoastlineIndexOrTileVertexOrPolygonStart::BottomRigth;
         let mut distance_to_next_coastline = f32::MAX;
 
         for (index, next_coastline) in remaining_coastlines.iter().enumerate() {
-            let does_next_coastline_start_on_right_edge = next_coastline[0].0 == max_x as f32;
+            let does_next_coastline_start_on_right_edge = next_coastline[0].0 == max_x;
 
             let does_next_coastline_start_below_previous_coastline_end =
                 next_coastline[0].1 < last_point_of_last_coastline.1;
@@ -467,12 +474,12 @@ fn get_next_coastline_index_or_tile_vertex(
     }
 
     // Last point on bottom edge
-    if last_point_of_last_coastline.1 == min_y as f32 && last_point_of_last_coastline.0 != min_x as f32 {
+    if last_point_of_last_coastline.1 == min_y && last_point_of_last_coastline.0 != min_x {
         let mut next_coastline_index_or_tile_vertex = CoastlineIndexOrTileVertexOrPolygonStart::BottomLeft;
         let mut distance_to_next_coastline = f32::MAX;
 
         for (index, next_coastline) in remaining_coastlines.iter().enumerate() {
-            let does_next_coastline_start_on_bottom_edge = next_coastline[0].1 == min_y as f32;
+            let does_next_coastline_start_on_bottom_edge = next_coastline[0].1 == min_y;
 
             let does_next_coastline_start_left_to_previous_coastline_end =
                 next_coastline[0].0 < last_point_of_last_coastline.0;
@@ -501,12 +508,12 @@ fn get_next_coastline_index_or_tile_vertex(
     }
 
     // Last point on left edge
-    if last_point_of_last_coastline.0 == min_x as f32 && last_point_of_last_coastline.1 != max_y as f32 {
+    if last_point_of_last_coastline.0 == min_x && last_point_of_last_coastline.1 != max_y {
         let mut next_coastline_index_or_tile_vertex = CoastlineIndexOrTileVertexOrPolygonStart::TopLeft;
         let mut distance_to_next_coastline = f32::MAX;
 
         for (index, next_coastline) in remaining_coastlines.iter().enumerate() {
-            let does_next_coastline_start_on_left_edge = next_coastline[0].0 == min_x as f32;
+            let does_next_coastline_start_on_left_edge = next_coastline[0].0 == min_x;
 
             let does_next_coastline_start_above_previous_coastline_end =
                 next_coastline[0].1 > last_point_of_last_coastline.1;
@@ -537,26 +544,18 @@ fn get_next_coastline_index_or_tile_vertex(
     return CoastlineIndexOrTileVertexOrPolygonStart::PolygonStart;
 }
 
-fn is_inside_tile(point: (f32, f32), min_x: i64, min_y: i64, max_x: i64, max_y: i64) -> bool {
-    return point.0 >= min_x as f32
-        && point.0 <= max_x as f32
-        && point.1 >= min_y as f32
-        && point.1 <= max_y as f32;
+fn is_inside_tile(point: (f32, f32), min_x: f32, min_y: f32, max_x: f32, max_y: f32) -> bool {
+    return point.0 >= min_x && point.0 <= max_x && point.1 >= min_y && point.1 <= max_y;
 }
 
 fn get_intersection_between_segment_and_tile(
     p1: (f32, f32),
     p2: (f32, f32),
-    min_x: i64,
-    min_y: i64,
-    max_x: i64,
-    max_y: i64,
+    min_x: f32,
+    min_y: f32,
+    max_x: f32,
+    max_y: f32,
 ) -> Option<(f32, f32)> {
-    let min_x = min_x as f32;
-    let min_y = min_y as f32;
-    let max_x = max_x as f32;
-    let max_y = max_y as f32;
-
     let mut intersections = Vec::new();
 
     if let Some(pt) = get_segments_intersection(p1, p2, (min_x, max_y), (max_x, max_y)) {

@@ -40,16 +40,11 @@ pub fn does_segment_intersect_tile(
 
 pub fn does_polyline_intersect_tile(
     polyline: &Vec<(f32, f32)>,
-    min_x: i64,
-    min_y: i64,
-    max_x: i64,
-    max_y: i64,
+    min_x: f32,
+    min_y: f32,
+    max_x: f32,
+    max_y: f32,
 ) -> bool {
-    let min_x = min_x as f32;
-    let min_y = min_y as f32;
-    let max_x = max_x as f32;
-    let max_y = max_y as f32;
-
     let are_some_points_inside_tile = polyline
         .iter()
         .any(|&(x, y)| x > min_x && y > min_y && x < max_x && y < max_y);
