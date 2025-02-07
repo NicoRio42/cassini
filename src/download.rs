@@ -12,12 +12,7 @@ use crate::{constants::BUFFER, tile::TileWithNeighbors};
 
 pub fn download_osm_files_for_all_tiles_if_needed(tiles: &Vec<TileWithNeighbors>) {
     for tile in tiles {
-        download_osm_file_if_needed(
-            tile.tile.min_x,
-            tile.tile.min_y,
-            tile.tile.max_x,
-            tile.tile.max_y,
-        );
+        download_osm_file_if_needed(tile.tile.min_x, tile.tile.min_y, tile.tile.max_x, tile.tile.max_y);
     }
 }
 
@@ -47,15 +42,11 @@ pub fn download_osm_file_if_needed(min_x: i64, min_y: i64, max_x: i64, max_y: i6
 
     let start = Instant::now();
 
-    let (min_lon, min_lat) = convert_coords_from_lambert_93_to_gps(
-        (min_x - BUFFER as i64) as f64,
-        (min_y - BUFFER as i64) as f64,
-    );
+    let (min_lon, min_lat) =
+        convert_coords_from_lambert_93_to_gps((min_x - BUFFER as i64) as f64, (min_y - BUFFER as i64) as f64);
 
-    let (max_lon, max_lat) = convert_coords_from_lambert_93_to_gps(
-        (max_x + BUFFER as i64) as f64,
-        (max_y + BUFFER as i64) as f64,
-    );
+    let (max_lon, max_lat) =
+        convert_coords_from_lambert_93_to_gps((max_x + BUFFER as i64) as f64, (max_y + BUFFER as i64) as f64);
 
     // Overpass Query
     let query = r#"
@@ -67,10 +58,6 @@ pub fn download_osm_file_if_needed(min_x: i64, min_y: i64, max_x: i64, max_y: i6
   relation["natural"="water"]({{bbox}});
   way["natural"="wetland"]({{bbox}});
   relation["natural"="wetland"]({{bbox}});
-  way["natural"="bay"]({{bbox}});
-  relation["natural"="bay"]({{bbox}});
-  way["natural"="strait"]({{bbox}});
-  relation["natural"="strait"]({{bbox}});
   way["landuse"="residential"]({{bbox}});
   relation["landuse"="residential"]({{bbox}});
   way["landuse"="railway"]({{bbox}});
@@ -101,8 +88,7 @@ out skel qt;
         .send()
         .expect("Could not get osm data from Overpass API.");
 
-    let mut file =
-        File::create(&raw_osm_file_path).expect("Could not create file for osm download.");
+    let mut file = File::create(&raw_osm_file_path).expect("Could not create file for osm download.");
 
     copy(&mut response, &mut file).expect("Could not copy file content.");
 
@@ -128,9 +114,7 @@ fn convert_coords_from_lambert_93_to_gps(x: f64, y: f64) -> (f64, f64) {
         writeln!(stdin, "{:.1} {:.1}", x, y).expect("Failed to write to stdin");
     }
 
-    let output = cs2cs
-        .wait_with_output()
-        .expect("Failed to read cs2cs output");
+    let output = cs2cs.wait_with_output().expect("Failed to read cs2cs output");
 
     if !output.status.success() {
         panic!("Proj conversion failed.")

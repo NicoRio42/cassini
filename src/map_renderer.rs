@@ -78,7 +78,23 @@ impl MapRenderer {
     pub fn uncrossable_body_of_water_301(mut self, polygon: &GenericPolygon<Point>) -> MapRenderer {
         let (outer_geometry, holes) = self.get_outer_geometry_and_holes_from_polygon(polygon);
 
-        println!("{}", holes.len());
+        self = self.uncrossable_body_of_water_area_301_1(&polygon);
+
+        self.black_img.set_color(VECTOR_BLACK);
+        self.black_img
+            .set_line_width(INCROSSABLE_BODY_OF_WATER_OUTLINE_WIDTH * self.dpi_resolution * 10.0 / INCH);
+        self.black_img.draw_polyline(&outer_geometry);
+
+        for hole in holes {
+            self.black_img.draw_polyline(&hole);
+        }
+
+        return self;
+    }
+
+    #[inline]
+    pub fn uncrossable_body_of_water_area_301_1(mut self, polygon: &GenericPolygon<Point>) -> MapRenderer {
+        let (outer_geometry, holes) = self.get_outer_geometry_and_holes_from_polygon(polygon);
 
         self.blue_img.set_color(VECTOR_BLUE);
         self.blue_img
@@ -92,13 +108,18 @@ impl MapRenderer {
         self.cliffs_img
             .draw_filled_polygon_with_holes(&outer_geometry, &holes);
 
-        self.black_img.set_color(VECTOR_BLACK);
-        self.black_img
-            .set_line_width(INCROSSABLE_BODY_OF_WATER_OUTLINE_WIDTH * self.dpi_resolution * 10.0 / INCH);
-        self.black_img.draw_polyline(&outer_geometry);
+        return self;
+    }
 
-        for hole in holes {
-            self.black_img.draw_polyline(&hole);
+    #[inline]
+    pub fn uncrossable_body_of_water_bank_line_301_4(mut self, line: &GenericPolyline<Point>) -> MapRenderer {
+        for part in line.parts() {
+            let points = self.get_points_from_line_part(part);
+
+            self.black_img.set_color(VECTOR_BLACK);
+            self.black_img
+                .set_line_width(INCROSSABLE_BODY_OF_WATER_OUTLINE_WIDTH * self.dpi_resolution * 10.0 / INCH);
+            self.black_img.draw_polyline(&points);
         }
 
         return self;

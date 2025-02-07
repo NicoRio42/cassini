@@ -33,11 +33,8 @@ pub fn render_vegetation(
     let high_vegetation =
         get_image_data_from_tif(&tile.render_dir_path.join("high-vegetation-with-buffer.tif"));
 
-    let medium_vegetation = get_image_data_from_tif(
-        &tile
-            .render_dir_path
-            .join("medium-vegetation-with-buffer.tif"),
-    );
+    let medium_vegetation =
+        get_image_data_from_tif(&tile.render_dir_path.join("medium-vegetation-with-buffer.tif"));
 
     let mut vegetation_layer_img = RgbaImage::from_pixel(image_width, image_height, WHITE);
 
@@ -46,8 +43,7 @@ pub fn render_vegetation(
             let x_pixel = ((x_index - BUFFER) as f32 * vegetation_block_size_pixel) as i32;
             let y_pixel = ((y_index - BUFFER) as f32 * vegetation_block_size_pixel) as i32;
 
-            let high_vegetation_density =
-                get_average_pixel_value(&high_vegetation, x_index, y_index);
+            let high_vegetation_density = get_average_pixel_value(&high_vegetation, x_index, y_index);
 
             if high_vegetation_density < config.yellow_threshold {
                 draw_filled_rect_mut(
@@ -60,8 +56,7 @@ pub fn render_vegetation(
                 );
             }
 
-            let medium_vegetation_density =
-                get_average_pixel_value(&medium_vegetation, x_index, y_index);
+            let medium_vegetation_density = get_average_pixel_value(&medium_vegetation, x_index, y_index);
 
             let mut green_color: Option<Rgba<u8>> = None;
 

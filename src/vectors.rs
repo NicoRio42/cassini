@@ -1,6 +1,6 @@
 use crate::{
     coastlines::get_polygon_with_holes_from_coastlines, config::Config, constants::INCH,
-    map_renderer::MapRenderer, tile::Tile,
+    helpers::remove_dir_content, map_renderer::MapRenderer, tile::Tile,
 };
 use log::{error, info};
 use shapefile::{
@@ -33,6 +33,11 @@ pub fn render_map_with_osm_vector_shapes(
 
     let scale_factor = config.dpi_resolution / INCH;
     let shapes_outlput_path = tile.render_dir_path.join("shapes");
+
+    if shapes_outlput_path.exists() {
+        remove_dir_content(&shapes_outlput_path).unwrap();
+    }
+
     let osm_path = Path::new("osm").join(format!("{:0>7}_{:0>7}.osm", tile.min_x, tile.max_y));
 
     let ogr2ogr_output = Command::new("ogr2ogr")
@@ -152,10 +157,7 @@ pub fn render_map_with_osm_vector_shapes(
             let mut points: Vec<(f32, f32)> = vec![];
 
             for point in polygon.rings()[0].points() {
-                points.push((
-                    (point.x as i64 - tile.min_x) as f32 * scale_factor,
-                    (image_height as f32 - ((point.y as i64 - tile.min_y) as f32 * scale_factor)),
-                ))
+                points.push((point.x as f32, point.y as f32))
             }
 
             islands.push(points);
@@ -347,12 +349,16 @@ pub fn render_map_with_osm_vector_shapes(
         }
     }
 
-    let coastlines_polygons = get_polygon_with_holes_from_coastlines(
+    let (coastlines_polygons, coastlines_edges) = get_polygon_with_holes_from_coastlines(
         coastlines, islands, tile.min_x, tile.min_y, tile.max_x, tile.max_y,
     );
 
     for coastline_polygon in coastlines_polygons {
-        map_renderer = map_renderer.uncrossable_body_of_water_301(&coastline_polygon);
+        map_renderer = map_renderer.uncrossable_body_of_water_area_301_1(&coastline_polygon);
+    }
+
+    for coastlines_edge in coastlines_edges {
+        map_renderer = map_renderer.uncrossable_body_of_water_bank_line_301_4(&coastlines_edge);
     }
 
     map_renderer.save_as(tile.render_dir_path.join("full-map.png"));

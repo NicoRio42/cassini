@@ -1,10 +1,12 @@
 use las::raw::Header;
 use log::{error, info};
-use std::fs::{create_dir_all, read_dir, remove_dir_all, remove_file, write, File};
-use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::fs::{create_dir_all, write, File};
+use std::io::Write;
+use std::path::PathBuf;
 use std::process::{Command, ExitStatus};
 use std::time::Instant;
+
+use crate::helpers::remove_dir_content;
 
 pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
     laz_path: &PathBuf,
@@ -147,8 +149,8 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
     } else {
         // The existence of the extent.txt file is used as a proof of right execution of lidar pipeline by mapant-fr-worker
 
-        let mut extent_file = File::create(&output_dir_path.join("extent.txt"))
-            .expect("Could not create extent.txt file");
+        let mut extent_file =
+            File::create(&output_dir_path.join("extent.txt")).expect("Could not create extent.txt file");
 
         extent_file
             .write_all(format!("{}|{}|{}|{}", min_x, min_y, max_x, max_y).as_bytes())
@@ -161,19 +163,4 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
         "Tile min_x={} min_y={} max_x={} max_y={}. PDAL pipeline executed in {:.1?}",
         min_x, min_y, max_x, max_y, duration
     );
-}
-
-fn remove_dir_content<P: AsRef<Path>>(path: P) -> io::Result<()> {
-    for entry in read_dir(path)? {
-        let entry = entry?;
-        let path = entry.path();
-
-        if path.is_dir() {
-            remove_dir_all(&path)?;
-        } else {
-            remove_file(path)?;
-        }
-    }
-
-    Ok(())
 }

@@ -1,5 +1,8 @@
 use log::error;
-use shapefile::{record::polygon::GenericPolygon, Point, PolygonRing};
+use shapefile::{
+    record::{polygon::GenericPolygon, polyline::GenericPolyline},
+    Point, PolygonRing,
+};
 
 pub fn get_polygon_with_holes_from_coastlines(
     coastlines: Vec<Vec<(f32, f32)>>,
@@ -8,8 +11,9 @@ pub fn get_polygon_with_holes_from_coastlines(
     min_y: i64,
     max_x: i64,
     max_y: i64,
-) -> Vec<GenericPolygon<Point>> {
+) -> (Vec<GenericPolygon<Point>>, Vec<GenericPolyline<Point>>) {
     let mut island_rings: Vec<PolygonRing<Point>> = Vec::new();
+    let mut coastlines_edges: Vec<GenericPolyline<Point>> = Vec::new();
 
     for island in islands {
         let mut points: Vec<Point> = Vec::new();
@@ -21,16 +25,28 @@ pub fn get_polygon_with_holes_from_coastlines(
             })
         }
 
+        coastlines_edges.push(GenericPolyline::new(points.clone()));
         island_rings.push(PolygonRing::Inner(points));
     }
 
     if coastlines.len() != 0 {
-        let assembled_clipped_coastlines =
-            assemble_and_clip_linestrings(coastlines, min_x, min_y, max_x, max_y);
+        let merged_linestrings = merge_linestrings(coastlines);
+
+        for merged_linestring in merged_linestrings.clone() {
+            let mut points: Vec<Point> = Vec::new();
+
+            for (x, y) in merged_linestring {
+                points.push(Point::new(x as f64, y as f64))
+            }
+
+            coastlines_edges.push(GenericPolyline::new(points));
+        }
+
+        let merged_and_clipped_coastlines = clip_linestrings(merged_linestrings, min_x, min_y, max_x, max_y);
 
         let mut polygons: Vec<GenericPolygon<Point>> = Vec::new();
         let mut consumed_coastlines_indexes: Vec<usize> = Vec::new();
-        let all_indexes: Vec<usize> = (0..assembled_clipped_coastlines.len()).collect();
+        let all_indexes: Vec<usize> = (0..merged_and_clipped_coastlines.len()).collect();
 
         loop {
             let mut polygon: Vec<(f32, f32)> = Vec::new();
@@ -41,7 +57,7 @@ pub fn get_polygon_with_holes_from_coastlines(
                     let mut current_coastline_index = coastline_index;
 
                     loop {
-                        let coastline = &assembled_clipped_coastlines[current_coastline_index];
+                        let coastline = &merged_and_clipped_coastlines[current_coastline_index];
 
                         if should_append_current_coastline {
                             consumed_coastlines_indexes.push(current_coastline_index);
@@ -54,7 +70,7 @@ pub fn get_polygon_with_holes_from_coastlines(
                         let polygon_last_point = polygon[polygon.len() - 1];
 
                         match get_next_coastline_index_or_tile_vertex(
-                            &assembled_clipped_coastlines,
+                            &merged_and_clipped_coastlines,
                             polygon_first_point,
                             polygon_last_point,
                             min_x,
@@ -109,7 +125,7 @@ pub fn get_polygon_with_holes_from_coastlines(
             polygons.push(generic_polygon);
         }
 
-        return polygons;
+        return (polygons, coastlines_edges);
     }
 
     let mut rings: Vec<PolygonRing<Point>> = vec![PolygonRing::Outer(vec![
@@ -124,7 +140,7 @@ pub fn get_polygon_with_holes_from_coastlines(
     rings.append(&mut island_rings_copy);
 
     // Blue square with islands
-    return vec![GenericPolygon::with_rings(rings)];
+    return (vec![GenericPolygon::with_rings(rings)], coastlines_edges);
 }
 
 fn find_missing(first: &[usize], second: &[usize]) -> Option<usize> {
@@ -189,17 +205,16 @@ fn try_to_merge_two_linestrings(
     return None;
 }
 
-fn assemble_and_clip_linestrings(
+fn clip_linestrings(
     linestrings: Vec<Vec<(f32, f32)>>,
     min_x: i64,
     min_y: i64,
     max_x: i64,
     max_y: i64,
 ) -> Vec<Vec<(f32, f32)>> {
-    let merged_linestrings = merge_linestrings(linestrings);
     let mut clipped_and_merged_linestrings: Vec<Vec<(f32, f32)>> = Vec::new();
 
-    for linestring in merged_linestrings {
+    for linestring in linestrings {
         let mut first_point_outside_tile_index = 0;
         let mut has_first_point_outside_tile_been_set = false;
         let mut last_point_outside_tile_index = linestring.len() - 1;
