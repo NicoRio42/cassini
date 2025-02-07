@@ -4,6 +4,8 @@ use shapefile::{
     Point, PolygonRing,
 };
 
+use crate::helpers::{does_polyline_intersect_tile, does_segment_intersect_tile};
+
 pub fn get_polygon_with_holes_from_coastlines(
     coastlines: Vec<Vec<(f32, f32)>>,
     islands: Vec<Vec<(f32, f32)>>,
@@ -226,11 +228,7 @@ fn merge_and_filter_linestrings(
     let mut closed_merged_linestrings: Vec<Vec<(f32, f32)>> = Vec::new();
 
     for linestring in linestrings {
-        let is_linestring_outside_tile = linestring
-            .iter()
-            .all(|&(x, y)| x < min_x as f32 || y < min_y as f32 || x > max_x as f32 || y > max_y as f32);
-
-        if is_linestring_outside_tile {
+        if !does_polyline_intersect_tile(&linestring, min_x, min_y, max_x, max_y) {
             continue;
         }
 
@@ -312,11 +310,28 @@ fn clip_linestrings(
 
         for index in 0..(linestring.len() - 1) {
             let previous_point = linestring[index];
-            let next_point: (f32, f32) = linestring[index + 1];
+            let next_point = linestring[index + 1];
 
             let is_previous_point_inside = is_inside_tile(previous_point, min_x, min_y, max_x, max_y);
-
             let is_next_point_inside = is_inside_tile(next_point, min_x, min_y, max_x, max_y);
+
+            if !is_previous_point_inside
+                && !is_next_point_inside
+                && does_segment_intersect_tile(
+                    (previous_point, next_point),
+                    min_x as f32,
+                    min_y as f32,
+                    max_x as f32,
+                    max_y as f32,
+                )
+            {
+                if !has_first_point_outside_tile_been_set {
+                    first_point_outside_tile_index = index;
+                    has_first_point_outside_tile_been_set = true;
+                }
+
+                last_point_outside_tile_index = index + 1;
+            }
 
             if !is_previous_point_inside && is_next_point_inside && !has_first_point_outside_tile_been_set {
                 first_point_outside_tile_index = index;
@@ -324,7 +339,7 @@ fn clip_linestrings(
             }
 
             if is_previous_point_inside && !is_next_point_inside {
-                last_point_outside_tile_index = index;
+                last_point_outside_tile_index = index + 1;
             }
         }
 
@@ -340,7 +355,7 @@ fn clip_linestrings(
 
         let truncated_last_point = get_intersection_between_segment_and_tile(
             linestring[last_point_outside_tile_index],
-            linestring[last_point_outside_tile_index + 1],
+            linestring[last_point_outside_tile_index - 1],
             min_x,
             min_y,
             max_x,
@@ -351,9 +366,11 @@ fn clip_linestrings(
         let mut clipped_linestring: Vec<(f32, f32)> = Vec::new();
         clipped_linestring.push(truncated_first_point);
 
-        clipped_linestring.extend_from_slice(
-            &linestring[(first_point_outside_tile_index + 1)..last_point_outside_tile_index],
-        );
+        if first_point_outside_tile_index + 1 < last_point_outside_tile_index - 1 {
+            clipped_linestring.extend_from_slice(
+                &linestring[(first_point_outside_tile_index + 1)..(last_point_outside_tile_index - 1)],
+            );
+        }
 
         clipped_linestring.push(truncated_last_point);
 
@@ -540,14 +557,33 @@ fn get_intersection_between_segment_and_tile(
     let max_x = max_x as f32;
     let max_y = max_y as f32;
 
-    // Top
-    get_segments_intersection(p1, p2, (min_x, max_y), (max_x, max_y))
-        // Right
-        .or(get_segments_intersection(p1, p2, (max_x, max_y), (max_x, min_y)))
-        // Bottom
-        .or(get_segments_intersection(p1, p2, (min_x, min_y), (max_x, min_y)))
-        // Left
-        .or(get_segments_intersection(p1, p2, (min_x, min_y), (min_x, max_y)))
+    let mut intersections = Vec::new();
+
+    if let Some(pt) = get_segments_intersection(p1, p2, (min_x, max_y), (max_x, max_y)) {
+        intersections.push(pt);
+    }
+
+    if let Some(pt) = get_segments_intersection(p1, p2, (max_x, max_y), (max_x, min_y)) {
+        intersections.push(pt);
+    }
+
+    if let Some(pt) = get_segments_intersection(p1, p2, (min_x, min_y), (max_x, min_y)) {
+        intersections.push(pt);
+    }
+
+    if let Some(pt) = get_segments_intersection(p1, p2, (min_x, min_y), (min_x, max_y)) {
+        intersections.push(pt);
+    }
+
+    if intersections.len() == 0 {
+        return None;
+    }
+
+    return intersections.into_iter().min_by(|a, b| {
+        let dist_a = (a.0 - p1.0).powi(2) + (a.1 - p1.1).powi(2);
+        let dist_b = (b.0 - p1.0).powi(2) + (b.1 - p1.1).powi(2);
+        dist_a.partial_cmp(&dist_b).unwrap()
+    });
 }
 
 fn get_segments_intersection(
