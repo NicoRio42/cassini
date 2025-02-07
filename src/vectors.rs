@@ -349,16 +349,18 @@ pub fn render_map_with_osm_vector_shapes(
         }
     }
 
-    let (coastlines_polygons, coastlines_edges) = get_polygon_with_holes_from_coastlines(
-        coastlines, islands, tile.min_x, tile.min_y, tile.max_x, tile.max_y,
-    );
+    if coastlines.len() != 0 || islands.len() != 0 {
+        let (coastlines_polygons, coastlines_edges) = get_polygon_with_holes_from_coastlines(
+            coastlines, islands, tile.min_x, tile.min_y, tile.max_x, tile.max_y,
+        );
 
-    for coastline_polygon in coastlines_polygons {
-        map_renderer = map_renderer.uncrossable_body_of_water_area_301_1(&coastline_polygon);
-    }
+        for coastline_polygon in coastlines_polygons {
+            map_renderer = map_renderer.uncrossable_body_of_water_area_301_1(&coastline_polygon);
+        }
 
-    for coastlines_edge in coastlines_edges {
-        map_renderer = map_renderer.uncrossable_body_of_water_bank_line_301_4(&coastlines_edge);
+        for coastlines_edge in coastlines_edges {
+            map_renderer = map_renderer.uncrossable_body_of_water_bank_line_301_4(&coastlines_edge);
+        }
     }
 
     map_renderer.save_as(tile.render_dir_path.join("full-map.png"));

@@ -30,7 +30,18 @@ pub fn get_polygon_with_holes_from_coastlines(
     }
 
     if coastlines.len() != 0 {
-        let merged_linestrings = merge_linestrings(coastlines);
+        let (merged_linestrings, closed_merged_linestrings) = merge_linestrings(coastlines);
+
+        for closed_merged_linestring in closed_merged_linestrings.clone() {
+            let mut points: Vec<Point> = Vec::new();
+
+            for (x, y) in closed_merged_linestring {
+                points.push(Point::new(x as f64, y as f64))
+            }
+
+            coastlines_edges.push(GenericPolyline::new(points.clone()));
+            island_rings.push(PolygonRing::Inner(points));
+        }
 
         for merged_linestring in merged_linestrings.clone() {
             let mut points: Vec<Point> = Vec::new();
@@ -43,7 +54,6 @@ pub fn get_polygon_with_holes_from_coastlines(
         }
 
         let merged_and_clipped_coastlines = clip_linestrings(merged_linestrings, min_x, min_y, max_x, max_y);
-
         let mut polygons: Vec<GenericPolygon<Point>> = Vec::new();
         let mut consumed_coastlines_indexes: Vec<usize> = Vec::new();
         let all_indexes: Vec<usize> = (0..merged_and_clipped_coastlines.len()).collect();
@@ -147,7 +157,7 @@ fn find_missing(first: &[usize], second: &[usize]) -> Option<usize> {
     second.iter().find(|&&x| !first.contains(&x)).copied()
 }
 
-fn merge_linestrings(mut linestrings: Vec<Vec<(f32, f32)>>) -> Vec<Vec<(f32, f32)>> {
+fn merge_linestrings(mut linestrings: Vec<Vec<(f32, f32)>>) -> (Vec<Vec<(f32, f32)>>, Vec<Vec<(f32, f32)>>) {
     loop {
         let len = linestrings.len();
         let mut merged = false;
@@ -174,7 +184,22 @@ fn merge_linestrings(mut linestrings: Vec<Vec<(f32, f32)>>) -> Vec<Vec<(f32, f32
         }
     }
 
-    linestrings
+    let mut merged_linestrings: Vec<Vec<(f32, f32)>> = Vec::new();
+    let mut closed_merged_linestrings: Vec<Vec<(f32, f32)>> = Vec::new();
+
+    for linestring in linestrings {
+        let first_point = linestring[0];
+        let last_point = linestring[linestring.len() - 1];
+        let is_closed_coastline = first_point.0 == last_point.0 && first_point.1 == last_point.1;
+
+        if is_closed_coastline {
+            closed_merged_linestrings.push(linestring);
+        } else {
+            merged_linestrings.push(linestring)
+        }
+    }
+
+    (merged_linestrings, closed_merged_linestrings)
 }
 
 fn try_to_merge_two_linestrings(
