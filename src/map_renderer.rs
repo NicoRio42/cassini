@@ -233,10 +233,10 @@ impl MapRenderer {
         for part in line.parts() {
             let points = self.get_points_from_line_part(part);
 
-            self.black_road_outlines_img.set_color(VECTOR_BLACK);
-            self.black_road_outlines_img
+            self.black_img.set_color(VECTOR_BLACK);
+            self.black_img
                 .set_line_width(ROAD_WIDTH * self.dpi_resolution * 10.0 / INCH);
-            self.black_road_outlines_img.draw_polyline(&points);
+            self.black_img.draw_polyline(&points);
         }
 
         return self;
