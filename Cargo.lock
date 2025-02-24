@@ -267,7 +267,7 @@ checksum = "8318a53db07bb3f8dca91a600466bdb3f2eaadeedfdbcf02e1accbad9271ba50"
 
 [[package]]
 name = "cassini"
-version = "0.12.5"
+version = "0.12.6"
 dependencies = [
  "clap",
  "env_logger",
