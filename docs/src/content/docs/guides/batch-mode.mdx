@@ -11,7 +11,7 @@ If you want to generate a map for a large area, you might need to process severa
 cassini batch
 ```
 
-You will need to put your <GlossaryLink slug="lidar" /> files in a directory named `in` at the root of the directory in which you are executing Cassini. The output tiles and the merged map will be put in a directory named `out`. You can specify the input and output directories with the `--input-dir` and the `--output-dir` arguments.
+You will need to put your <GlossaryLink slug="lidar" /> files in a directory named `in` at the root of the directory in which you are executing Cassini. The output tiles and the merged map will be put in a directory named `out`. You can specify the input and output directories with the `--input-dir` and the `--output-dir` arguments. The map default resolution is 600 <GlossaryLink slug="dpi" /> for a 1:10000 scale.
 
 If you are not happy with the result (too few cliffs, too much green...), you can modify the configuration and re-generate the map while skipping the <GlossaryLink slug="lidar" /> preprocessing step (which is the most time consuming part) with the `--skip-lidar` argument. Check the [configuration reference](/reference/configuration-reference/) to learn more about all the configuration options.
 
