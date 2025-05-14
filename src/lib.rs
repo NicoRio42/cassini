@@ -18,6 +18,7 @@ mod render;
 mod tile;
 mod vectors;
 mod vegetation;
+mod world_file;
 
 use batch::batch;
 use config::default_config;

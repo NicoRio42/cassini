@@ -2,9 +2,10 @@ use crate::canvas::Canvas;
 use crate::constants::INCH;
 use crate::contours::generate_contours_with_pullautin_algorithme;
 use crate::vectors::render_map_with_osm_vector_shapes;
+use crate::world_file::create_world_file;
 use crate::{
-    cliffs::render_cliffs, config::get_config, dem::create_dem_with_buffer_and_slopes_tiff,
-    tile::Tile, vegetation::render_vegetation,
+    cliffs::render_cliffs, config::get_config, dem::create_dem_with_buffer_and_slopes_tiff, tile::Tile,
+    vegetation::render_vegetation,
 };
 use log::info;
 use std::path::PathBuf;
@@ -58,6 +59,12 @@ pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
             skip_520,
         );
     }
+
+    let resolution = INCH / (config.dpi_resolution);
+    let world_file_path = tile.render_dir_path.join("full-map.pgw");
+
+    create_world_file(tile.min_x as f32, tile.max_y as f32, resolution, &world_file_path)
+        .expect("Could not create world file");
 
     let duration = start.elapsed();
 

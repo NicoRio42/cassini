@@ -1,7 +1,10 @@
 use log::{info, warn};
 use std::{path::Path, time::Instant};
 
-use crate::{canvas::Canvas, config::get_config, constants::INCH, tile::TileWithNeighbors};
+use crate::{
+    canvas::Canvas, config::get_config, constants::INCH, tile::TileWithNeighbors,
+    world_file::create_world_file,
+};
 
 pub fn merge_maps(output_dir: &str, tiles_with_neighbors: Vec<TileWithNeighbors>) {
     info!("Merging maps");
@@ -41,28 +44,22 @@ pub fn merge_maps(output_dir: &str, tiles_with_neighbors: Vec<TileWithNeighbors>
     let mut merge_image = Canvas::new(merge_image_width as i32, merge_image_height as i32);
 
     for tile in tiles_with_neighbors {
-        let mut map = Canvas::load_from(
-            tile.tile
-                .render_dir_path
-                .join("full-map.png")
-                .to_str()
-                .unwrap(),
-        );
+        let mut map = Canvas::load_from(tile.tile.render_dir_path.join("full-map.png").to_str().unwrap());
 
         merge_image.overlay(
             &mut map,
             ((tile.tile.min_x - min_x) as f32 * config.dpi_resolution / INCH).floor(),
-            (((max_y - min_y) - (tile.tile.max_y - min_y)) as f32 * config.dpi_resolution / INCH)
-                .floor(),
+            (((max_y - min_y) - (tile.tile.max_y - min_y)) as f32 * config.dpi_resolution / INCH).floor(),
         )
     }
 
-    merge_image.save_as(
-        Path::new(output_dir)
-            .join("merged-map.png")
-            .to_str()
-            .unwrap(),
-    );
+    merge_image.save_as(Path::new(output_dir).join("merged-map.png").to_str().unwrap());
+
+    let resolution = INCH / (config.dpi_resolution);
+    let world_file_path = Path::new(output_dir).join("merged-map.pgw");
+
+    create_world_file(min_x as f32, max_y as f32, resolution, &world_file_path)
+        .expect("Could not create world file");
 
     let duration = start.elapsed();
     info!("Map merged in {:.1?}", duration);
