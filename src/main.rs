@@ -1,6 +1,6 @@
 use cassini::{
-    batch_process_tiles, generate_default_config, process_single_tile,
-    process_single_tile_lidar_step, process_single_tile_render_step,
+    batch_process_tiles, generate_default_config, process_single_tile, process_single_tile_lidar_step,
+    process_single_tile_render_step,
 };
 use clap::{CommandFactory, Parser, Subcommand};
 use log::info;
@@ -62,9 +62,7 @@ pub enum Commands {
 
     /// Run only the map generation step for a single tile
     Render {
-        #[arg(
-            help = "The path to the directory containing the output of the LiDAR processing step"
-        )]
+        #[arg(help = "The path to the directory containing the output of the LiDAR processing step")]
         input_dir: String,
 
         #[arg(
@@ -253,6 +251,7 @@ fn main() {
                 let input_dir = maybe_input_dir.unwrap_or("in".to_owned());
                 let output_dir = maybe_output_dir.unwrap_or("out".to_owned());
                 let threads = maybe_threads.unwrap_or(3);
+
                 batch_process_tiles(
                     &input_dir,
                     &output_dir,

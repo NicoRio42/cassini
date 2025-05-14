@@ -1,5 +1,6 @@
 use crate::{
     buffer::create_tif_with_buffer,
+    canvas::Canvas,
     config::Config,
     constants::{BUFFER, GREEN_1, GREEN_2, GREEN_3, INCH, VEGETATION_BLOCK_SIZE, WHITE, YELLOW},
     tile::Tile,
@@ -29,6 +30,7 @@ pub fn render_vegetation(
 
     create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "high-vegetation");
     create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "medium-vegetation");
+    create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "low-vegetation");
 
     let high_vegetation =
         get_image_data_from_tif(&tile.render_dir_path.join("high-vegetation-with-buffer.tif"));
@@ -36,14 +38,37 @@ pub fn render_vegetation(
     let medium_vegetation =
         get_image_data_from_tif(&tile.render_dir_path.join("medium-vegetation-with-buffer.tif"));
 
+    let low_vegetation =
+        get_image_data_from_tif(&tile.render_dir_path.join("low-vegetation-with-buffer.tif"));
+
     let mut vegetation_layer_img = RgbaImage::from_pixel(image_width, image_height, WHITE);
+    let mut low_vegetation_canvas = Canvas::new(image_width as i32, image_height as i32);
+
+    let pixel_marsh_interval = (MARSH_LINE_WIDTH + MARSH_LINE_SPACING) * self.dpi_resolution * 10.0 / INCH;
+
+    let number_of_stripes = self.image_height / pixel_marsh_interval as u32;
+    self.striped_blue_img.set_transparent_color();
+
+    for i in 0..number_of_stripes {
+        let min_y = i as f32 * pixel_marsh_interval;
+
+        let max_y = i as f32 * pixel_marsh_interval + MARSH_LINE_SPACING * self.dpi_resolution * 10.0 / INCH;
+
+        self.striped_blue_img.draw_filled_polygon(&vec![
+            (0., min_y),
+            (self.image_width as f32, min_y),
+            (self.image_width as f32, max_y),
+            (0. as f32, max_y),
+            (0. as f32, min_y),
+        ])
+    }
 
     for x_index in BUFFER..((tile.max_x + BUFFER as i64 - tile.min_x) as usize) {
         for y_index in BUFFER..((tile.max_y + BUFFER as i64 - tile.min_y) as usize) {
             let x_pixel = ((x_index - BUFFER) as f32 * vegetation_block_size_pixel) as i32;
             let y_pixel = ((y_index - BUFFER) as f32 * vegetation_block_size_pixel) as i32;
 
-            let high_vegetation_density = get_average_pixel_value(&high_vegetation, x_index, y_index);
+            let high_vegetation_density: f64 = get_average_pixel_value(&high_vegetation, x_index, y_index);
 
             if high_vegetation_density < config.yellow_threshold {
                 draw_filled_rect_mut(
@@ -81,6 +106,8 @@ pub fn render_vegetation(
                 }
                 _ => (),
             }
+
+            let low_vegetation_density = get_average_pixel_value(&low_vegetation, x_index, y_index);
         }
     }
 

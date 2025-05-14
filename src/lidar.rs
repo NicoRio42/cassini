@@ -35,6 +35,7 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
 
     let dem_path = output_dir_path.join("dem.tif");
     let dem_low_resolution_path = output_dir_path.join("dem-low-resolution.tif");
+    let low_vegetation_path = output_dir_path.join("low-vegetation.tif");
     let medium_vegetation_path = output_dir_path.join("medium-vegetation.tif");
     let high_vegetation_path = output_dir_path.join("high-vegetation.tif");
     let pipeline_path = output_dir_path.join("pipeline.json");
@@ -93,13 +94,26 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
     }},
     {{
         "type": "filters.assign",
+        "value": "Classification = 3",
+        "where": "Classification != 2 && HeightAboveGround > 0 && HeightAboveGround <= 1"
+    }},
+    {{
+        "type": "filters.assign",
         "value": "Classification = 4",
-        "where": "Classification != 2 && HeightAboveGround > 0.3 && HeightAboveGround <= 4"
+        "where": "Classification != 2 && HeightAboveGround > 1 && HeightAboveGround <= 4"
     }},
     {{
         "type": "filters.assign",
         "value": "Classification = 5",
         "where": "Classification != 2 && HeightAboveGround > 4 && HeightAboveGround <= 30"
+    }},
+    {{
+        "type": "writers.gdal",
+        "filename": {:?},
+        "resolution": 1,
+        {}
+        "where": "Classification == 3",
+        "output_type": "count"
     }},
     {{
         "type": "writers.gdal",
@@ -124,6 +138,8 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
         dem_low_resolution_path,
         gdal_dem_low_resolution_options,
         dem_path,
+        low_vegetation_path,
+        gdal_common_options,
         medium_vegetation_path,
         gdal_common_options,
         high_vegetation_path,
