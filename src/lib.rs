@@ -10,7 +10,6 @@ mod dem;
 mod download;
 mod helpers;
 mod lidar;
-mod lidar_new;
 mod map_renderer;
 mod merge;
 mod pullautin_contours_render;
@@ -25,7 +24,7 @@ use batch::batch;
 use config::default_config;
 use download::download_osm_file_if_needed;
 use las::raw::Header;
-use lidar::generate_dem_and_vegetation_density_tiff_images_from_laz_file;
+use lidar::generate_dem_and_vegetation_density_rasters_from_laz_file;
 use render::generate_png_from_dem_vegetation_density_tiff_images_and_vector_file;
 use std::{
     fs::{create_dir_all, File},
@@ -35,15 +34,13 @@ use tile::Tile;
 
 pub use tile::get_extent_from_lidar_dir_path;
 
-use crate::config::Config;
-
 pub fn process_single_tile(
     file_path: &PathBuf,
     output_dir_path: &PathBuf,
     skip_vector: bool,
     skip_520: bool,
 ) {
-    generate_dem_and_vegetation_density_tiff_images_from_laz_file(
+    generate_dem_and_vegetation_density_rasters_from_laz_file(
         &file_path.to_path_buf(),
         &output_dir_path.to_path_buf(),
     );
@@ -68,11 +65,7 @@ pub fn process_single_tile(
 }
 
 pub fn process_single_tile_lidar_step(file_path: &PathBuf, output_dir_path: &PathBuf) {
-    generate_dem_and_vegetation_density_tiff_images_from_laz_file(&file_path, &output_dir_path);
-}
-
-pub fn new_process_single_tile_lidar_step(file_path: &PathBuf, output_dir_path: &PathBuf) {
-    lidar_new::generate_dem_and_vegetation_density_tiff_images_from_laz_file(&file_path, &output_dir_path);
+    generate_dem_and_vegetation_density_rasters_from_laz_file(&file_path, &output_dir_path);
 }
 
 pub fn process_single_tile_render_step(

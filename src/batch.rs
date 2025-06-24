@@ -1,6 +1,6 @@
 use crate::{
     download::download_osm_files_for_all_tiles_if_needed,
-    lidar::generate_dem_and_vegetation_density_tiff_images_from_laz_file,
+    lidar::generate_dem_and_vegetation_density_rasters_from_laz_file,
     merge::merge_maps,
     render::generate_png_from_dem_vegetation_density_tiff_images_and_vector_file,
     tile::{Tile, TileWithNeighbors},
@@ -29,10 +29,8 @@ pub fn batch(
     let chunk_size = (tiles.len() + number_of_threads - 1) / number_of_threads;
 
     if !skip_lidar {
-        let tiles_chunks: Vec<Vec<TileWithNeighbors>> = tiles_arc
-            .chunks(chunk_size)
-            .map(|chunk| chunk.to_vec())
-            .collect();
+        let tiles_chunks: Vec<Vec<TileWithNeighbors>> =
+            tiles_arc.chunks(chunk_size).map(|chunk| chunk.to_vec()).collect();
 
         let mut handles: Vec<JoinHandle<()>> = Vec::with_capacity(number_of_threads);
 
@@ -46,7 +44,7 @@ pub fn batch(
                         tile.tile.min_x, tile.tile.min_y, tile.tile.max_x, tile.tile.max_y
                     );
 
-                    generate_dem_and_vegetation_density_tiff_images_from_laz_file(
+                    generate_dem_and_vegetation_density_rasters_from_laz_file(
                         &tile.laz_path,
                         &tile.tile.lidar_dir_path,
                     );
@@ -67,10 +65,8 @@ pub fn batch(
         download_osm_files_for_all_tiles_if_needed(&tiles);
     }
 
-    let tiles_chunks: Vec<Vec<TileWithNeighbors>> = tiles_arc
-        .chunks(chunk_size)
-        .map(|chunk| chunk.to_vec())
-        .collect();
+    let tiles_chunks: Vec<Vec<TileWithNeighbors>> =
+        tiles_arc.chunks(chunk_size).map(|chunk| chunk.to_vec()).collect();
 
     let mut handles: Vec<JoinHandle<()>> = Vec::with_capacity(number_of_threads);
 
@@ -140,8 +136,7 @@ pub fn get_tiles_with_neighbors(input_dir: &str, output_dir: &str) -> Vec<TileWi
         let width = max_x - min_x;
         let height = max_y - min_y;
 
-        let dir_path =
-            Path::new(output_dir).join(format!("{}_{}_{}_{}", min_x, min_y, max_x, max_y));
+        let dir_path = Path::new(output_dir).join(format!("{}_{}_{}_{}", min_x, min_y, max_x, max_y));
 
         let tile = Tile {
             lidar_dir_path: dir_path.to_path_buf(),
@@ -153,14 +148,7 @@ pub fn get_tiles_with_neighbors(input_dir: &str, output_dir: &str) -> Vec<TileWi
         };
 
         let neighbors: Vec<PathBuf> = vec![
-            get_neighbor_tile_from_hash_map(
-                &tiles_map,
-                output_dir,
-                min_x,
-                max_y,
-                max_x,
-                max_y + height,
-            ),
+            get_neighbor_tile_from_hash_map(&tiles_map, output_dir, min_x, max_y, max_x, max_y + height),
             get_neighbor_tile_from_hash_map(
                 &tiles_map,
                 output_dir,
@@ -169,14 +157,7 @@ pub fn get_tiles_with_neighbors(input_dir: &str, output_dir: &str) -> Vec<TileWi
                 max_x + width,
                 max_y + height,
             ),
-            get_neighbor_tile_from_hash_map(
-                &tiles_map,
-                output_dir,
-                max_x,
-                min_y,
-                max_x + width,
-                max_y,
-            ),
+            get_neighbor_tile_from_hash_map(&tiles_map, output_dir, max_x, min_y, max_x + width, max_y),
             get_neighbor_tile_from_hash_map(
                 &tiles_map,
                 output_dir,
@@ -185,14 +166,7 @@ pub fn get_tiles_with_neighbors(input_dir: &str, output_dir: &str) -> Vec<TileWi
                 max_x + width,
                 min_y,
             ),
-            get_neighbor_tile_from_hash_map(
-                &tiles_map,
-                output_dir,
-                min_x,
-                min_y - height,
-                max_x,
-                min_y,
-            ),
+            get_neighbor_tile_from_hash_map(&tiles_map, output_dir, min_x, min_y - height, max_x, min_y),
             get_neighbor_tile_from_hash_map(
                 &tiles_map,
                 output_dir,
@@ -201,14 +175,7 @@ pub fn get_tiles_with_neighbors(input_dir: &str, output_dir: &str) -> Vec<TileWi
                 min_x,
                 min_y,
             ),
-            get_neighbor_tile_from_hash_map(
-                &tiles_map,
-                output_dir,
-                min_x - width,
-                min_y,
-                min_x,
-                max_y,
-            ),
+            get_neighbor_tile_from_hash_map(&tiles_map, output_dir, min_x - width, min_y, min_x, max_y),
             get_neighbor_tile_from_hash_map(
                 &tiles_map,
                 output_dir,
@@ -241,9 +208,7 @@ fn get_neighbor_tile_from_hash_map(
     max_y: i64,
 ) -> Option<PathBuf> {
     return match tiles_map.get(&(min_x, min_y, max_x, max_y)) {
-        Some(_) => {
-            Some(Path::new(output_dir).join(format!("{}_{}_{}_{}", min_x, min_y, max_x, max_y)))
-        }
+        Some(_) => Some(Path::new(output_dir).join(format!("{}_{}_{}_{}", min_x, min_y, max_x, max_y))),
         None => None,
     };
 }

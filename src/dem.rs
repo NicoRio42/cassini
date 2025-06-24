@@ -1,4 +1,4 @@
-use crate::{buffer::create_tif_with_buffer, constants::BUFFER, tile::Tile};
+use crate::{buffer::create_raster_with_buffer, constants::BUFFER, tile::Tile};
 use log::{error, info};
 use std::{
     fs::create_dir_all,
@@ -7,7 +7,7 @@ use std::{
     time::Instant,
 };
 
-pub fn create_dem_with_buffer_and_slopes_tiff(tile: &Tile, neighbor_tiles: &Vec<PathBuf>) {
+pub fn create_dem_with_buffer_and_slopes_raster(tile: &Tile, neighbor_tiles: &Vec<PathBuf>) {
     info!(
         "Tile min_x={} min_y={} max_x={} max_y={}. Generating dem with buffer",
         tile.min_x, tile.min_y, tile.max_x, tile.max_y
@@ -16,7 +16,7 @@ pub fn create_dem_with_buffer_and_slopes_tiff(tile: &Tile, neighbor_tiles: &Vec<
     let start = Instant::now();
 
     let dem_with_buffer_path = tile.render_dir_path.join("dem-with-buffer.tif");
-    create_tif_with_buffer(tile, &neighbor_tiles, BUFFER as i64, "dem");
+    create_raster_with_buffer(tile, &neighbor_tiles, BUFFER as i64, "dem");
 
     // Filling holes
     let gdal_fillnodata_output = Command::new("gdal_fillnodata")
@@ -36,11 +36,9 @@ pub fn create_dem_with_buffer_and_slopes_tiff(tile: &Tile, neighbor_tiles: &Vec<
         );
     }
 
-    let dem_low_resolution_with_buffer_path = tile
-        .render_dir_path
-        .join("dem-low-resolution-with-buffer.tif");
+    let dem_low_resolution_with_buffer_path = tile.render_dir_path.join("dem-low-resolution-with-buffer.tif");
 
-    create_tif_with_buffer(tile, &neighbor_tiles, BUFFER as i64, "dem-low-resolution");
+    create_raster_with_buffer(tile, &neighbor_tiles, BUFFER as i64, "dem-low-resolution");
 
     // Filling holes
     let gdal_fillnodata_output = Command::new("gdal_fillnodata")

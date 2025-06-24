@@ -1,5 +1,5 @@
 use crate::{
-    buffer::create_tif_with_buffer,
+    buffer::create_raster_with_buffer,
     config::Config,
     constants::{BUFFER, GREEN_1, GREEN_2, GREEN_3, INCH, VEGETATION_BLOCK_SIZE, WHITE, YELLOW},
     tile::Tile,
@@ -27,8 +27,8 @@ pub fn render_vegetation(
     let vegetation_block_size_pixel = VEGETATION_BLOCK_SIZE as f32 * config.dpi_resolution / INCH;
     let casted_vegetation_block_size_pixel = vegetation_block_size_pixel.ceil() as u32;
 
-    create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "high-vegetation");
-    create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "medium-vegetation");
+    create_raster_with_buffer(tile, neighbor_tiles, BUFFER as i64, "high-vegetation");
+    create_raster_with_buffer(tile, neighbor_tiles, BUFFER as i64, "medium-vegetation");
 
     let high_vegetation =
         get_image_data_from_tif(&tile.render_dir_path.join("high-vegetation-with-buffer.tif"));

@@ -1,6 +1,6 @@
 use cassini::{
-    batch_process_tiles, generate_default_config, new_process_single_tile_lidar_step, process_single_tile,
-    process_single_tile_lidar_step, process_single_tile_render_step,
+    batch_process_tiles, generate_default_config, process_single_tile, process_single_tile_lidar_step,
+    process_single_tile_render_step,
 };
 use clap::{CommandFactory, Parser, Subcommand};
 use log::info;
@@ -193,7 +193,7 @@ fn main() {
                 let output_dir = maybe_output_dir.unwrap_or("lidar".to_owned());
                 let laz_path = Path::new(&file_path).to_path_buf();
                 let dir_path = Path::new(&output_dir).to_path_buf();
-                new_process_single_tile_lidar_step(&laz_path, &dir_path);
+                process_single_tile_lidar_step(&laz_path, &dir_path);
 
                 let duration = start.elapsed();
                 info!("LiDAR file processed in {:.1?}", duration);

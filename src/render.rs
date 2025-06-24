@@ -4,7 +4,7 @@ use crate::contours::generate_contours_with_pullautin_algorithme;
 use crate::vectors::render_map_with_osm_vector_shapes;
 use crate::world_file::create_world_file;
 use crate::{
-    cliffs::render_cliffs, config::get_config, dem::create_dem_with_buffer_and_slopes_tiff, tile::Tile,
+    cliffs::render_cliffs, config::get_config, dem::create_dem_with_buffer_and_slopes_raster, tile::Tile,
     vegetation::render_vegetation,
 };
 use log::info;
@@ -22,7 +22,7 @@ pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
     let image_height = ((tile.max_y - tile.min_y) as f32 * config.dpi_resolution / INCH) as u32;
 
     render_vegetation(&tile, &neighbor_tiles, image_width, image_height, &config);
-    create_dem_with_buffer_and_slopes_tiff(&tile, &neighbor_tiles);
+    create_dem_with_buffer_and_slopes_raster(&tile, &neighbor_tiles);
     generate_contours_with_pullautin_algorithme(&tile, image_width, image_height, &config);
     render_cliffs(&tile, image_width, image_height, &config);
 
