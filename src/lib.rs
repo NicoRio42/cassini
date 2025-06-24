@@ -10,6 +10,7 @@ mod dem;
 mod download;
 mod helpers;
 mod lidar;
+mod lidar_new;
 mod map_renderer;
 mod merge;
 mod pullautin_contours_render;
@@ -33,6 +34,8 @@ use std::{
 use tile::Tile;
 
 pub use tile::get_extent_from_lidar_dir_path;
+
+use crate::config::Config;
 
 pub fn process_single_tile(
     file_path: &PathBuf,
@@ -66,6 +69,10 @@ pub fn process_single_tile(
 
 pub fn process_single_tile_lidar_step(file_path: &PathBuf, output_dir_path: &PathBuf) {
     generate_dem_and_vegetation_density_tiff_images_from_laz_file(&file_path, &output_dir_path);
+}
+
+pub fn new_process_single_tile_lidar_step(file_path: &PathBuf, output_dir_path: &PathBuf) {
+    lidar_new::generate_dem_and_vegetation_density_tiff_images_from_laz_file(&file_path, &output_dir_path);
 }
 
 pub fn process_single_tile_render_step(

@@ -1,5 +1,5 @@
 use cassini::{
-    batch_process_tiles, generate_default_config, process_single_tile,
+    batch_process_tiles, generate_default_config, new_process_single_tile_lidar_step, process_single_tile,
     process_single_tile_lidar_step, process_single_tile_render_step,
 };
 use clap::{CommandFactory, Parser, Subcommand};
@@ -62,9 +62,7 @@ pub enum Commands {
 
     /// Run only the map generation step for a single tile
     Render {
-        #[arg(
-            help = "The path to the directory containing the output of the LiDAR processing step"
-        )]
+        #[arg(help = "The path to the directory containing the output of the LiDAR processing step")]
         input_dir: String,
 
         #[arg(
@@ -195,7 +193,7 @@ fn main() {
                 let output_dir = maybe_output_dir.unwrap_or("lidar".to_owned());
                 let laz_path = Path::new(&file_path).to_path_buf();
                 let dir_path = Path::new(&output_dir).to_path_buf();
-                process_single_tile_lidar_step(&laz_path, &dir_path);
+                new_process_single_tile_lidar_step(&laz_path, &dir_path);
 
                 let duration = start.elapsed();
                 info!("LiDAR file processed in {:.1?}", duration);

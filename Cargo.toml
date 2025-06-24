@@ -17,7 +17,7 @@ serde_json = "1.0.117"
 shapefile = "0.6.0"
 skia-safe = "0.75.0"
 tiff = "0.9.1"
-las = { version = "0.8", features = ["laz"] }
+las = { version = "0.9.5", features = ["laz"] }
 reqwest = { version = "=0.10.10", features = [
     "native-tls-vendored",
     "blocking",
