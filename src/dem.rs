@@ -31,7 +31,7 @@ pub fn create_dem_with_buffer_and_slopes_raster(tile: &Tile, neighbor_tiles: &Ve
 
     let elevation_matrix = image_to_elevation_matrix(dem_with_buffer_image);
 
-    let filled_elevation_matrix = fill_nodata(&elevation_matrix, 10, 3);
+    let filled_elevation_matrix = fill_nodata(&elevation_matrix);
 
     let mut terrain_rgb_img = ImageBuffer::<Rgba<u8>, Vec<u8>>::new(1400, 1400);
 
@@ -179,7 +179,12 @@ fn image_to_elevation_matrix(image: RgbaImage) -> Vec<Vec<f32>> {
         let mut row = Vec::with_capacity(width as usize);
         for x in 0..width {
             let pixel = image.get_pixel(x, y).0; // [u8; 4]
-            let elevation = decode_rgba_to_elevation(pixel);
+            let mut elevation = decode_rgba_to_elevation(pixel);
+
+            if elevation == f32::MAX {
+                elevation = f32::NAN;
+            }
+
             row.push(elevation);
         }
         elevation_matrix.push(row);
