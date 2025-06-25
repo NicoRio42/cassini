@@ -181,10 +181,6 @@ fn image_to_elevation_matrix(image: RgbaImage) -> Vec<Vec<f32>> {
             let pixel = image.get_pixel(x, y).0; // [u8; 4]
             let mut elevation = decode_rgba_to_elevation(pixel);
 
-            if elevation == f32::MAX {
-                elevation = f32::NAN;
-            }
-
             row.push(elevation);
         }
         elevation_matrix.push(row);

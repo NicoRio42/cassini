@@ -38,8 +38,8 @@ pub fn generate_dem_and_vegetation_density_rasters_from_laz_file(
     let mut reader =
         Reader::new(BufReader::with_capacity(1024 * 1024, file)).expect("Could not create reader");
 
-    let mut elevation_matrix: Vec<f32> = vec![f32::MAX; width * height];
-    let mut count_height_matrix: Vec<i32> = vec![0; width * height];
+    let mut elevation_matrix: Vec<f32> = vec![f32::NAN; width * height];
+    let mut elevation_count_matrix: Vec<i32> = vec![0; width * height];
 
     let mut vegetation_set: HashSet<(i32, i32, i32)> = HashSet::new();
     let mut low_vegetation_matrix: Vec<u8> = vec![0; width * height];
@@ -59,8 +59,15 @@ pub fn generate_dem_and_vegetation_density_rasters_from_laz_file(
 
         match pt.classification {
             Ground => {
-                elevation_matrix[idx_y * 1000 + idx_x] += pt.z as f32;
-                count_height_matrix[idx_y * 1000 + idx_x] += 1;
+                let previous_elevation_value = elevation_matrix[idx_y * 1000 + idx_x];
+
+                if previous_elevation_value.is_nan() {
+                    elevation_matrix[idx_y * 1000 + idx_x] = pt.z as f32
+                } else {
+                    elevation_matrix[idx_y * 1000 + idx_x] += pt.z as f32;
+                }
+
+                elevation_count_matrix[idx_y * 1000 + idx_x] += 1;
             }
             LowVegetation | MediumVegetation | HighVegetation => {
                 let cell_idx_x = ((pt.x - min_x as f64) * 2.).floor() as i32;
@@ -74,13 +81,13 @@ pub fn generate_dem_and_vegetation_density_rasters_from_laz_file(
     }
 
     for index in 0..elevation_matrix.len() {
-        let divider = count_height_matrix[index];
+        let divider = elevation_count_matrix[index];
 
         if divider == 0 {
             continue;
         }
 
-        elevation_matrix[index] = elevation_matrix[index] / count_height_matrix[index] as f32;
+        elevation_matrix[index] = elevation_matrix[index] / divider as f32;
     }
 
     for (x, y, z) in vegetation_set {
