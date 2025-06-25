@@ -11,7 +11,7 @@ use log::info;
 use std::path::PathBuf;
 use std::time::Instant;
 
-pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
+pub fn generate_png_from_dem_vegetation_density_rasters_and_vector_file(
     tile: Tile,
     neighbor_tiles: Vec<PathBuf>,
     skip_vector: bool,

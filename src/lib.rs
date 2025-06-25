@@ -15,6 +15,7 @@ mod merge;
 mod pullautin_contours_render;
 mod pullautin_smooth_contours;
 mod render;
+mod terrain_rgba;
 mod tile;
 mod vectors;
 mod vegetation;
@@ -25,7 +26,7 @@ use config::default_config;
 use download::download_osm_file_if_needed;
 use las::raw::Header;
 use lidar::generate_dem_and_vegetation_density_rasters_from_laz_file;
-use render::generate_png_from_dem_vegetation_density_tiff_images_and_vector_file;
+use render::generate_png_from_dem_vegetation_density_rasters_and_vector_file;
 use std::{
     fs::{create_dir_all, File},
     path::PathBuf,
@@ -61,7 +62,7 @@ pub fn process_single_tile(
         download_osm_file_if_needed(tile.min_x, tile.min_y, tile.max_x, tile.max_y);
     }
 
-    generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(tile, vec![], skip_vector, skip_520);
+    generate_png_from_dem_vegetation_density_rasters_and_vector_file(tile, vec![], skip_vector, skip_520);
 }
 
 pub fn process_single_tile_lidar_step(file_path: &PathBuf, output_dir_path: &PathBuf) {
@@ -92,7 +93,7 @@ pub fn process_single_tile_render_step(
         download_osm_file_if_needed(tile.min_x, tile.min_y, tile.max_x, tile.max_y);
     }
 
-    generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
+    generate_png_from_dem_vegetation_density_rasters_and_vector_file(
         tile,
         neighbor_tiles,
         skip_vector,

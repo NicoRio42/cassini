@@ -2,7 +2,7 @@ use crate::{
     download::download_osm_files_for_all_tiles_if_needed,
     lidar::generate_dem_and_vegetation_density_rasters_from_laz_file,
     merge::merge_maps,
-    render::generate_png_from_dem_vegetation_density_tiff_images_and_vector_file,
+    render::generate_png_from_dem_vegetation_density_rasters_and_vector_file,
     tile::{Tile, TileWithNeighbors},
 };
 use las::raw::Header;
@@ -80,7 +80,7 @@ pub fn batch(
                     tile.tile.min_x, tile.tile.min_y, tile.tile.max_x, tile.tile.max_y
                 );
 
-                generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
+                generate_png_from_dem_vegetation_density_rasters_and_vector_file(
                     tile.tile.clone(),
                     tile.neighbors.clone(),
                     skip_vector,

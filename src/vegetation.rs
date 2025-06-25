@@ -27,14 +27,10 @@ pub fn render_vegetation(
     let vegetation_block_size_pixel = VEGETATION_BLOCK_SIZE as f32 * config.dpi_resolution / INCH;
     let casted_vegetation_block_size_pixel = vegetation_block_size_pixel.ceil() as u32;
 
-    create_raster_with_buffer(tile, neighbor_tiles, BUFFER as i64, "high-vegetation");
-    create_raster_with_buffer(tile, neighbor_tiles, BUFFER as i64, "medium-vegetation");
+    create_raster_with_buffer(tile, neighbor_tiles, BUFFER as u32, "raw_vegetation");
 
-    let high_vegetation =
-        get_image_data_from_tif(&tile.render_dir_path.join("high-vegetation-with-buffer.tif"));
-
-    let medium_vegetation =
-        get_image_data_from_tif(&tile.render_dir_path.join("medium-vegetation-with-buffer.tif"));
+    let (_low_vegetation, medium_vegetation, high_vegetation) =
+        get_vegetation_densities_from_raster(&tile.render_dir_path.join("raw_vegetation-with-buffer.png"));
 
     let mut vegetation_layer_img = RgbaImage::from_pixel(image_width, image_height, WHITE);
 
@@ -188,7 +184,7 @@ fn get_average_pixel_value(tif_image: &TifImage, x_index: usize, y_index: usize)
             }
 
             count += coef;
-            sum += tif_image.pixels[y * width + x] * coef;
+            sum += tif_image.pixels[y * width + x] as f64 * coef;
         }
     }
 
@@ -196,24 +192,43 @@ fn get_average_pixel_value(tif_image: &TifImage, x_index: usize, y_index: usize)
 }
 
 struct TifImage {
-    pixels: Vec<f64>,
+    pixels: Vec<u8>,
     width: u32,
     height: u32,
 }
 
-fn get_image_data_from_tif(path: &PathBuf) -> TifImage {
-    let tif_file = File::open(path).expect("Cannot find high vegetation tif image!");
-    let mut img_decoder = Decoder::new(tif_file).expect("Cannot create decoder");
-    img_decoder = img_decoder.with_limits(tiff::decoder::Limits::unlimited());
-    let (width, height) = img_decoder.dimensions().unwrap();
+fn get_vegetation_densities_from_raster(path: &PathBuf) -> (TifImage, TifImage, TifImage) {
+    let rgb_img = image::open(path).expect("Failed to open image").to_rgb8();
 
-    let DecodingResult::F64(image_data) = img_decoder.read_image().unwrap() else {
-        panic!("Cannot read band data")
-    };
+    // Prepare vectors for each channel
+    let mut red_channel = Vec::new();
+    let mut green_channel = Vec::new();
+    let mut blue_channel = Vec::new();
 
-    return TifImage {
-        pixels: image_data,
-        width,
-        height,
-    };
+    // Iterate over the pixels
+    for pixel in rgb_img.pixels() {
+        red_channel.push(pixel[0]);
+        green_channel.push(pixel[1]);
+        blue_channel.push(pixel[2]);
+    }
+
+    let (width, height) = rgb_img.dimensions();
+
+    return (
+        TifImage {
+            pixels: red_channel,
+            width,
+            height,
+        },
+        TifImage {
+            pixels: green_channel,
+            width,
+            height,
+        },
+        TifImage {
+            pixels: blue_channel,
+            width,
+            height,
+        },
+    );
 }

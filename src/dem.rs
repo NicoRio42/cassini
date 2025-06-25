@@ -16,7 +16,7 @@ pub fn create_dem_with_buffer_and_slopes_raster(tile: &Tile, neighbor_tiles: &Ve
     let start = Instant::now();
 
     let dem_with_buffer_path = tile.render_dir_path.join("dem-with-buffer.tif");
-    create_raster_with_buffer(tile, &neighbor_tiles, BUFFER as i64, "dem");
+    create_raster_with_buffer(tile, &neighbor_tiles, BUFFER as u32, "dem");
 
     // Filling holes
     let gdal_fillnodata_output = Command::new("gdal_fillnodata")
@@ -38,7 +38,7 @@ pub fn create_dem_with_buffer_and_slopes_raster(tile: &Tile, neighbor_tiles: &Ve
 
     let dem_low_resolution_with_buffer_path = tile.render_dir_path.join("dem-low-resolution-with-buffer.tif");
 
-    create_raster_with_buffer(tile, &neighbor_tiles, BUFFER as i64, "dem-low-resolution");
+    create_raster_with_buffer(tile, &neighbor_tiles, BUFFER as u32, "dem-low-resolution");
 
     // Filling holes
     let gdal_fillnodata_output = Command::new("gdal_fillnodata")

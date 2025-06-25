@@ -14,7 +14,7 @@ use std::{
     fs::{create_dir_all, File},
 };
 
-use crate::helpers::remove_dir_content;
+use crate::{constants::DEM_BLOCK_SIZE, helpers::remove_dir_content, terrain_rgba::encode_elevation_to_rgba};
 
 pub fn generate_dem_and_vegetation_density_rasters_from_laz_file(
     laz_path: &PathBuf,
@@ -26,23 +26,25 @@ pub fn generate_dem_and_vegetation_density_rasters_from_laz_file(
 
     let header = Header::read_from(&mut file).unwrap();
 
-    let min_x = header.min_x.round() as i64;
-    let min_y = header.min_y.round() as i64;
-    let max_x = header.max_x.round() as i64;
-    let max_y = header.max_y.round() as i64;
+    let min_x = header.min_x.round() as usize;
+    let min_y = header.min_y.round() as usize;
+    let max_x = header.max_x.round() as usize;
+    let max_y = header.max_y.round() as usize;
+    let width = (max_x - min_x) * DEM_BLOCK_SIZE as usize;
+    let height = (max_y - min_y) * DEM_BLOCK_SIZE as usize;
 
     file.seek(std::io::SeekFrom::Start(0)).unwrap();
 
     let mut reader =
         Reader::new(BufReader::with_capacity(1024 * 1024, file)).expect("Could not create reader");
 
-    let mut elevation_matrix: Vec<f64> = vec![0.0; 1000 * 1000];
-    let mut count_height_matrix: Vec<i32> = vec![0; 1000 * 1000];
+    let mut elevation_matrix: Vec<f64> = vec![0.0; width * height];
+    let mut count_height_matrix: Vec<i32> = vec![0; width * height];
 
     let mut vegetation_set: HashSet<(i32, i32, i32)> = HashSet::new();
-    let mut low_vegetation_matrix: Vec<u8> = vec![0; 1000 * 1000];
-    let mut medium_vegetation_matrix: Vec<u8> = vec![0; 1000 * 1000];
-    let mut high_vegetation_matrix: Vec<u8> = vec![0; 1000 * 1000];
+    let mut low_vegetation_matrix: Vec<u8> = vec![0; width * height];
+    let mut medium_vegetation_matrix: Vec<u8> = vec![0; width * height];
+    let mut high_vegetation_matrix: Vec<u8> = vec![0; width * height];
 
     for ptu in reader.points() {
         let pt = ptu.unwrap();
@@ -141,7 +143,7 @@ pub fn generate_dem_and_vegetation_density_rasters_from_laz_file(
         );
     }
 
-    let vegetation_image_path = output_dir_path.join("vegetation.png");
+    let vegetation_image_path = output_dir_path.join("raw_vegetation.png");
     vegetation_img.save(vegetation_image_path).unwrap();
 
     // The existence of the extent.txt file is used as a proof of right execution of lidar pipeline by mapant-fr-worker
@@ -159,31 +161,4 @@ pub fn generate_dem_and_vegetation_density_rasters_from_laz_file(
         "Tile min_x={} min_y={} max_x={} max_y={}. PDAL pipeline executed in {:.1?}",
         min_x, min_y, max_x, max_y, duration
     );
-}
-
-fn encode_elevation_to_rgba(elevation: f32) -> [u8; 4] {
-    // Clamp elevation to avoid negatives beyond -10000
-    // and add offset to ensure positive values
-    let offset = 10000.0;
-    let scale = 1000.0; // millimeter precision
-
-    // Encode elevation: shift to positive, scale, round
-    let encoded = ((elevation.max(-offset) + offset) * scale).round() as u32;
-
-    let r = ((encoded >> 24) & 0xFF) as u8;
-    let g = ((encoded >> 16) & 0xFF) as u8;
-    let b = ((encoded >> 8) & 0xFF) as u8;
-    let a = (encoded & 0xFF) as u8;
-
-    [r, g, b, a]
-}
-
-fn decode_rgba_to_elevation(rgba: [u8; 4]) -> f32 {
-    let offset = 10000.0;
-    let scale = 1000.0;
-
-    let encoded =
-        ((rgba[0] as u32) << 24) | ((rgba[1] as u32) << 16) | ((rgba[2] as u32) << 8) | (rgba[3] as u32);
-
-    (encoded as f32) / scale - offset
 }

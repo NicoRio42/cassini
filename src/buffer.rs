@@ -1,90 +1,73 @@
-use log::error;
-
-use crate::tile::Tile;
-use std::{
-    path::PathBuf,
-    process::{Command, ExitStatus},
-};
+use crate::{get_extent_from_lidar_dir_path, tile::Tile};
+use image::{ImageBuffer, RgbaImage};
+use std::path::PathBuf;
 
 pub fn create_raster_with_buffer(
     tile: &Tile,
     neighbor_tiles: &Vec<PathBuf>,
-    buffer: i64,
-    tif_filename_without_extension: &str,
+    buffer_in_pixels: u32,
+    raster_filename_without_extension: &str,
 ) {
-    let vrt_with_buffer_path = tile
-        .render_dir_path
-        .join(format!("{}-with-buffer.vrt", tif_filename_without_extension));
+    let tile_raster_path = tile
+        .lidar_dir_path
+        .join(format!("{}.png", raster_filename_without_extension));
+
+    let tile_raster_file = image::open(tile_raster_path)
+        .expect("Failed to open image")
+        .to_rgba8();
+
+    let (tile_raster_width, tile_raster_height) = tile_raster_file.dimensions();
+    let output_width = tile_raster_width + buffer_in_pixels * 2;
+    let output_height = tile_raster_height + buffer_in_pixels * 2;
+    let mut output: RgbaImage = ImageBuffer::new(output_width, output_height);
+
+    image::imageops::overlay(
+        &mut output,
+        &tile_raster_file,
+        buffer_in_pixels as i64,
+        buffer_in_pixels as i64,
+    );
+
+    for neighbor_tile in neighbor_tiles {
+        let neighbor_tile_raster_path =
+            neighbor_tile.join(format!("{}.png", raster_filename_without_extension));
+
+        let (min_x, min_y, _, _) = get_extent_from_lidar_dir_path(&neighbor_tile);
+
+        let neighbor_tile_raster_file = image::open(neighbor_tile_raster_path)
+            .expect("Failed to open neighbor tile")
+            .to_rgba8();
+
+        let (neighbor_width, neighbor_height) = tile_raster_file.dimensions();
+
+        let x_sign = min_x - tile.min_x;
+        let mut x_offset = buffer_in_pixels as i64;
+
+        if x_sign < 0 {
+            x_offset = -(neighbor_width as i64) + buffer_in_pixels as i64
+        } else if x_sign > 0 {
+            x_offset = (tile_raster_width + buffer_in_pixels) as i64
+        }
+
+        let y_sign = min_y - tile.min_y;
+        let mut y_offset = buffer_in_pixels as i64;
+
+        if y_sign < 0 {
+            y_offset = (tile_raster_height + buffer_in_pixels) as i64;
+        } else if y_sign > 0 {
+            y_offset = -(neighbor_height as i64) + buffer_in_pixels as i64;
+        }
+
+        println!("{} {}", x_offset, y_offset);
+
+        image::imageops::overlay(&mut output, &neighbor_tile_raster_file, x_offset, y_offset);
+    }
 
     let raster_with_buffer_path = tile
         .render_dir_path
-        .join(format!("{}-with-buffer.tif", tif_filename_without_extension));
+        .join(format!("{}-with-buffer.png", raster_filename_without_extension));
 
-    let tile_raster_path = tile
-        .lidar_dir_path
-        .join(format!("{}.tif", tif_filename_without_extension));
-
-    let mut rasters_paths: Vec<String> = vec![tile_raster_path
-        .to_str()
-        .expect("Failed to convert path to string")
-        .to_string()];
-
-    for neighbor_tile in neighbor_tiles {
-        let path = neighbor_tile.join(format!("{}.tif", tif_filename_without_extension));
-
-        if let Some(path_str) = path.to_str() {
-            rasters_paths.push(path_str.to_string());
-        } else {
-            error!(
-                "Tile min_x={} min_y={} max_x={} max_y={}. Failed to convert path to string for {:?}",
-                tile.min_x, tile.min_y, tile.max_x, tile.max_y, neighbor_tile
-            );
-        }
-    }
-
-    // First creating a GDAL Virtual Dataset
-    let gdalbuildvrt_output = Command::new("gdalbuildvrt")
-        .arg(&vrt_with_buffer_path.to_str().unwrap())
-        .args(&rasters_paths)
-        .arg("--quiet")
-        .output()
-        .expect("failed to execute gdalbuildvrt command");
-
-    if !ExitStatus::success(&gdalbuildvrt_output.status) {
-        error!(
-            "Tile min_x={} min_y={} max_x={} max_y={}. Gdalbuildvrt command failed {:?}",
-            tile.min_x,
-            tile.min_y,
-            tile.max_x,
-            tile.max_y,
-            String::from_utf8(gdalbuildvrt_output.stderr).unwrap()
-        );
-    }
-
-    // Then outpouting croped tif with buffer
-    let gdal_translate_output = Command::new("gdal_translate")
-        .args([
-            "-projwin",
-            &(tile.min_x - buffer).to_string(),
-            &(tile.max_y + buffer).to_string(),
-            &(tile.max_x + buffer).to_string(),
-            &(tile.min_y - buffer).to_string(),
-        ])
-        .args(["-of", "GTiff"])
-        .arg(&vrt_with_buffer_path.to_str().unwrap())
-        .arg(&raster_with_buffer_path.to_str().unwrap())
-        .arg("--quiet")
-        .output()
-        .expect("failed to execute gdal_translate command");
-
-    if !ExitStatus::success(&gdal_translate_output.status) {
-        error!(
-            "Tile min_x={} min_y={} max_x={} max_y={}. Gdal_translate command failed {:?}",
-            tile.min_x,
-            tile.min_y,
-            tile.max_x,
-            tile.max_y,
-            String::from_utf8(gdal_translate_output.stderr).unwrap()
-        );
-    }
+    output
+        .save(raster_with_buffer_path)
+        .expect("Failed to save image");
 }
