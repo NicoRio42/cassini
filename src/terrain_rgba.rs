@@ -8,7 +8,7 @@ pub fn encode_elevation_to_rgba(elevation: f32) -> [u8; 4] {
     ]
 }
 
-pub fn _decode_rgba_to_elevation(rgba: [u8; 4]) -> f32 {
+pub fn decode_rgba_to_elevation(rgba: [u8; 4]) -> f32 {
     let bits =
         ((rgba[0] as u32) << 24) | ((rgba[1] as u32) << 16) | ((rgba[2] as u32) << 8) | (rgba[3] as u32);
     f32::from_bits(bits)

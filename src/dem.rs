@@ -1,4 +1,11 @@
-use crate::{buffer::create_raster_with_buffer, constants::BUFFER, tile::Tile};
+use crate::{
+    buffer::create_raster_with_buffer,
+    constants::BUFFER,
+    fillnodata::fill_nodata,
+    terrain_rgba::{decode_rgba_to_elevation, encode_elevation_to_rgba},
+    tile::Tile,
+};
+use image::{ImageBuffer, Rgba, RgbaImage};
 use log::{error, info};
 use std::{
     fs::create_dir_all,
@@ -15,8 +22,29 @@ pub fn create_dem_with_buffer_and_slopes_raster(tile: &Tile, neighbor_tiles: &Ve
 
     let start = Instant::now();
 
-    let dem_with_buffer_path = tile.render_dir_path.join("dem-with-buffer.png");
     create_raster_with_buffer(tile, &neighbor_tiles, BUFFER as u32, "dem");
+    let dem_with_buffer_path = tile.render_dir_path.join("dem-with-buffer.png");
+
+    let dem_with_buffer_image = image::open(&dem_with_buffer_path)
+        .expect("Failed to open image")
+        .to_rgba8();
+
+    let elevation_matrix = image_to_elevation_matrix(dem_with_buffer_image);
+
+    let filled_elevation_matrix = fill_nodata(&elevation_matrix, 10, 3);
+
+    let mut terrain_rgb_img = ImageBuffer::<Rgba<u8>, Vec<u8>>::new(1400, 1400);
+
+    for (y, row) in filled_elevation_matrix.iter().enumerate() {
+        for (x, elevation) in row.iter().enumerate() {
+            let rgba = encode_elevation_to_rgba(*elevation);
+            terrain_rgb_img.put_pixel(x as u32, y as u32, Rgba(rgba));
+        }
+    }
+
+    terrain_rgb_img
+        .save(tile.render_dir_path.join("filled-dem-with-buffer.png"))
+        .unwrap();
 
     // Filling holes
     let gdal_fillnodata_output = Command::new("gdal_fillnodata")
@@ -37,7 +65,6 @@ pub fn create_dem_with_buffer_and_slopes_raster(tile: &Tile, neighbor_tiles: &Ve
     }
 
     let dem_low_resolution_with_buffer_path = tile.render_dir_path.join("dem-low-resolution-with-buffer.tif");
-
     create_raster_with_buffer(tile, &neighbor_tiles, BUFFER as u32, "dem-low-resolution");
 
     // Filling holes
@@ -141,4 +168,22 @@ pub fn create_dem_with_buffer_and_slopes_raster(tile: &Tile, neighbor_tiles: &Ve
         "Tile min_x={} min_y={} max_x={} max_y={}. Slopes tif image generated in {:.1?}",
         tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
     );
+}
+
+fn image_to_elevation_matrix(image: RgbaImage) -> Vec<Vec<f32>> {
+    let (width, height) = image.dimensions();
+
+    let mut elevation_matrix = Vec::with_capacity(height as usize);
+
+    for y in 0..height {
+        let mut row = Vec::with_capacity(width as usize);
+        for x in 0..width {
+            let pixel = image.get_pixel(x, y).0; // [u8; 4]
+            let elevation = decode_rgba_to_elevation(pixel);
+            row.push(elevation);
+        }
+        elevation_matrix.push(row);
+    }
+
+    elevation_matrix
 }
