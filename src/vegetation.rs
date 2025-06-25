@@ -7,8 +7,7 @@ use crate::{
 use image::{Rgba, RgbaImage};
 use imageproc::{drawing::draw_filled_rect_mut, rect::Rect};
 use log::info;
-use std::{fs::File, path::PathBuf, time::Instant};
-use tiff::decoder::{Decoder, DecodingResult};
+use std::{path::PathBuf, time::Instant};
 
 pub fn render_vegetation(
     tile: &Tile,

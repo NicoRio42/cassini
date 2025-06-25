@@ -58,8 +58,6 @@ pub fn create_raster_with_buffer(
             y_offset = -(neighbor_height as i64) + buffer_in_pixels as i64;
         }
 
-        println!("{} {}", x_offset, y_offset);
-
         image::imageops::overlay(&mut output, &neighbor_tile_raster_file, x_offset, y_offset);
     }
 

@@ -15,7 +15,7 @@ pub fn create_dem_with_buffer_and_slopes_raster(tile: &Tile, neighbor_tiles: &Ve
 
     let start = Instant::now();
 
-    let dem_with_buffer_path = tile.render_dir_path.join("dem-with-buffer.tif");
+    let dem_with_buffer_path = tile.render_dir_path.join("dem-with-buffer.png");
     create_raster_with_buffer(tile, &neighbor_tiles, BUFFER as u32, "dem");
 
     // Filling holes
