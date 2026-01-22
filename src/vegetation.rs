@@ -188,7 +188,7 @@ fn get_average_pixel_value(tif_image: &TifImage, x_index: usize, y_index: usize)
             }
 
             count += coef;
-            sum += tif_image.pixels[y * width + x] * coef;
+            sum += tif_image.pixels[y * width + x] as f64 * coef;
         }
     }
 
@@ -196,7 +196,7 @@ fn get_average_pixel_value(tif_image: &TifImage, x_index: usize, y_index: usize)
 }
 
 struct TifImage {
-    pixels: Vec<f64>,
+    pixels: Vec<u8>,
     width: u32,
     height: u32,
 }
@@ -207,7 +207,7 @@ fn get_image_data_from_tif(path: &PathBuf) -> TifImage {
     img_decoder = img_decoder.with_limits(tiff::decoder::Limits::unlimited());
     let (width, height) = img_decoder.dimensions().unwrap();
 
-    let DecodingResult::F64(image_data) = img_decoder.read_image().unwrap() else {
+    let DecodingResult::U8(image_data) = img_decoder.read_image().unwrap() else {
         panic!("Cannot read band data")
     };
 

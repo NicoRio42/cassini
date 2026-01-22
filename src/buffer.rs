@@ -12,15 +12,13 @@ pub fn create_tif_with_buffer(
     buffer: i64,
     tif_filename_without_extension: &str,
 ) {
-    let vrt_with_buffer_path = tile.render_dir_path.join(format!(
-        "{}-with-buffer.vrt",
-        tif_filename_without_extension
-    ));
+    let vrt_with_buffer_path = tile
+        .render_dir_path
+        .join(format!("{}-with-buffer.vrt", tif_filename_without_extension));
 
-    let raster_with_buffer_path = tile.render_dir_path.join(format!(
-        "{}-with-buffer.tif",
-        tif_filename_without_extension
-    ));
+    let raster_with_buffer_path = tile
+        .render_dir_path
+        .join(format!("{}-with-buffer.tif", tif_filename_without_extension));
 
     let tile_raster_path = tile
         .lidar_dir_path
@@ -39,7 +37,7 @@ pub fn create_tif_with_buffer(
         } else {
             error!(
                 "Tile min_x={} min_y={} max_x={} max_y={}. Failed to convert path to string for {:?}",
-               tile.min_x,tile.min_y,tile.max_x,tile.max_y, neighbor_tile
+                tile.min_x, tile.min_y, tile.max_x, tile.max_y, neighbor_tile
             );
         }
     }
@@ -89,4 +87,7 @@ pub fn create_tif_with_buffer(
             String::from_utf8(gdal_translate_output.stderr).unwrap()
         );
     }
+
+    // Finally removing the vrt file
+    std::fs::remove_file(&vrt_with_buffer_path).expect("Could not remove vrt file");
 }

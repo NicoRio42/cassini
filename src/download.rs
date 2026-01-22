@@ -1,39 +1,19 @@
-use log::info;
+use log::{info, warn};
 use reqwest::blocking::Client;
 use std::{
-    fs::{create_dir_all, File},
+    fs::File,
     io::{copy, BufRead, BufReader, BufWriter, Write},
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::{Command, Stdio},
+    thread::sleep,
     time::Instant,
 };
 
-use crate::{constants::BUFFER, tile::TileWithNeighbors};
+use crate::constants::BUFFER;
 
-pub fn download_osm_files_for_all_tiles_if_needed(tiles: &Vec<TileWithNeighbors>) {
-    for tile in tiles {
-        download_osm_file_if_needed(tile.tile.min_x, tile.tile.min_y, tile.tile.max_x, tile.tile.max_y);
-    }
-}
-
-pub fn download_osm_file_if_needed(min_x: i64, min_y: i64, max_x: i64, max_y: i64) {
-    let in_path = Path::new("osm");
-
-    if !in_path.exists() {
-        create_dir_all(in_path).unwrap();
-    }
-
-    let raw_osm_file_path = in_path.join(format!("{:0>7}_{:0>7}_raw.osm", min_x, max_y));
-    let osm_file_path = in_path.join(format!("{:0>7}_{:0>7}.osm", min_x, max_y));
-
-    if osm_file_path.exists() {
-        info!(
-            "Tile min_x={} min_y={} max_x={} max_y={}. Osm file already downloaded",
-            min_x, min_y, max_x, max_y
-        );
-
-        return;
-    }
+pub fn download_osm_file(min_x: i64, min_y: i64, max_x: i64, max_y: i64, output_dir_path: &PathBuf) {
+    let raw_osm_file_path = output_dir_path.join(format!("{:0>7}_{:0>7}_raw.osm", min_x, max_y));
+    let osm_file_path = output_dir_path.join(format!("{:0>7}_{:0>7}.osm", min_x, max_y));
 
     info!(
         "Tile min_x={} min_y={} max_x={} max_y={}. Downloading osm file",
@@ -81,18 +61,52 @@ out skel qt;
     let formatted_query = query.replace("{{bbox}}", &bbox);
     let client = Client::new();
 
-    let mut response = client
-        .post("https://overpass-api.de/api/interpreter")
-        .body(formatted_query)
-        .header("Content-Type", "application/x-www-form-urlencoded")
-        .send()
-        .expect("Could not get osm data from Overpass API.");
+    let mut retries_left = 5;
+
+    let mut response = loop {
+        let response_result = client
+            .post("https://overpass-api.de/api/interpreter")
+            .body(formatted_query.clone())
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .send();
+
+        match response_result {
+            Ok(response) => {
+                let status = response.status();
+                if status.is_success() {
+                    break response;
+                }
+
+                if retries_left == 0 {
+                    panic!("Overpass API returned error status: {}", status);
+                }
+
+                warn!(
+                    "Overpass API returned error status {}. Retrying in 2s ({} retries left)",
+                    status, retries_left
+                );
+            }
+            Err(error) => {
+                if retries_left == 0 {
+                    panic!("Could not get osm data from Overpass API: {}", error);
+                }
+
+                warn!(
+                    "Overpass API request failed: {}. Retrying in 2s ({} retries left)",
+                    error, retries_left
+                );
+            }
+        }
+
+        retries_left -= 1;
+        sleep(std::time::Duration::from_secs(2));
+    };
 
     let mut file = File::create(&raw_osm_file_path).expect("Could not create file for osm download.");
-
     copy(&mut response, &mut file).expect("Could not copy file content.");
 
     fix_osm_file(&raw_osm_file_path, &osm_file_path);
+    std::fs::remove_file(&raw_osm_file_path).expect("Could not remove raw osm file");
 
     let duration = start.elapsed();
 

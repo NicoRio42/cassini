@@ -2,6 +2,7 @@ use crate::{
     coastlines::get_polygon_with_holes_from_coastlines,
     config::Config,
     constants::{COASTLINE_EDGE_BUFFER, INCH},
+    download::download_osm_file,
     helpers::{does_polyline_intersect_tile, remove_dir_content},
     map_renderer::MapRenderer,
     tile::Tile,
@@ -42,7 +43,17 @@ pub fn render_map_with_osm_vector_shapes(
         remove_dir_content(&shapes_outlput_path).unwrap();
     }
 
-    let osm_path = Path::new("osm").join(format!("{:0>7}_{:0>7}.osm", tile.min_x, tile.max_y));
+    download_osm_file(
+        tile.min_x,
+        tile.min_y,
+        tile.max_x,
+        tile.max_y,
+        &tile.render_dir_path.to_path_buf(),
+    );
+
+    let osm_path = tile
+        .render_dir_path
+        .join(format!("{:0>7}_{:0>7}.osm", tile.min_x, tile.max_y));
 
     let ogr2ogr_output = Command::new("ogr2ogr")
         .args([

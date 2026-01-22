@@ -3,7 +3,7 @@ use log::{error, info};
 use std::fs::{create_dir_all, write, File};
 use std::io::Write;
 use std::path::PathBuf;
-use std::process::{Command, ExitStatus};
+use std::process::{Command, ExitStatus, Stdio};
 use std::time::Instant;
 
 use crate::helpers::remove_dir_content;
@@ -35,13 +35,12 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
 
     let dem_path = output_dir_path.join("dem.tif");
     let dem_low_resolution_path = output_dir_path.join("dem-low-resolution.tif");
+    let low_vegetation_path = output_dir_path.join("low-vegetation.tif");
     let medium_vegetation_path = output_dir_path.join("medium-vegetation.tif");
     let high_vegetation_path = output_dir_path.join("high-vegetation.tif");
-    let pipeline_path = output_dir_path.join("pipeline.json");
 
-    let gdal_common_options = format!(
-        r#""binmode": true,
-        "origin_x": {},
+    let gdal_dem_options = format!(
+        r#""origin_x": {},
         "origin_y": {},
         "width": {},
         "height": {},"#,
@@ -52,8 +51,7 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
     );
 
     let gdal_dem_low_resolution_options = format!(
-        r#""binmode": true,
-        "origin_x": {},
+        r#""origin_x": {},
         "origin_y": {},
         "width": {},
         "height": {},"#,
@@ -63,13 +61,31 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
         ((max_y - min_y) as f64 / 2.).ceil() as i64
     );
 
+    let gdal_vegetation_options = format!(
+        r#""binmode": true,
+        "resolution": 1,
+        "output_type": "count",
+        "data_type": "uint8",
+        "gdalopts": "COMPRESS=DEFLATE,PREDICTOR=2,ZLEVEL=9",
+        "origin_x": {},
+        "origin_y": {},
+        "width": {},
+        "height": {},"#,
+        min_x,
+        min_y,
+        max_x - min_x,
+        max_y - min_y
+    );
+
     let pdal_pipeline = format!(
         r#"[
     {:?},
     {{
         "type": "writers.gdal",
         "filename": {:?},
+        "binmode": true,
         "resolution": 1,
+        "gdalopts": "COMPRESS=DEFLATE,PREDICTOR=3,ZLEVEL=9",
         {}
         "where": "Classification == 2",
         "output_type": "mean"
@@ -77,7 +93,9 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
     {{
         "type": "writers.gdal",
         "filename": {:?},
+        "binmode": true,
         "resolution": 2,
+        "gdalopts": "COMPRESS=DEFLATE,PREDICTOR=3,ZLEVEL=9",
         {}
         "where": "Classification == 2",
         "output_type": "mean"
@@ -93,8 +111,13 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
     }},
     {{
         "type": "filters.assign",
+        "value": "Classification = 3",
+        "where": "Classification != 2 && HeightAboveGround > 0 && HeightAboveGround <= 1"
+    }},
+    {{
+        "type": "filters.assign",
         "value": "Classification = 4",
-        "where": "Classification != 2 && HeightAboveGround > 0.3 && HeightAboveGround <= 4"
+        "where": "Classification != 2 && HeightAboveGround > 1 && HeightAboveGround <= 4"
     }},
     {{
         "type": "filters.assign",
@@ -104,38 +127,52 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
     {{
         "type": "writers.gdal",
         "filename": {:?},
-        "resolution": 1,
         {}
-        "where": "Classification == 4",
-        "output_type": "count"
+        "where": "Classification == 3"
     }},
     {{
         "type": "writers.gdal",
         "filename": {:?},
-        "resolution": 1,
         {}
-        "where": "Classification == 5",
-        "output_type": "count"
+        "where": "Classification == 4"
+    }},
+    {{
+        "type": "writers.gdal",
+        "filename": {:?},
+        {}
+        "where": "Classification == 5"
     }}
 ]"#,
         laz_path,
         dem_path,
-        gdal_common_options,
+        gdal_dem_options,
         dem_low_resolution_path,
         gdal_dem_low_resolution_options,
         dem_path,
+        low_vegetation_path,
+        gdal_vegetation_options,
         medium_vegetation_path,
-        gdal_common_options,
+        gdal_vegetation_options,
         high_vegetation_path,
-        gdal_common_options,
+        gdal_vegetation_options,
     );
 
-    write(&pipeline_path, pdal_pipeline).expect("Unable to write pipeline file");
+    let mut pdal_process = Command::new("pdal")
+        .args(["pipeline", "-s"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("failed to execute pdal command");
 
-    let pdal_output = Command::new("pdal")
-        .args(["pipeline", &pipeline_path.to_str().unwrap()])
-        .output()
-        .expect("failed to execute pdal pipeline command");
+    if let Some(mut stdin) = pdal_process.stdin.take() {
+        stdin
+            .write_all(pdal_pipeline.as_bytes())
+            .expect("Failed to write to pdal stdin");
+    }
+
+    let pdal_output = pdal_process
+        .wait_with_output()
+        .expect("Failed to wait on pdal process");
 
     if !ExitStatus::success(&pdal_output.status) {
         error!(
