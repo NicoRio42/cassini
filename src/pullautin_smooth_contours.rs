@@ -11,7 +11,7 @@ use tiff::decoder::{Decoder, DecodingResult};
 use crate::constants::BUFFER;
 use crate::tile::Tile;
 
-pub fn pullautin_smooth_contours(tile: &Tile) -> (Vec<Vec<f64>>, Vec<(Vec<f64>, Vec<f64>, f64)>) {
+pub fn pullautin_smooth_contours(tile: &Tile, avg_alt: &Vec<Vec<f64>>) -> Vec<(Vec<f64>, Vec<f64>, f64)> {
     info!(
         "Tile min_x={} min_y={} max_x={} max_y={}. Smoothing contours",
         tile.min_x, tile.min_y, tile.max_x, tile.max_y
@@ -28,7 +28,6 @@ pub fn pullautin_smooth_contours(tile: &Tile) -> (Vec<Vec<f64>>, Vec<(Vec<f64>, 
     let xmax: u64 = ((tile.max_x + BUFFER as i64 - xstart as i64) as f64 / 2.).ceil() as u64;
     let ymax: u64 = ((tile.max_y + BUFFER as i64 - ystart as i64) as f64 / 2.).ceil() as u64;
 
-    let avg_alt = get_elevation_matrix_from_dem(tile);
     let mut steepness = vec![vec![f64::NAN; (ymax + 2) as usize]; (xmax + 2) as usize];
     let mut smoothed_contours: Vec<(Vec<f64>, Vec<f64>, f64)> = vec![];
 
@@ -54,18 +53,13 @@ pub fn pullautin_smooth_contours(tile: &Tile) -> (Vec<Vec<f64>>, Vec<(Vec<f64>, 
         }
     }
 
-    let contours_polylines_path = tile
-        .render_dir_path
-        .join("contours-raw")
-        .join("contours-raw.shp");
+    let contours_polylines_path = tile.render_dir_path.join("contours-raw").join("contours-raw.shp");
 
     let mut contours_polylines_reader: shapefile::Reader<BufReader<File>, BufReader<File>> =
         Reader::from_path(&contours_polylines_path).unwrap();
 
-    let contours_polylines_reader_for_table_info: shapefile::Reader<
-        BufReader<File>,
-        BufReader<File>,
-    > = Reader::from_path(&contours_polylines_path).unwrap();
+    let contours_polylines_reader_for_table_info: shapefile::Reader<BufReader<File>, BufReader<File>> =
+        Reader::from_path(&contours_polylines_path).unwrap();
 
     let table_info = contours_polylines_reader_for_table_info.into_table_info();
 
@@ -73,8 +67,7 @@ pub fn pullautin_smooth_contours(tile: &Tile) -> (Vec<Vec<f64>>, Vec<(Vec<f64>, 
     create_dir_all(&contours_dir).expect("Could not create contours dir");
 
     let mut writer =
-        shapefile::Writer::from_path_with_info(contours_dir.join("contours.shp"), table_info)
-            .unwrap();
+        shapefile::Writer::from_path_with_info(contours_dir.join("contours.shp"), table_info).unwrap();
 
     for shape_record in contours_polylines_reader.iter_shapes_and_records_as::<Polyline, Record>() {
         let (line, record) = shape_record.unwrap();
@@ -186,16 +179,16 @@ pub fn pullautin_smooth_contours(tile: &Tile) -> (Vec<Vec<f64>>, Vec<(Vec<f64>, 
             ya[el_x_len - 1] = y_array[el_x_len - 1];
         }
         for k in 1..(el_x_len - 1) {
-            x_array[k] = (xa[k - 1] + xa[k] / (0.01 + smoothing) + xa[k + 1])
-                / (2.0 + 1.0 / (0.01 + smoothing));
-            y_array[k] = (ya[k - 1] + ya[k] / (0.01 + smoothing) + ya[k + 1])
-                / (2.0 + 1.0 / (0.01 + smoothing));
+            x_array[k] =
+                (xa[k - 1] + xa[k] / (0.01 + smoothing) + xa[k + 1]) / (2.0 + 1.0 / (0.01 + smoothing));
+            y_array[k] =
+                (ya[k - 1] + ya[k] / (0.01 + smoothing) + ya[k + 1]) / (2.0 + 1.0 / (0.01 + smoothing));
         }
         if xa.first() == xa.last() && ya.first() == ya.last() {
-            let vx = (xa[1] + xa[0] / (0.01 + smoothing) + xa[el_x_len - 2])
-                / (2.0 + 1.0 / (0.01 + smoothing));
-            let vy = (ya[1] + ya[0] / (0.01 + smoothing) + ya[el_x_len - 2])
-                / (2.0 + 1.0 / (0.01 + smoothing));
+            let vx =
+                (xa[1] + xa[0] / (0.01 + smoothing) + xa[el_x_len - 2]) / (2.0 + 1.0 / (0.01 + smoothing));
+            let vy =
+                (ya[1] + ya[0] / (0.01 + smoothing) + ya[el_x_len - 2]) / (2.0 + 1.0 / (0.01 + smoothing));
             x_array[0] = vx;
             y_array[0] = vy;
             x_array[el_x_len - 1] = vx;
@@ -281,13 +274,11 @@ pub fn pullautin_smooth_contours(tile: &Tile) -> (Vec<Vec<f64>>, Vec<(Vec<f64>, 
         tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
     );
 
-    return (avg_alt, smoothed_contours);
+    return smoothed_contours;
 }
 
-fn get_elevation_matrix_from_dem(tile: &Tile) -> Vec<Vec<f64>> {
-    let dem_path = tile
-        .render_dir_path
-        .join("dem-low-resolution-with-buffer.tif");
+pub fn get_elevation_matrix_from_dem(tile: &Tile) -> Vec<Vec<f64>> {
+    let dem_path = tile.render_dir_path.join("dem-low-resolution-with-buffer.tif");
     let dem_tif_file = File::open(dem_path).expect("Cannot find dem tif image!");
 
     let mut dem_img_decoder = Decoder::new(dem_tif_file).expect("Cannot create decoder");

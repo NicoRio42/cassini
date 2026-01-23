@@ -14,7 +14,7 @@ pub const GREEN_2: Rgba<u8> = Rgba([139, 255, 116, 255]);
 pub const GREEN_3: Rgba<u8> = Rgba([61, 255, 23, 255]);
 pub const BLACK: Rgba<u8> = Rgba([0, 0, 0, 255]);
 pub const BROWN: Rgba<u8> = Rgba([209, 92, 0, 255]);
-// pub const PURPLE: Rgba<u8> = Rgba([166, 38, 255, 255]);
+pub const PURPLE: Rgba<u8> = Rgba([166, 38, 255, 255]);
 
 pub const VECTOR_WHITE: (u8, u8, u8) = (255, 255, 255);
 pub const VECTOR_BLUE: (u8, u8, u8) = (0, 255, 255);

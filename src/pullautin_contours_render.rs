@@ -25,7 +25,7 @@ impl WritableRecord for FormLineRecord {
 }
 
 use crate::config::Config;
-use crate::constants::{BUFFER, INCH};
+use crate::constants::{BUFFER, INCH, PURPLE};
 use crate::{
     constants::{BROWN, TRANSPARENT},
     tile::Tile,
@@ -36,7 +36,7 @@ pub fn pullautin_cull_formlines_render_contours(
     image_width: u32,
     image_height: u32,
     config: &Config,
-    avg_alt: Vec<Vec<f64>>,
+    avg_alt: &Vec<Vec<f64>>,
     smoothed_contours: Vec<(Vec<f64>, Vec<f64>, f64)>,
 ) {
     info!(
@@ -58,7 +58,7 @@ pub fn pullautin_cull_formlines_render_contours(
     let contour_interval: f64 = 5.0;
     let halfinterval = contour_interval / 2.0 * scalefactor;
 
-    let size: f64 = 2.0;
+    let dem_cell_size: f64 = 2.0;
     let xstart: f64 = (tile.min_x - BUFFER as i64) as f64;
     let ystart: f64 = (tile.min_y - BUFFER as i64) as f64;
     let x0 = xstart as f64;
@@ -86,8 +86,8 @@ pub fn pullautin_cull_formlines_render_contours(
 
             let mut temp = (xyz_i_m4_j - xyz_i_j).abs() / 4.0;
             let temp2 = (xyz_i_j - xyz_i_4_j).abs() / 4.0;
-            let det2 = (xyz_i_j - 0.5 * (xyz_i_m4_j + xyz_i_4_j)).abs()
-                - 0.05 * (xyz_i_m4_j - xyz_i_4_j).abs();
+            let det2 =
+                (xyz_i_j - 0.5 * (xyz_i_m4_j + xyz_i_4_j)).abs() - 0.05 * (xyz_i_m4_j - xyz_i_4_j).abs();
             let mut porr = (((avg_alt[i - 6][j] - avg_alt[i + 6][j]) / 12.0).abs()
                 - ((avg_alt[i - 3][j] - avg_alt[i + 3][j]) / 6.0).abs())
             .abs();
@@ -104,8 +104,8 @@ pub fn pullautin_cull_formlines_render_contours(
 
             let mut temp = (xyz_i_j_m4 - xyz_i_j).abs() / 4.0;
             let temp2 = (xyz_i_j - xyz_i_j_m4).abs() / 4.0;
-            let det2 = (xyz_i_j - 0.5 * (xyz_i_j_m4 + xyz_i_j_4)).abs()
-                - 0.05 * (xyz_i_j_m4 - xyz_i_j_4).abs();
+            let det2 =
+                (xyz_i_j - 0.5 * (xyz_i_j_m4 + xyz_i_j_4)).abs() - 0.05 * (xyz_i_j_m4 - xyz_i_j_4).abs();
             let porr2 = (((avg_alt[i][j - 6] - avg_alt[i][j + 6]) / 12.0).abs()
                 - ((avg_alt[i][j - 3] - avg_alt[i][j + 3]) / 6.0).abs())
             .abs();
@@ -178,10 +178,7 @@ pub fn pullautin_cull_formlines_render_contours(
     }
 
     let mut id: i32 = 0;
-    let contours_polylines_path = tile
-        .render_dir_path
-        .join("contours-raw")
-        .join("contours-raw.shp");
+    let contours_polylines_path = tile.render_dir_path.join("contours-raw").join("contours-raw.shp");
 
     let contours_polylines_reader: shapefile::Reader<BufReader<File>, BufReader<File>> =
         Reader::from_path(&contours_polylines_path).unwrap();
@@ -191,10 +188,16 @@ pub fn pullautin_cull_formlines_render_contours(
     let formlines_dir = tile.render_dir_path.join("formlines");
     create_dir_all(&formlines_dir).expect("Could not create formlines dir");
 
-    let mut writer =
-        Writer::from_path_with_info(formlines_dir.join("formlines.shp"), table_info).unwrap();
+    let mut writer = Writer::from_path_with_info(formlines_dir.join("formlines.shp"), table_info).unwrap();
 
-    for (x_array, y_array, elevation) in smoothed_contours {
+    for smoothed_contour in smoothed_contours {
+        let color = if is_contour_depression(&smoothed_contour, xstart, ystart, avg_alt, dem_cell_size) {
+            PURPLE
+        } else {
+            BROWN
+        };
+
+        let (x_array, y_array, elevation) = smoothed_contour;
         let mut x = Vec::<f64>::new();
         let mut y = Vec::<f64>::new();
 
@@ -221,8 +224,9 @@ pub fn pullautin_cull_formlines_render_contours(
             for i in 0..x.len() {
                 help[i] = false;
                 help2[i] = true;
-                let xx = (((x[i] / 600.0 * 254.0 * scalefactor + x0) - xstart) / size).floor();
-                let yy = (((-y[i] / 600.0 * 254.0 * scalefactor + y0) - ystart) / size).floor();
+                let xx = (((x[i] / 600.0 * 254.0 * scalefactor + x0) - xstart) / dem_cell_size).floor();
+                let yy = (((-y[i] / 600.0 * 254.0 * scalefactor + y0) - ystart) / dem_cell_size).floor();
+
                 if curvew != 1.5
                     || &steepness[xx as usize][yy as usize] < &formlinesteepness
                     || &steepness[xx as usize][yy as usize + 1] < &formlinesteepness
@@ -370,9 +374,7 @@ pub fn pullautin_cull_formlines_render_contours(
                             }
                         }
                         if !toonearend
-                            && ((x[i - 5] - x[i + 5]).powi(2) + (y[i - 5] - y[i + 5]).powi(2))
-                                .sqrt()
-                                * 1.138
+                            && ((x[i - 5] - x[i + 5]).powi(2) + (y[i - 5] - y[i + 5]).powi(2)).sqrt() * 1.138
                                 > sum
                         {
                             linedist = 0.0;
@@ -397,8 +399,7 @@ pub fn pullautin_cull_formlines_render_contours(
                                             - buffer_in_pixels,
                                         image_height as f32
                                             + buffer_in_pixels
-                                            + ((-y[i - 1] * gap + (step + gap) * y[i]) / step + m)
-                                                as f32,
+                                            + ((-y[i - 1] * gap + (step + gap) * y[i]) / step + m) as f32,
                                     );
 
                                     let end = (
@@ -406,7 +407,7 @@ pub fn pullautin_cull_formlines_render_contours(
                                         image_height as f32 + buffer_in_pixels + (y[i] + m) as f32,
                                     );
 
-                                    draw_line_segment_mut(&mut img, start, end, BROWN);
+                                    draw_line_segment_mut(&mut img, start, end, color);
                                     m += 1.0;
                                 }
                                 n += 1.0;
@@ -428,7 +429,7 @@ pub fn pullautin_cull_formlines_render_contours(
                                     image_height as f32 + buffer_in_pixels + (y[i] + m) as f32,
                                 );
 
-                                draw_line_segment_mut(&mut img, start, end, BROWN);
+                                draw_line_segment_mut(&mut img, start, end, color);
                                 m += 1.0;
                             }
                             n += 1.0;
@@ -449,7 +450,7 @@ pub fn pullautin_cull_formlines_render_contours(
                                 image_height as f32 + buffer_in_pixels + (y[i] + m) as f32,
                             );
 
-                            draw_line_segment_mut(&mut img, start, end, BROWN);
+                            draw_line_segment_mut(&mut img, start, end, color);
                             m += 1.0;
                         }
                         n += 1.0;
@@ -496,11 +497,182 @@ fn write_formline_shape_to_shapefile(
         points.push(Point { x: *x, y: *y });
     }
 
-    let record = FormLineRecord {
-        id,
-        elev: elevation,
-    };
+    let record = FormLineRecord { id, elev: elevation };
 
     let smoothed_polyline = GenericPolyline::new(points);
     let _ = writer.write_shape_and_record(&smoothed_polyline, &record);
+}
+
+fn is_contour_depression(
+    (x_array, y_array, elevation): &(Vec<f64>, Vec<f64>, f64),
+    xstart: f64,
+    ystart: f64,
+    avg_alt: &Vec<Vec<f64>>,
+    dem_cell_size: f64,
+) -> bool {
+    let is_closed = x_array.first() == x_array.last() && y_array.first() == y_array.last();
+
+    if !is_closed {
+        return false;
+    }
+
+    if x_array.len() < 4 || y_array.len() < 4 {
+        return false;
+    }
+
+    let mut contour_min_x = f64::MAX;
+    let mut contour_max_x = f64::MIN;
+    let mut contour_min_y = f64::MAX;
+    let mut contour_max_y = f64::MIN;
+
+    for i in 0..x_array.len() {
+        let x = x_array[i];
+        let y = y_array[i];
+
+        if x < contour_min_x {
+            contour_min_x = x;
+        }
+        if x > contour_max_x {
+            contour_max_x = x;
+        }
+        if y < contour_min_y {
+            contour_min_y = y;
+        }
+        if y > contour_max_y {
+            contour_max_y = y;
+        }
+    }
+
+    // Sample a point inside the closed contour using a grid search that maximizes
+    // distance to edges (approximation of the largest inscribed circle).
+    let mut best_point: Option<(f64, f64)> = None;
+    let mut best_dist = -1.0_f64;
+
+    let mut x = contour_min_x;
+    while x <= contour_max_x {
+        let mut y = contour_min_y;
+
+        while y <= contour_max_y {
+            if point_in_polygon(x, y, x_array, y_array) {
+                let dist = min_distance_to_edges(x, y, x_array, y_array);
+
+                if dist > best_dist {
+                    best_dist = dist;
+                    best_point = Some((x, y));
+                }
+            }
+
+            y += dem_cell_size;
+        }
+        x += dem_cell_size;
+    }
+
+    let Some((px, py)) = best_point else {
+        return false;
+    };
+
+    let inside_elevation =
+        get_point_elevation_from_dem_bilinear_interpolation(px, py, xstart, ystart, dem_cell_size, avg_alt);
+
+    if inside_elevation.is_nan() {
+        return false;
+    }
+
+    inside_elevation < *elevation
+}
+
+fn point_in_polygon(x: f64, y: f64, x_array: &Vec<f64>, y_array: &Vec<f64>) -> bool {
+    let mut inside = false;
+    let mut j = x_array.len() - 1;
+
+    for i in 0..x_array.len() {
+        let xi = x_array[i];
+        let yi = y_array[i];
+        let xj = x_array[j];
+        let yj = y_array[j];
+
+        let intersect = ((yi > y) != (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi + f64::EPSILON) + xi);
+
+        if intersect {
+            inside = !inside;
+        }
+
+        j = i;
+    }
+    inside
+}
+
+fn min_distance_to_edges(x: f64, y: f64, x_array: &Vec<f64>, y_array: &Vec<f64>) -> f64 {
+    let mut min_dist = f64::MAX;
+
+    for i in 1..x_array.len() {
+        let x1 = x_array[i - 1];
+        let y1 = y_array[i - 1];
+        let x2 = x_array[i];
+        let y2 = y_array[i];
+
+        let dist = distance_point_to_segment(x, y, x1, y1, x2, y2);
+
+        if dist < min_dist {
+            min_dist = dist;
+        }
+    }
+
+    min_dist
+}
+
+fn distance_point_to_segment(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
+    let dx = x2 - x1;
+    let dy = y2 - y1;
+
+    if dx == 0.0 && dy == 0.0 {
+        return ((px - x1).powi(2) + (py - y1).powi(2)).sqrt();
+    }
+
+    let t = ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy);
+    let t = t.clamp(0.0, 1.0);
+    let proj_x = x1 + t * dx;
+    let proj_y = y1 + t * dy;
+    ((px - proj_x).powi(2) + (py - proj_y).powi(2)).sqrt()
+}
+
+fn get_point_elevation_from_dem_bilinear_interpolation(
+    x: f64,
+    y: f64,
+    xstart: f64,
+    ystart: f64,
+    dem_cell_size: f64,
+    avg_alt: &Vec<Vec<f64>>,
+) -> f64 {
+    let poin_local_x = (x - xstart) / dem_cell_size;
+    let poin_local_y = (y - ystart) / dem_cell_size;
+
+    if poin_local_x.is_nan() || poin_local_y.is_nan() || poin_local_x < 0.0 || poin_local_y < 0.0 {
+        return f64::NAN;
+    }
+
+    let x0 = poin_local_x.floor() as usize;
+    let y0 = poin_local_y.floor() as usize;
+    let x1 = x0 + 1;
+    let y1 = y0 + 1;
+
+    if x1 >= avg_alt.len() || y1 >= avg_alt[0].len() {
+        return f64::NAN;
+    }
+
+    let fx = poin_local_x - x0 as f64;
+    let fy = poin_local_y - y0 as f64;
+
+    let v00 = avg_alt[x0][y0];
+    let v10 = avg_alt[x1][y0];
+    let v01 = avg_alt[x0][y1];
+    let v11 = avg_alt[x1][y1];
+
+    if v00.is_nan() || v10.is_nan() || v01.is_nan() || v11.is_nan() {
+        return f64::NAN;
+    }
+
+    let v0 = v00 * (1.0 - fx) + v10 * fx;
+    let v1 = v01 * (1.0 - fx) + v11 * fx;
+    v0 * (1.0 - fy) + v1 * fy
 }

@@ -1,6 +1,8 @@
 use crate::{
-    config::Config, pullautin_contours_render::pullautin_cull_formlines_render_contours,
-    pullautin_smooth_contours::pullautin_smooth_contours, tile::Tile,
+    config::Config,
+    pullautin_contours_render::pullautin_cull_formlines_render_contours,
+    pullautin_smooth_contours::{get_elevation_matrix_from_dem, pullautin_smooth_contours},
+    tile::Tile,
 };
 
 pub fn generate_contours_with_pullautin_algorithme(
@@ -9,14 +11,16 @@ pub fn generate_contours_with_pullautin_algorithme(
     image_height: u32,
     config: &Config,
 ) {
-    let (avg_alt, smoothed_contours) = pullautin_smooth_contours(&tile);
+    let avg_alt = get_elevation_matrix_from_dem(tile);
+
+    let smoothed_contours = pullautin_smooth_contours(&tile, &avg_alt);
 
     pullautin_cull_formlines_render_contours(
         &tile,
         image_width,
         image_height,
         &config,
-        avg_alt,
+        &avg_alt,
         smoothed_contours,
     );
 }

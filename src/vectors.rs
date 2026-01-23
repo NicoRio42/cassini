@@ -14,7 +14,7 @@ use shapefile::{
 };
 use std::{
     collections::HashMap,
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::{Command, ExitStatus},
     time::Instant,
 };
