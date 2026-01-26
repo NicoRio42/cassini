@@ -8,7 +8,7 @@ const DEFAULT_YELLOW_THRESHOLD: f64 = 1.; // Update the docs when modifying
 const DEFAULT_GREEN_THRESHOLD_1: f64 = 0.3; // Update the docs when modifying
 const DEFAULT_GREEN_THRESHOLD_2: f64 = 1.0; // Update the docs when modifying
 const DEFAULT_GREEN_THRESHOLD_3: f64 = 2.0; // Update the docs when modifying
-const DEFAULT_CLIFF_THRESHOLD_1: f32 = 45.; // Update the docs when modifying
+const DEFAULT_CLIFF_THRESHOLD_1: f32 = 55.; // Update the docs when modifying
 const DEFAULT_CLIFF_THRESHOLD_2: f32 = 55.; // Update the docs when modifying
 const DEFAULT_DPI_RESOLUTION: f32 = 600.0; // Update the docs when modifying
 
