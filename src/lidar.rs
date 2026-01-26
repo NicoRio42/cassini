@@ -46,8 +46,8 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
         "height": {},"#,
         min_x,
         min_y,
-        max_x - min_x,
-        max_y - min_y
+        (max_x - min_x) * 2,
+        (max_y - min_y) * 2
     );
 
     let gdal_dem_low_resolution_options = format!(

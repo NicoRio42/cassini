@@ -16,7 +16,7 @@ pub fn create_dem_with_buffer_and_slopes_tiff(tile: &Tile, neighbor_tiles: &Vec<
     let start = Instant::now();
 
     let dem_with_buffer_path = tile.render_dir_path.join("dem-with-buffer.tif");
-    create_tif_with_buffer(tile, &neighbor_tiles, BUFFER as i64, "dem");
+    create_tif_with_buffer(tile, &neighbor_tiles, BUFFER as i64, "dem", 0.5);
 
     // Filling holes
     let gdal_fillnodata_output = Command::new("gdal_fillnodata")
@@ -36,11 +36,9 @@ pub fn create_dem_with_buffer_and_slopes_tiff(tile: &Tile, neighbor_tiles: &Vec<
         );
     }
 
-    let dem_low_resolution_with_buffer_path = tile
-        .render_dir_path
-        .join("dem-low-resolution-with-buffer.tif");
+    let dem_low_resolution_with_buffer_path = tile.render_dir_path.join("dem-low-resolution-with-buffer.tif");
 
-    create_tif_with_buffer(tile, &neighbor_tiles, BUFFER as i64, "dem-low-resolution");
+    create_tif_with_buffer(tile, &neighbor_tiles, BUFFER as i64, "dem-low-resolution", 2.0);
 
     // Filling holes
     let gdal_fillnodata_output = Command::new("gdal_fillnodata")
