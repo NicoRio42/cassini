@@ -1,5 +1,5 @@
 in
-out
+out*
 target
 pullautin
 data
@@ -9,5 +9,4 @@ tiles
 osm
 *.laz
 *.las
-out-dir
 lidar
