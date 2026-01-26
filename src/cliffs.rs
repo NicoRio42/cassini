@@ -6,9 +6,7 @@ use tiff::decoder::{Decoder, DecodingResult};
 
 use crate::{
     config::Config,
-    constants::{
-        BLACK, BUFFER, CLIFF_THICKNESS_1, CLIFF_THICKNESS_2, DEM_BLOCK_SIZE, INCH, TRANSPARENT,
-    },
+    constants::{BLACK, BUFFER, CLIFF_THICKNESS_1, CLIFF_THICKNESS_2, DEM_BLOCK_SIZE, INCH, TRANSPARENT},
     tile::Tile,
 };
 
@@ -20,7 +18,7 @@ pub fn render_cliffs(tile: &Tile, image_width: u32, image_height: u32, config: &
 
     let start = Instant::now();
 
-    let dem_block_size_pixel = DEM_BLOCK_SIZE as f32 * config.dpi_resolution / INCH;
+    let dem_block_size_pixel = DEM_BLOCK_SIZE * config.dpi_resolution / INCH;
 
     let slopes_path = tile.render_dir_path.join("slopes.tif");
     let slopes_tif_file = File::open(slopes_path).expect("Cannot find slopes tif image!");
@@ -39,14 +37,10 @@ pub fn render_cliffs(tile: &Tile, image_width: u32, image_height: u32, config: &
         let x = index % slopes_width as usize;
         let y = index / slopes_width as usize;
 
-        let x_pixel = ((x as i64 - BUFFER as i64) as f32 * dem_block_size_pixel) as i32;
-        let y_pixel = ((y as i64 - BUFFER as i64) as f32 * dem_block_size_pixel) as i32;
+        let x_pixel = ((x as i64 - (BUFFER * 2) as i64) as f32 * dem_block_size_pixel) as i32;
+        let y_pixel = ((y as i64 - (BUFFER * 2) as i64) as f32 * dem_block_size_pixel) as i32;
 
-        if x_pixel < 0
-            || x_pixel > image_width as i32
-            || y_pixel < 0
-            || y_pixel > image_height as i32
-        {
+        if x_pixel < 0 || x_pixel > image_width as i32 || y_pixel < 0 || y_pixel > image_height as i32 {
             continue;
         }
 

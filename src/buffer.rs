@@ -11,6 +11,7 @@ pub fn create_tif_with_buffer(
     neighbor_tiles: &Vec<PathBuf>,
     buffer: i64,
     tif_filename_without_extension: &str,
+    resolution: f32,
 ) {
     let vrt_with_buffer_path = tile
         .render_dir_path
@@ -71,6 +72,7 @@ pub fn create_tif_with_buffer(
             &(tile.min_y - buffer).to_string(),
         ])
         .args(["-of", "GTiff"])
+        .args(["-tr", &resolution.to_string(), &resolution.to_string()])
         .arg(&vrt_with_buffer_path.to_str().unwrap())
         .arg(&raster_with_buffer_path.to_str().unwrap())
         .arg("--quiet")
