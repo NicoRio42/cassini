@@ -1,13 +1,15 @@
 use crate::{
     buffer::create_tif_with_buffer,
+    canvas::Canvas,
     config::Config,
-    constants::{BUFFER, GREEN_1, GREEN_2, GREEN_3, INCH, VEGETATION_BLOCK_SIZE, WHITE, YELLOW},
+    constants::{BUFFER, GREEN_1, GREEN_2, GREEN_3, INCH, TRANSPARENT, VEGETATION_BLOCK_SIZE, WHITE, YELLOW},
     tile::Tile,
 };
-use image::{Rgba, RgbaImage};
-use imageproc::{drawing::draw_filled_rect_mut, rect::Rect};
+use image::{imageops, Rgba, RgbaImage};
+use imageproc::drawing::draw_filled_ellipse_mut;
 use log::info;
-use std::{fs::File, path::PathBuf, time::Instant};
+use skia_safe::{Data, Image};
+use std::{fs::File, path::PathBuf, time::Instant, u8};
 use tiff::decoder::{Decoder, DecodingResult};
 
 pub fn render_vegetation(
@@ -25,7 +27,7 @@ pub fn render_vegetation(
     let start = Instant::now();
 
     let vegetation_block_size_pixel = VEGETATION_BLOCK_SIZE as f32 * config.dpi_resolution / INCH;
-    let casted_vegetation_block_size_pixel = vegetation_block_size_pixel.ceil() as u32;
+    let casted_vegetation_block_size_pixel = (vegetation_block_size_pixel * 2.).ceil() as i32;
 
     create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "high-vegetation", 1.0);
     create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "medium-vegetation", 1.0);
@@ -36,46 +38,46 @@ pub fn render_vegetation(
     let medium_vegetation =
         get_image_data_from_tif(&tile.render_dir_path.join("medium-vegetation-with-buffer.tif"));
 
-    let mut vegetation_layer_img = RgbaImage::from_pixel(image_width, image_height, WHITE);
+    let mut base_vegetation_img = RgbaImage::from_pixel(image_width, image_height, YELLOW);
+    let mut green_1_vegetation_img = RgbaImage::from_pixel(image_width, image_height, TRANSPARENT);
 
     for x_index in BUFFER..((tile.max_x + BUFFER as i64 - tile.min_x) as usize) {
         for y_index in BUFFER..((tile.max_y + BUFFER as i64 - tile.min_y) as usize) {
             let x_pixel = ((x_index - BUFFER) as f32 * vegetation_block_size_pixel) as i32;
             let y_pixel = ((y_index - BUFFER) as f32 * vegetation_block_size_pixel) as i32;
 
-            let high_vegetation_density = get_average_pixel_value(&high_vegetation, x_index, y_index);
+            let high_vegetation_density = get_min_value_in_circle(&high_vegetation, x_index, y_index);
 
-            if high_vegetation_density < config.yellow_threshold {
-                draw_filled_rect_mut(
-                    &mut vegetation_layer_img,
-                    Rect::at(x_pixel, y_pixel).of_size(
-                        casted_vegetation_block_size_pixel,
-                        casted_vegetation_block_size_pixel,
-                    ),
-                    YELLOW,
+            if high_vegetation_density > config.yellow_threshold as u8 {
+                draw_filled_ellipse_mut(
+                    &mut base_vegetation_img,
+                    (x_pixel, y_pixel),
+                    casted_vegetation_block_size_pixel,
+                    casted_vegetation_block_size_pixel,
+                    WHITE,
                 );
             }
 
-            let medium_vegetation_density = get_average_pixel_value(&medium_vegetation, x_index, y_index);
+            let medium_vegetation_density = get_min_value_in_circle(&medium_vegetation, x_index, y_index);
 
             let mut green_color: Option<Rgba<u8>> = None;
 
-            if medium_vegetation_density > config.green_threshold_3 {
-                green_color = Some(GREEN_3);
-            } else if medium_vegetation_density > config.green_threshold_2 {
-                green_color = Some(GREEN_2);
-            } else if medium_vegetation_density > config.green_threshold_1 {
+            // if medium_vegetation_density > config.green_threshold_3 as u8 {
+            //     green_color = Some(GREEN_3);
+            // } else if medium_vegetation_density > config.green_threshold_2 as u8 {
+            //     green_color = Some(GREEN_2);
+            // } else
+            if medium_vegetation_density > config.green_threshold_1 as u8 {
                 green_color = Some(GREEN_1);
             }
 
             match green_color {
                 Some(color) => {
-                    draw_filled_rect_mut(
-                        &mut vegetation_layer_img,
-                        Rect::at(x_pixel, y_pixel).of_size(
-                            casted_vegetation_block_size_pixel,
-                            casted_vegetation_block_size_pixel,
-                        ),
+                    draw_filled_ellipse_mut(
+                        &mut green_1_vegetation_img,
+                        (x_pixel, y_pixel),
+                        casted_vegetation_block_size_pixel,
+                        casted_vegetation_block_size_pixel,
                         color,
                     );
                 }
@@ -84,9 +86,10 @@ pub fn render_vegetation(
         }
     }
 
+    imageops::overlay(&mut base_vegetation_img, &green_1_vegetation_img, 0, 0);
     let vegetation_output_path = tile.render_dir_path.join("vegetation.png");
 
-    vegetation_layer_img
+    base_vegetation_img
         .save(vegetation_output_path)
         .expect("could not save output png");
 
@@ -98,75 +101,8 @@ pub fn render_vegetation(
     );
 }
 
-const CONVOLUTION_MATRIX_7_LINEAR: [[f64; 7]; 7] = [
-    [
-        0.,
-        0.1501634144012025,
-        0.25464400750007,
-        0.2928932188134524,
-        0.25464400750007,
-        0.1501634144012025,
-        0.,
-    ],
-    [
-        0.1501634144012025,
-        0.33333333333333326,
-        0.4729537233052701,
-        0.5285954792089682,
-        0.4729537233052701,
-        0.33333333333333326,
-        0.1501634144012025,
-    ],
-    [
-        0.25464400750007,
-        0.4729537233052701,
-        0.6666666666666666,
-        0.7642977396044841,
-        0.6666666666666666,
-        0.4729537233052701,
-        0.25464400750007,
-    ],
-    [
-        0.2928932188134524,
-        0.5285954792089682,
-        0.7642977396044841,
-        1.,
-        0.7642977396044841,
-        0.5285954792089682,
-        0.2928932188134524,
-    ],
-    [
-        0.25464400750007,
-        0.4729537233052701,
-        0.6666666666666666,
-        0.7642977396044841,
-        0.6666666666666666,
-        0.4729537233052701,
-        0.25464400750007,
-    ],
-    [
-        0.1501634144012025,
-        0.33333333333333326,
-        0.4729537233052701,
-        0.5285954792089682,
-        0.4729537233052701,
-        0.33333333333333326,
-        0.1501634144012025,
-    ],
-    [
-        0.,
-        0.1501634144012025,
-        0.25464400750007,
-        0.2928932188134524,
-        0.25464400750007,
-        0.1501634144012025,
-        0.,
-    ],
-];
-
-fn get_average_pixel_value(tif_image: &TifImage, x_index: usize, y_index: usize) -> f64 {
-    let mut count = 0.0;
-    let mut sum = 0.0;
+fn get_min_value_in_circle(tif_image: &TifImage, x_index: usize, y_index: usize) -> u8 {
+    let mut min = u8::MAX;
     let width = tif_image.width as usize;
     let height = tif_image.height as usize;
 
@@ -174,25 +110,34 @@ fn get_average_pixel_value(tif_image: &TifImage, x_index: usize, y_index: usize)
         panic!("Image with no pixels")
     }
 
-    for (y_matrix, row) in CONVOLUTION_MATRIX_7_LINEAR.iter().enumerate() {
-        for (x_matrix, coef) in row.iter().enumerate() {
-            if x_index + x_matrix < 3 || y_index + y_matrix < 3 {
+    for y_matrix in 0..5 {
+        for x_matrix in 0..5 {
+            if x_index + x_matrix < 2
+                || y_index + y_matrix < 2
+                || y_matrix == 0
+                || x_matrix == 0
+                || y_matrix == 4
+                || x_matrix == 4
+            {
                 continue;
             }
 
-            let x = x_index + x_matrix - 3;
-            let y = y_index + y_matrix - 3;
+            let x = x_index + x_matrix - 2;
+            let y = y_index + y_matrix - 2;
 
             if x > width || y > height {
                 continue;
             }
 
-            count += coef;
-            sum += tif_image.pixels[y * width + x] as f64 * coef;
+            let pixel_value = tif_image.pixels[y * width + x];
+
+            if pixel_value < min {
+                min = pixel_value;
+            }
         }
     }
 
-    return sum / count;
+    return min;
 }
 
 struct TifImage {
