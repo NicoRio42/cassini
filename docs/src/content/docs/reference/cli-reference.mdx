@@ -6,7 +6,7 @@ description: The reference for the Cassini Command-Line Interface.
 import GlossaryLink from "../../../components/GlossaryLink.astro";
 import { Tabs, TabItem } from "@astrojs/starlight/components";
 
-The following reference covers all subcommands and flags you can pass to the `cassini` program.
+The following reference covers all subcommands and options you can pass to the `cassini` program.
 
 ## `cassini process`
 
@@ -38,7 +38,7 @@ cassini process ./path/to/my/tile.laz
   </TabItem>
 </Tabs>
 
-### Flags
+### Options
 
 #### `--output-dir` or `-o`
 
@@ -51,25 +51,7 @@ cassini process ./path/to/my/tile.laz
 
 The output directory for the processed LiDAR file.
 
-#### `--skip-vector`
-
-<p>
-
-**Type:** `boolean`<br />
-
-</p>
-
-The `--skip-vector` flag will skip the vector processing stage of the pipeline. No file will be downloaded from <GlossaryLink slug="osm" /> and no vector features will be drawn on the map (roads, lakes...).
-
-#### `--skip-520`
-
-<p>
-
-**Type:** `boolean`<br />
-
-</p>
-
-The `--skip-520` will prevent the vector renderer to draw the [520 area that shall not be entered](https://omapwiki.orienteering.sport/symbols/520-area-that-shall-not-be-entered/) symbol.
+This subcommand also accepts the [common rendering options](#common-rendering-options).
 
 ## `cassini lidar`
 
@@ -101,7 +83,7 @@ cassini lidar ./path/to/my/tile.laz
   </TabItem>
 </Tabs>
 
-### Flags
+### Options
 
 #### `--output-dir` or `-o`
 
@@ -144,7 +126,7 @@ cassini render ./path/to/lidar/step/output/directory
   </TabItem>
 </Tabs>
 
-### Flags
+### Options
 
 #### `--output-dir` or `-o`
 
@@ -167,25 +149,7 @@ The output directory for the processed tile.
 
 A list of directories containing the output of the <GlossaryLink slug="lidar" /> processing step for neighboring tiles (see [this post](/what-and-why#the-edges-artifacts-problem)).
 
-#### `--skip-vector`
-
-<p>
-
-**Type:** `boolean`<br />
-
-</p>
-
-The `--skip-vector` flag will skip the vector processing stage of the pipeline. No file will be downloaded from <GlossaryLink slug="osm" /> and no vector features will be drawn on the map (roads, lakes...).
-
-#### `--skip-520`
-
-<p>
-
-**Type:** `boolean`<br />
-
-</p>
-
-The `--skip-520` will prevent the vector renderer to draw the [520 area that shall not be entered](https://omapwiki.orienteering.sport/symbols/520-area-that-shall-not-be-entered/) symbol.
+This subcommand also accepts the [common rendering options](#common-rendering-options).
 
 ## `cassini batch`
 
@@ -195,7 +159,7 @@ Process multiple <GlossaryLink slug="lidar" /> files at once. The `batch` subcom
 cassini batch
 ```
 
-### Flags
+### Options
 
 #### `--output-dir` or `-o`
 
@@ -231,27 +195,9 @@ cassini batch --threads 6
 
 </p>
 
-The `--skip-lidar` flag will skip the <GlossaryLink slug="lidar" /> processing stage of the pipeline. It will only work if you allready ran `cassini` once with the same input files, as it will reuse some temp files.
+The `--skip-lidar` option will skip the <GlossaryLink slug="lidar" /> processing stage of the pipeline. It will only work if you allready ran `cassini` once with the same input files, as it will reuse some temp files.
 
-#### `--skip-vector`
-
-<p>
-
-**Type:** `boolean`<br />
-
-</p>
-
-The `--skip-vector` flag will skip the vector processing stage of the pipeline. No file will be downloaded from <GlossaryLink slug="osm" /> and no vector features will be drawn on the map (roads, lakes...).
-
-#### `--skip-520`
-
-<p>
-
-**Type:** `boolean`<br />
-
-</p>
-
-The `--skip-520` will prevent the vector renderer to draw the [520 area that shall not be entered](https://omapwiki.orienteering.sport/symbols/520-area-that-shall-not-be-entered/) symbol.
+This subcommand also accepts the [common rendering options](#common-rendering-options).
 
 ## `cassini config`
 
@@ -297,7 +243,47 @@ Options:
 
 The help message is olso printed if cassini is called without any arguments.
 
-## Common flags
+## Common rendering options
+
+The following options are available for the `process`, `render` and `batch` subcommands.
+
+### `--skip-vector`
+
+<p>
+
+**Type:** `boolean`<br />
+
+</p>
+
+The `--skip-vector` option will skip the vector processing stage of the pipeline. No file will be downloaded from <GlossaryLink slug="osm" /> and no vector features will be drawn on the map (roads, lakes...).
+
+### `--skip-520`
+
+<p>
+
+**Type:** `boolean`<br />
+
+</p>
+
+The `--skip-520` option will prevent the vector renderer to draw the [520 area that shall not be entered](https://omapwiki.orienteering.sport/symbols/520-area-that-shall-not-be-entered/) symbol.
+
+### `--undergrowth`
+
+<p>
+
+**Type:** `none | merge | 406 | 409`<br />
+**Default:** `merge`
+
+</p>
+
+The undergrowth rendering mode. The possible values are:
+
+- `none`: No undergrowth is rendered.
+- `merge`: Undergrowth is merged with the vegetation rendering (default mode).
+- `406`: Undergrowth is rendered as the [406 vegetation: slow running](https://omapwiki.orienteering.sport/symbols/406-vegetation-slow-running/) symbol.
+- `409`: Undergrowth is rendered as the [409 vegetation: walk, good visibility](https://omapwiki.orienteering.sport/symbols/409-vegetation-walk-good-visibility/) symbol.
+
+## Common options
 
 ### `--help` or `-h`
 
