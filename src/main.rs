@@ -47,6 +47,12 @@ pub enum Commands {
 
         #[arg(
             long,
+            help = "Path to a directory containing shapefiles to use instead of downloading from OpenStreetMap"
+        )]
+        shapefiles: Option<String>,
+
+        #[arg(
+            long,
             value_enum,
             help = "Undergrowth rendering mode",
             default_value = "merge"
@@ -96,6 +102,12 @@ pub enum Commands {
             help = "Prevent the vector renderer to draw the 520 (area that shall not be entered) symbol"
         )]
         skip_520: bool,
+
+        #[arg(
+            long,
+            help = "Path to a directory containing shapefiles to use instead of downloading from OpenStreetMap"
+        )]
+        shapefiles: Option<String>,
 
         #[arg(
             long,
@@ -194,6 +206,7 @@ fn main() {
                 output_dir: maybe_output_dir,
                 skip_vector,
                 skip_520,
+                shapefiles,
                 undergrowth,
             } => {
                 info!("Tile processing");
@@ -202,7 +215,8 @@ fn main() {
                 let output_dir = maybe_output_dir.unwrap_or("tile".to_owned());
                 let laz_path = Path::new(&file_path).to_path_buf();
                 let dir_path = Path::new(&output_dir).to_path_buf();
-                process_single_tile(&laz_path, &dir_path, skip_vector, skip_520, &undergrowth);
+                let shapefiles_dir = shapefiles.map(PathBuf::from);
+                process_single_tile(&laz_path, &dir_path, skip_vector, skip_520, &undergrowth, shapefiles_dir);
 
                 let duration = start.elapsed();
                 info!("Tile generated in {:.1?}", duration);
@@ -230,6 +244,7 @@ fn main() {
                 neighbors,
                 skip_vector,
                 skip_520,
+                shapefiles,
                 undergrowth,
             } => {
                 info!("Map rendering");
@@ -251,6 +266,7 @@ fn main() {
                     neighbor_tiles.push(neighbor_path);
                 }
 
+                let shapefiles_dir = shapefiles.map(PathBuf::from);
                 process_single_tile_render_step(
                     &input_dir_path,
                     &output_dir_path,
@@ -258,6 +274,7 @@ fn main() {
                     skip_vector,
                     skip_520,
                     &undergrowth,
+                    shapefiles_dir,
                 );
 
                 let duration = start.elapsed();

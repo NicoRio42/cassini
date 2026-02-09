@@ -41,6 +41,7 @@ pub fn process_single_tile(
     skip_vector: bool,
     skip_520: bool,
     undergrowth_mode: &UndergrowthMode,
+    shapefiles_dir: Option<PathBuf>,
 ) {
     generate_dem_and_vegetation_density_tiff_images_from_laz_file(
         &file_path.to_path_buf(),
@@ -65,6 +66,7 @@ pub fn process_single_tile(
         skip_vector,
         skip_520,
         undergrowth_mode,
+        shapefiles_dir,
     );
 }
 
@@ -79,6 +81,7 @@ pub fn process_single_tile_render_step(
     skip_vector: bool,
     skip_520: bool,
     undergrowth_mode: &UndergrowthMode,
+    shapefiles_dir: Option<PathBuf>,
 ) {
     create_dir_all(&output_dir_path).expect("Could not create out dir");
 
@@ -99,6 +102,7 @@ pub fn process_single_tile_render_step(
         skip_vector,
         skip_520,
         undergrowth_mode,
+        shapefiles_dir,
     );
 }
 

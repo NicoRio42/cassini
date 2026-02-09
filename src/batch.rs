@@ -89,6 +89,7 @@ pub fn batch(
                     skip_vector,
                     skip_520,
                     &cloned_undergrowth_mode,
+                    None,
                 );
             }
 

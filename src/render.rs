@@ -1,6 +1,7 @@
 use crate::constants::INCH;
 use crate::contours::generate_contours_with_pullautin_algorithme;
-use crate::helpers::remove_if_exists;
+use crate::download::download_osm_file;
+use crate::helpers::{remove_dir_content, remove_if_exists};
 use crate::tile::TileWithNeighbors;
 use crate::vectors::render_map_with_osm_vector_shapes;
 use crate::world_file::create_world_file;
@@ -9,8 +10,9 @@ use crate::{
     cliffs::render_cliffs, config::get_config, dem::create_dem_with_buffer_and_slopes_tiff, tile::Tile,
     vegetation::render_vegetation,
 };
-use log::info;
+use log::{error, info};
 use std::path::PathBuf;
+use std::process::{Command, ExitStatus};
 use std::time::Instant;
 
 pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
@@ -19,6 +21,7 @@ pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
     skip_vector: bool,
     skip_520: bool,
     undergrowth_mode: &UndergrowthMode,
+    shapefiles_dir: Option<PathBuf>,
 ) {
     let config = get_config();
     let image_width = ((tile.max_x - tile.min_x) as f32 * config.dpi_resolution / INCH) as u32;
@@ -49,6 +52,101 @@ pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
     let undergrowth_path = tile.render_dir_path.join("undergrowth.png");
     let contours_path = tile.render_dir_path.join("contours.png");
 
+    let shapes_path: Option<PathBuf> = if shapefiles_dir.is_some() {
+        shapefiles_dir
+    } else if !skip_vector {
+        let shapes_output_path = tile.render_dir_path.join("shapes");
+
+        if shapes_output_path.exists() {
+            remove_dir_content(&shapes_output_path).unwrap();
+        }
+
+        let osm_path = tile
+            .render_dir_path
+            .join(format!("{:0>7}_{:0>7}.osm", tile.min_x, tile.max_y));
+
+        if !osm_path.exists() {
+            download_osm_file(
+                tile.min_x,
+                tile.min_y,
+                tile.max_x,
+                tile.max_y,
+                &tile.render_dir_path.to_path_buf(),
+            );
+        }
+
+        info!(
+            "Tile min_x={} min_y={} max_x={} max_y={}. Transforming osm file to shapefiles",
+            tile.min_x, tile.min_y, tile.max_x, tile.max_y
+        );
+
+        let ogr2ogr_output = Command::new("ogr2ogr")
+            .args([
+                "--config",
+                "OSM_USE_CUSTOM_INDEXING",
+                "NO",
+                "-f",
+                "ESRI Shapefile",
+                &shapes_output_path.to_str().unwrap(),
+                &osm_path.to_str().unwrap(),
+                "-t_srs",
+                "EPSG:2154",
+                "-nlt",
+                "MULTIPOLYGON",
+                "-sql",
+                "SELECT * FROM multipolygons",
+            ])
+            .arg("--quiet")
+            .output()
+            .expect("failed to execute ogr2ogr command");
+
+        if !ExitStatus::success(&ogr2ogr_output.status) {
+            error!(
+                "Tile min_x={} min_y={} max_x={} max_y={}. Ogr2ogr command failed {:?}",
+                tile.min_x,
+                tile.min_y,
+                tile.max_x,
+                tile.max_y,
+                String::from_utf8(ogr2ogr_output.stderr).unwrap()
+            );
+        }
+
+        let ogr2ogr_output = Command::new("ogr2ogr")
+            .args([
+                "--config",
+                "OSM_USE_CUSTOM_INDEXING",
+                "NO",
+                "-f",
+                "ESRI Shapefile",
+                &shapes_output_path.to_str().unwrap(),
+                &osm_path.to_str().unwrap(),
+                "-t_srs",
+                "EPSG:2154",
+                "-nlt",
+                "LINESTRING",
+                "-sql",
+                "SELECT * FROM lines",
+            ])
+            .arg("--quiet")
+            .output()
+            .expect("failed to execute ogr2ogr command");
+
+        if !ExitStatus::success(&ogr2ogr_output.status) {
+            error!(
+                "Tile min_x={} min_y={} max_x={} max_y={}. Ogr2ogr command failed {:?}",
+                tile.min_x,
+                tile.min_y,
+                tile.max_x,
+                tile.max_y,
+                String::from_utf8(ogr2ogr_output.stderr).unwrap()
+            );
+        }
+
+        Some(shapes_output_path)
+    } else {
+        None
+    };
+
     render_map_with_osm_vector_shapes(
         &tile,
         image_width,
@@ -59,7 +157,7 @@ pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
         &contours_path,
         &cliffs_path,
         skip_520,
-        skip_vector,
+        shapes_path,
     );
 
     let resolution = INCH / (config.dpi_resolution);

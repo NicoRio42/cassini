@@ -2,22 +2,16 @@ use crate::{
     coastlines::get_polygon_with_holes_from_coastlines,
     config::Config,
     constants::{COASTLINE_EDGE_BUFFER, INCH},
-    download::download_osm_file,
-    helpers::{does_polyline_intersect_tile, remove_dir_content},
+    helpers::does_polyline_intersect_tile,
     map_renderer::MapRenderer,
     tile::Tile,
 };
-use log::{error, info};
+use log::info;
 use shapefile::{
     dbase::{FieldValue, Record},
     read_as, Polygon, Polyline,
 };
-use std::{
-    collections::HashMap,
-    path::PathBuf,
-    process::{Command, ExitStatus},
-    time::Instant,
-};
+use std::{collections::HashMap, path::PathBuf, time::Instant};
 
 pub fn render_map_with_osm_vector_shapes(
     tile: &Tile,
@@ -29,13 +23,8 @@ pub fn render_map_with_osm_vector_shapes(
     contours_path: &PathBuf,
     cliffs_path: &PathBuf,
     skip_520: bool,
-    skip_vector: bool,
+    shapes_path: Option<PathBuf>,
 ) {
-    info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. Transforming osm file to shapefiles",
-        tile.min_x, tile.min_y, tile.max_x, tile.max_y
-    );
-
     let start = Instant::now();
     let scale_factor = config.dpi_resolution / INCH;
 
@@ -52,102 +41,13 @@ pub fn render_map_with_osm_vector_shapes(
         cliffs_path,
     );
 
-    if !skip_vector {
-        let shapes_outlput_path = tile.render_dir_path.join("shapes");
-
-        if shapes_outlput_path.exists() {
-            remove_dir_content(&shapes_outlput_path).unwrap();
-        }
-
-        let osm_path = tile
-            .render_dir_path
-            .join(format!("{:0>7}_{:0>7}.osm", tile.min_x, tile.max_y));
-
-        if !osm_path.exists() {
-            download_osm_file(
-                tile.min_x,
-                tile.min_y,
-                tile.max_x,
-                tile.max_y,
-                &tile.render_dir_path.to_path_buf(),
-            );
-        }
-
-        let ogr2ogr_output = Command::new("ogr2ogr")
-            .args([
-                "--config",
-                "OSM_USE_CUSTOM_INDEXING",
-                "NO",
-                "-f",
-                "ESRI Shapefile",
-                &shapes_outlput_path.to_str().unwrap(),
-                &osm_path.to_str().unwrap(),
-                "-t_srs",
-                "EPSG:2154",
-                "-nlt",
-                "MULTIPOLYGON",
-                "-sql",
-                "SELECT * FROM multipolygons",
-            ])
-            .arg("--quiet")
-            .output()
-            .expect("failed to execute ogr2ogr command");
-
-        if !ExitStatus::success(&ogr2ogr_output.status) {
-            error!(
-                "Tile min_x={} min_y={} max_x={} max_y={}. Ogr2ogr command failed {:?}",
-                tile.min_x,
-                tile.min_y,
-                tile.max_x,
-                tile.max_y,
-                String::from_utf8(ogr2ogr_output.stderr).unwrap()
-            );
-        }
-
-        let ogr2ogr_output = Command::new("ogr2ogr")
-            .args([
-                "--config",
-                "OSM_USE_CUSTOM_INDEXING",
-                "NO",
-                "-f",
-                "ESRI Shapefile",
-                &shapes_outlput_path.to_str().unwrap(),
-                &osm_path.to_str().unwrap(),
-                "-t_srs",
-                "EPSG:2154",
-                "-nlt",
-                "LINESTRING",
-                "-sql",
-                "SELECT * FROM lines",
-            ])
-            .arg("--quiet")
-            .output()
-            .expect("failed to execute ogr2ogr command");
-
-        if !ExitStatus::success(&ogr2ogr_output.status) {
-            error!(
-                "Tile min_x={} min_y={} max_x={} max_y={}. Ogr2ogr command failed {:?}",
-                tile.min_x,
-                tile.min_y,
-                tile.max_x,
-                tile.max_y,
-                String::from_utf8(ogr2ogr_output.stderr).unwrap()
-            );
-        }
-
-        let duration = start.elapsed();
-
-        info!(
-            "Tile min_x={} min_y={} max_x={} max_y={}. Osm files transformed to shapefiles in {:.1?}",
-            tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
-        );
-
+    if let Some(shapes_path) = shapes_path {
         info!(
             "Tile min_x={} min_y={} max_x={} max_y={}. Rendering vectors",
             tile.min_x, tile.min_y, tile.max_x, tile.max_y
         );
 
-        let multipolygons_path = shapes_outlput_path.join("multipolygons.shp");
+        let multipolygons_path = shapes_path.join("multipolygons.shp");
         let multipolygons = read_as::<_, Polygon, Record>(&multipolygons_path)
             .expect("Could not open multipolygons shapefile");
 
@@ -210,7 +110,7 @@ pub fn render_map_with_osm_vector_shapes(
             }
         }
 
-        let lines_path = shapes_outlput_path.join("lines.shp");
+        let lines_path = shapes_path.join("lines.shp");
         let lines = read_as::<_, Polyline, Record>(lines_path).expect("Could not open lines shapefile");
 
         let mut coastlines: Vec<Vec<(f32, f32)>> = vec![];
