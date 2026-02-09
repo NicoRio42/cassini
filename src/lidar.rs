@@ -1,6 +1,6 @@
 use las::raw::Header;
 use log::{error, info};
-use std::fs::{create_dir_all, write, File};
+use std::fs::{create_dir_all, File};
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, ExitStatus, Stdio};

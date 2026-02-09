@@ -1,7 +1,9 @@
 use crate::{
     lidar::generate_dem_and_vegetation_density_tiff_images_from_laz_file,
     merge::merge_maps,
-    render::generate_png_from_dem_vegetation_density_tiff_images_and_vector_file,
+    render::{
+        cleanup_render_step_files, generate_png_from_dem_vegetation_density_tiff_images_and_vector_file,
+    },
     tile::{Tile, TileWithNeighbors},
     UndergrowthMode,
 };
@@ -29,7 +31,9 @@ pub fn batch(
     let tiles_arc = Arc::new(tiles.clone());
     let chunk_size = (tiles.len() + number_of_threads - 1) / number_of_threads;
 
-    if !skip_lidar {
+    if skip_lidar {
+        cleanup_render_step_files(&tiles, output_dir);
+    } else {
         let tiles_chunks: Vec<Vec<TileWithNeighbors>> =
             tiles_arc.chunks(chunk_size).map(|chunk| chunk.to_vec()).collect();
 

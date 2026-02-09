@@ -1,5 +1,7 @@
 use crate::constants::INCH;
 use crate::contours::generate_contours_with_pullautin_algorithme;
+use crate::helpers::remove_if_exists;
+use crate::tile::TileWithNeighbors;
 use crate::vectors::render_map_with_osm_vector_shapes;
 use crate::world_file::create_world_file;
 use crate::UndergrowthMode;
@@ -58,7 +60,6 @@ pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
         &cliffs_path,
         skip_520,
         skip_vector,
-        undergrowth_mode,
     );
 
     let resolution = INCH / (config.dpi_resolution);
@@ -73,4 +74,38 @@ pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
         "Tile min_x={} min_y={} max_x={} max_y={}. Map rendered to png in {:.1?}",
         tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
     );
+}
+
+const RENDER_STEP_FILES: [&str; 16] = [
+    "cliffs.png",
+    "contours",
+    "contours.png",
+    "contours-raw",
+    "dem-low-resolution-with-buffer.tif",
+    "dem-with-buffer.tif",
+    "formlines",
+    "full-map.pgw",
+    "full-map.png",
+    "high-vegetation-with-buffer.tif",
+    "low-vegetation-with-buffer.tif",
+    "medium-vegetation-with-buffer.tif",
+    "shapes",
+    "slopes.tif",
+    "undergrowth.png",
+    "vegetation.png",
+];
+
+pub fn cleanup_render_step_files(tiles: &Vec<TileWithNeighbors>, output_dir: &str) {
+    for tile in tiles {
+        cleanup_render_step_files_for_single_tile(tile);
+    }
+
+    let _ = remove_if_exists(PathBuf::from(output_dir).join("merged-map.pgw"));
+    let _ = remove_if_exists(PathBuf::from(output_dir).join("merged-map.png"));
+}
+
+pub fn cleanup_render_step_files_for_single_tile(tile: &TileWithNeighbors) {
+    for path in RENDER_STEP_FILES {
+        let _ = remove_if_exists(tile.tile.render_dir_path.join(path));
+    }
 }

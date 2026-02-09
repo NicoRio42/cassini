@@ -6,7 +6,6 @@ use crate::{
     helpers::{does_polyline_intersect_tile, remove_dir_content},
     map_renderer::MapRenderer,
     tile::Tile,
-    UndergrowthMode,
 };
 use log::{error, info};
 use shapefile::{
@@ -31,7 +30,6 @@ pub fn render_map_with_osm_vector_shapes(
     cliffs_path: &PathBuf,
     skip_520: bool,
     skip_vector: bool,
-    undergrowth_mode: &UndergrowthMode,
 ) {
     info!(
         "Tile min_x={} min_y={} max_x={} max_y={}. Transforming osm file to shapefiles",
@@ -146,8 +144,6 @@ pub fn render_map_with_osm_vector_shapes(
             "Tile min_x={} min_y={} max_x={} max_y={}. Rendering vectors",
             tile.min_x, tile.min_y, tile.max_x, tile.max_y
         );
-
-        let start = Instant::now();
 
         let multipolygons_path = shapes_outlput_path.join("multipolygons.shp");
         let multipolygons = read_as::<_, Polygon, Record>(&multipolygons_path)
