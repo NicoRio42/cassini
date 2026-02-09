@@ -48,6 +48,7 @@ pub fn render_vegetation(
 
     let mut base_vegetation_img = RgbaImage::from_pixel(image_width, image_height, YELLOW);
     let mut green_vegetation_img = RgbaImage::from_pixel(image_width, image_height, TRANSPARENT);
+    let mut undergrowth_vegetation_img = RgbaImage::from_pixel(image_width, image_height, TRANSPARENT);
 
     for x_index in BUFFER..((tile.max_x + BUFFER as i64 - tile.min_x) as usize) {
         for y_index in BUFFER..((tile.max_y + BUFFER as i64 - tile.min_y) as usize) {
@@ -69,14 +70,14 @@ pub fn render_vegetation(
             let kernel_radius = 2;
             let kernel = get_convolution_kernel_matrix(kernel_radius);
 
-            let medium_vegetation_density = get_average_pixel_value(
-                &low_vegetation,
-                &medium_vegetation,
-                x_index,
-                y_index,
-                &kernel,
-                kernel_radius,
-            );
+            let mut medium_vegetation_density =
+                get_average_pixel_value(&medium_vegetation, x_index, y_index, &kernel, kernel_radius);
+
+            if include_low_veg_in_medium_veg {
+                medium_vegetation_density +=
+                    get_average_pixel_value(&low_vegetation, x_index, y_index, &kernel, kernel_radius);
+            } else {
+            }
 
             let mut green_color: Option<Rgba<u8>> = None;
 
@@ -188,8 +189,7 @@ pub fn get_convolution_kernel_matrix(radius: usize) -> Vec<Vec<f32>> {
 }
 
 fn get_average_pixel_value(
-    low_tif_image: &TifImage,
-    medium_tif_image: &TifImage,
+    tif_image: &TifImage,
     x: usize,
     y: usize,
     kernel: &Vec<Vec<f32>>,
@@ -199,8 +199,8 @@ fn get_average_pixel_value(
         panic!("kernel should be a square matrix of size 2 at least")
     }
 
-    let width = medium_tif_image.width as usize;
-    let height = medium_tif_image.height as usize;
+    let width = tif_image.width as usize;
+    let height = tif_image.height as usize;
     let size = kernel.len();
     let radius_i = kernel_radius as isize;
     let mut weighted_sum = 0.0f32;
@@ -217,11 +217,10 @@ fn get_average_pixel_value(
 
             let nxi = nx as usize;
             let nyi = ny as usize;
-            let low_pixel = low_tif_image.pixels[nyi * width + nxi] as f32;
-            let medium_pixel = medium_tif_image.pixels[nyi * width + nxi] as f32;
+            let pixel = tif_image.pixels[nyi * width + nxi] as f32;
             let weight = kernel[ky][kx];
 
-            weighted_sum += (low_pixel + medium_pixel) * weight;
+            weighted_sum += pixel * weight;
             weight_total += weight;
         }
     }
