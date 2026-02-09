@@ -4,10 +4,11 @@ use std::{
     io::Write,
 };
 
-const DEFAULT_YELLOW_THRESHOLD: f64 = 1.; // Update the docs when modifying
-const DEFAULT_GREEN_THRESHOLD_1: f64 = 0.3; // Update the docs when modifying
-const DEFAULT_GREEN_THRESHOLD_2: f64 = 1.0; // Update the docs when modifying
-const DEFAULT_GREEN_THRESHOLD_3: f64 = 2.0; // Update the docs when modifying
+const DEFAULT_YELLOW_THRESHOLD: f32 = 1.; // Update the docs when modifying
+const DEFAULT_GREEN_THRESHOLD_1: f32 = 1.; // Update the docs when modifying
+const DEFAULT_GREEN_THRESHOLD_2: f32 = 2.; // Update the docs when modifying
+const DEFAULT_GREEN_THRESHOLD_3: f32 = 3.; // Update the docs when modifying
+const DEFAULT_LOW_VEGETATION_DENSITY_THRESHOLD: f32 = 1.; // Update the docs when modifying
 const DEFAULT_CLIFF_THRESHOLD_1: f32 = 60.; // Update the docs when modifying
 const DEFAULT_CLIFF_THRESHOLD_2: f32 = 60.; // Update the docs when modifying
 const DEFAULT_DPI_RESOLUTION: f32 = 600.0; // Update the docs when modifying
@@ -22,13 +23,15 @@ const DEFAULT_FORM_LINES_ADDITIONAL_TAIL_LENGTH: f64 = 15.0; // Update the docs 
 #[derive(Serialize, Deserialize)]
 pub struct Config {
     #[serde(default = "default_yellow_threshold")]
-    pub yellow_threshold: f64,
+    pub yellow_threshold: f32,
     #[serde(default = "default_green_threshold_1")]
-    pub green_threshold_1: f64,
+    pub green_threshold_1: f32,
     #[serde(default = "default_green_threshold_2")]
-    pub green_threshold_2: f64,
+    pub green_threshold_2: f32,
     #[serde(default = "default_green_threshold_3")]
-    pub green_threshold_3: f64,
+    pub green_threshold_3: f32,
+    #[serde(default = "default_low_vegetation_density_threshold")]
+    pub low_vegetation_density_threshold: f32,
     #[serde(default = "default_cliff_threshold_1")]
     pub cliff_threshold_1: f32,
     #[serde(default = "default_cliff_threshold_2")]
@@ -80,20 +83,24 @@ pub fn default_config() {
     file.write_all(json_string.as_bytes()).unwrap();
 }
 
-fn default_yellow_threshold() -> f64 {
+fn default_yellow_threshold() -> f32 {
     DEFAULT_YELLOW_THRESHOLD
 }
 
-fn default_green_threshold_1() -> f64 {
+fn default_green_threshold_1() -> f32 {
     DEFAULT_GREEN_THRESHOLD_1
 }
 
-fn default_green_threshold_2() -> f64 {
+fn default_green_threshold_2() -> f32 {
     DEFAULT_GREEN_THRESHOLD_2
 }
 
-fn default_green_threshold_3() -> f64 {
+fn default_green_threshold_3() -> f32 {
     DEFAULT_GREEN_THRESHOLD_3
+}
+
+fn default_low_vegetation_density_threshold() -> f32 {
+    DEFAULT_LOW_VEGETATION_DENSITY_THRESHOLD
 }
 
 fn default_cliff_threshold_1() -> f32 {

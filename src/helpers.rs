@@ -1,6 +1,6 @@
 use std::{
     fs::{read_dir, remove_dir_all, remove_file},
-    io,
+    io::{self, ErrorKind},
     path::Path,
 };
 
@@ -17,6 +17,17 @@ pub fn remove_dir_content<P: AsRef<Path>>(path: P) -> io::Result<()> {
     }
 
     Ok(())
+}
+
+pub fn remove_if_exists<P: AsRef<Path>>(path: P) -> std::io::Result<()> {
+    let path = path.as_ref();
+
+    match std::fs::metadata(path) {
+        Ok(meta) if meta.is_dir() => remove_dir_all(path),
+        Ok(_) => remove_file(path),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
 }
 
 pub fn does_segment_intersect_tile(

@@ -16,7 +16,7 @@ cassini config
 <p>
 
 **Type:** `number`<br />
-**Default:** `0.5`
+**Default:** `1.0`
 
 </p>
 
@@ -24,7 +24,7 @@ The number of points below which a one meter by one meter cell will be yellow ([
 
 ```json
 {
-  "yellow_threshold": 0.5
+  "yellow_threshold": 1.0
 }
 ```
 
@@ -33,7 +33,7 @@ The number of points below which a one meter by one meter cell will be yellow ([
 <p>
 
 **Type:** `number`<br />
-**Default:** `0.2`
+**Default:** `1.0`
 
 </p>
 
@@ -41,28 +41,15 @@ The number of points above which a one meter by one meter cell will be light gre
 
 ```json
 {
-  "green_threshold_1": 0.2
+  "green_threshold_1": 1.0
 }
 ```
+
+:::caution
+Default values are optimized for `merged` undergrowth mode (see [the `--undergrowth` option](/reference/cli-reference#--undergrowth)). You might want to adjust these values if you are using another undergrowth rendering mode.
+:::
 
 ## Green threshold 2
-
-<p>
-
-**Type:** `number`<br />
-**Default:** `1.0`
-
-</p>
-
-The number of points above which a one meter by one meter cell will be medium green ([ISOM 408 Vegetation, walk](https://omapwiki.orienteering.sport/symbols/408-vegetation-walk/)).
-
-```json
-{
-  "green_threshold_2": 1.0
-}
-```
-
-## Green threshold 3
 
 <p>
 
@@ -71,11 +58,53 @@ The number of points above which a one meter by one meter cell will be medium gr
 
 </p>
 
+The number of points above which a one meter by one meter cell will be medium green ([ISOM 408 Vegetation, walk](https://omapwiki.orienteering.sport/symbols/408-vegetation-walk/)).
+
+```json
+{
+  "green_threshold_2": 2.0
+}
+```
+
+:::caution
+Default values are optimized for `merged` undergrowth mode (see [the `--undergrowth` option](/reference/cli-reference#--undergrowth)). You might want to adjust these values if you are using another undergrowth rendering mode.
+:::
+
+## Green threshold 3
+
+<p>
+
+**Type:** `number`<br />
+**Default:** `3.0`
+
+</p>
+
 The number of points above which a one meter by one meter cell will be dark green ([ISOM 410 Vegetation, fight](https://omapwiki.orienteering.sport/symbols/410-vegetation-fight/)).
 
 ```json
 {
-  "green_threshold_3": 2.0
+  "green_threshold_3": 3.0
+}
+```
+
+:::caution
+Default values are optimized for `merged` undergrowth mode (see [the `--undergrowth` option](/reference/cli-reference#--undergrowth)). You might want to adjust these values if you are using another undergrowth rendering mode.
+:::
+
+## Low vegetation density threshold
+
+<p>
+
+**Type:** `number`<br />
+**Default:** `1.0`
+
+</p>
+
+The density value above which a one meter by one meter cell will be drawn as undergrowth vegetation. See the `--undergrowth` option for more details on undergrowth rendering.
+
+```json
+{
+  "low_vegetation_density_threshold": 1.0
 }
 ```
 
