@@ -114,7 +114,7 @@ pub fn render_vegetation(
                         _ => None,
                     };
 
-                    if low_vegetation_density > 1.0 {
+                    if low_vegetation_density > config.low_vegetation_density_threshold {
                         match undergrowth_color {
                             Some(color) => {
                                 draw_filled_rect_mut(

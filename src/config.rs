@@ -8,6 +8,7 @@ const DEFAULT_YELLOW_THRESHOLD: f32 = 1.; // Update the docs when modifying
 const DEFAULT_GREEN_THRESHOLD_1: f32 = 1.; // Update the docs when modifying
 const DEFAULT_GREEN_THRESHOLD_2: f32 = 2.; // Update the docs when modifying
 const DEFAULT_GREEN_THRESHOLD_3: f32 = 3.; // Update the docs when modifying
+const DEFAULT_LOW_VEGETATION_DENSITY_THRESHOLD: f32 = 1.; // Update the docs when modifying
 const DEFAULT_CLIFF_THRESHOLD_1: f32 = 60.; // Update the docs when modifying
 const DEFAULT_CLIFF_THRESHOLD_2: f32 = 60.; // Update the docs when modifying
 const DEFAULT_DPI_RESOLUTION: f32 = 600.0; // Update the docs when modifying
@@ -29,6 +30,8 @@ pub struct Config {
     pub green_threshold_2: f32,
     #[serde(default = "default_green_threshold_3")]
     pub green_threshold_3: f32,
+    #[serde(default = "default_low_vegetation_density_threshold")]
+    pub low_vegetation_density_threshold: f32,
     #[serde(default = "default_cliff_threshold_1")]
     pub cliff_threshold_1: f32,
     #[serde(default = "default_cliff_threshold_2")]
@@ -94,6 +97,10 @@ fn default_green_threshold_2() -> f32 {
 
 fn default_green_threshold_3() -> f32 {
     DEFAULT_GREEN_THRESHOLD_3
+}
+
+fn default_low_vegetation_density_threshold() -> f32 {
+    DEFAULT_LOW_VEGETATION_DENSITY_THRESHOLD
 }
 
 fn default_cliff_threshold_1() -> f32 {
