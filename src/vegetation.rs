@@ -99,7 +99,7 @@ pub fn render_vegetation(
                         medium_vegetation_kernel_radius,
                     );
                 }
-                UndergrowthMode::Symbol406 => {
+                UndergrowthMode::Symbol406 | UndergrowthMode::Symbol409 => {
                     let low_vegetation_density = get_average_pixel_value(
                         &low_vegetation,
                         x_index,
@@ -108,31 +108,26 @@ pub fn render_vegetation(
                         low_vegetation_kernel_radius,
                     );
 
-                    if low_vegetation_density > 1.0 {
-                        draw_filled_rect_mut(
-                            &mut undergrowth_vegetation_img,
-                            Rect::at(x_pixel, y_pixel)
-                                .of_size(casted_green_block_size_pixel, casted_green_block_size_pixel),
-                            GREEN_1,
-                        );
-                    }
-                }
-                UndergrowthMode::Symbol409 => {
-                    let low_vegetation_density = get_average_pixel_value(
-                        &low_vegetation,
-                        x_index,
-                        y_index,
-                        &low_vegetation_kernel,
-                        low_vegetation_kernel_radius,
-                    );
+                    let undergrowth_color = match undergrowth_mode {
+                        UndergrowthMode::Symbol406 => Some(GREEN_1),
+                        UndergrowthMode::Symbol409 => Some(GREEN_3),
+                        _ => None,
+                    };
 
                     if low_vegetation_density > 1.0 {
-                        draw_filled_rect_mut(
-                            &mut undergrowth_vegetation_img,
-                            Rect::at(x_pixel, y_pixel)
-                                .of_size(casted_green_block_size_pixel, casted_green_block_size_pixel),
-                            GREEN_3,
-                        );
+                        match undergrowth_color {
+                            Some(color) => {
+                                draw_filled_rect_mut(
+                                    &mut undergrowth_vegetation_img,
+                                    Rect::at(x_pixel, y_pixel).of_size(
+                                        casted_green_block_size_pixel,
+                                        casted_green_block_size_pixel,
+                                    ),
+                                    color,
+                                );
+                            }
+                            _ => (),
+                        }
                     }
                 }
                 UndergrowthMode::None => {}

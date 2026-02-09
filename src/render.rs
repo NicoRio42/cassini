@@ -1,4 +1,3 @@
-use crate::canvas::Canvas;
 use crate::constants::INCH;
 use crate::contours::generate_contours_with_pullautin_algorithme;
 use crate::vectors::render_map_with_osm_vector_shapes;
