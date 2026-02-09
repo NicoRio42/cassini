@@ -1,15 +1,16 @@
 use crate::{
     buffer::create_tif_with_buffer,
-    canvas::Canvas,
     config::Config,
     constants::{BUFFER, GREEN_1, GREEN_2, GREEN_3, INCH, TRANSPARENT, VEGETATION_BLOCK_SIZE, WHITE, YELLOW},
     tile::Tile,
 };
 use image::{imageops, Rgba, RgbaImage};
-use imageproc::drawing::draw_filled_ellipse_mut;
+use imageproc::{
+    drawing::{draw_filled_ellipse_mut, draw_filled_rect_mut},
+    rect::Rect,
+};
 use log::info;
-use skia_safe::{Data, Image};
-use std::{fs::File, path::PathBuf, time::Instant, u8};
+use std::{f32::consts::E, fs::File, path::PathBuf, time::Instant, u8};
 use tiff::decoder::{Decoder, DecodingResult};
 
 pub fn render_vegetation(
@@ -19,6 +20,8 @@ pub fn render_vegetation(
     image_height: u32,
     config: &Config,
 ) {
+    let include_low_veg_in_medium_veg = false;
+
     info!(
         "Tile min_x={} min_y={} max_x={} max_y={}. Rendering vegetation",
         tile.min_x, tile.min_y, tile.max_x, tile.max_y
@@ -27,10 +30,12 @@ pub fn render_vegetation(
     let start = Instant::now();
 
     let vegetation_block_size_pixel = VEGETATION_BLOCK_SIZE as f32 * config.dpi_resolution / INCH;
-    let casted_vegetation_block_size_pixel = (vegetation_block_size_pixel * 2.).ceil() as i32;
+    let casted_base_vegetation_block_size_pixel = (vegetation_block_size_pixel * 2.).ceil() as i32;
+    let casted_green_block_size_pixel = (vegetation_block_size_pixel).ceil() as u32;
 
     create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "high-vegetation", 1.0);
     create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "medium-vegetation", 1.0);
+    create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "low-vegetation", 1.0);
 
     let high_vegetation =
         get_image_data_from_tif(&tile.render_dir_path.join("high-vegetation-with-buffer.tif"));
@@ -38,8 +43,11 @@ pub fn render_vegetation(
     let medium_vegetation =
         get_image_data_from_tif(&tile.render_dir_path.join("medium-vegetation-with-buffer.tif"));
 
+    let low_vegetation =
+        get_image_data_from_tif(&tile.render_dir_path.join("low-vegetation-with-buffer.tif"));
+
     let mut base_vegetation_img = RgbaImage::from_pixel(image_width, image_height, YELLOW);
-    let mut green_1_vegetation_img = RgbaImage::from_pixel(image_width, image_height, TRANSPARENT);
+    let mut green_vegetation_img = RgbaImage::from_pixel(image_width, image_height, TRANSPARENT);
 
     for x_index in BUFFER..((tile.max_x + BUFFER as i64 - tile.min_x) as usize) {
         for y_index in BUFFER..((tile.max_y + BUFFER as i64 - tile.min_y) as usize) {
@@ -52,32 +60,40 @@ pub fn render_vegetation(
                 draw_filled_ellipse_mut(
                     &mut base_vegetation_img,
                     (x_pixel, y_pixel),
-                    casted_vegetation_block_size_pixel,
-                    casted_vegetation_block_size_pixel,
+                    casted_base_vegetation_block_size_pixel,
+                    casted_base_vegetation_block_size_pixel,
                     WHITE,
                 );
             }
 
-            let medium_vegetation_density = get_min_value_in_circle(&medium_vegetation, x_index, y_index);
+            let kernel_radius = 2;
+            let kernel = get_convolution_kernel_matrix(kernel_radius);
+
+            let medium_vegetation_density = get_average_pixel_value(
+                &low_vegetation,
+                &medium_vegetation,
+                x_index,
+                y_index,
+                &kernel,
+                kernel_radius,
+            );
 
             let mut green_color: Option<Rgba<u8>> = None;
 
-            // if medium_vegetation_density > config.green_threshold_3 as u8 {
-            //     green_color = Some(GREEN_3);
-            // } else if medium_vegetation_density > config.green_threshold_2 as u8 {
-            //     green_color = Some(GREEN_2);
-            // } else
-            if medium_vegetation_density > config.green_threshold_1 as u8 {
+            if medium_vegetation_density > config.green_threshold_3 {
+                green_color = Some(GREEN_3);
+            } else if medium_vegetation_density > config.green_threshold_2 {
+                green_color = Some(GREEN_2);
+            } else if medium_vegetation_density > config.green_threshold_1 {
                 green_color = Some(GREEN_1);
             }
 
             match green_color {
                 Some(color) => {
-                    draw_filled_ellipse_mut(
-                        &mut green_1_vegetation_img,
-                        (x_pixel, y_pixel),
-                        casted_vegetation_block_size_pixel,
-                        casted_vegetation_block_size_pixel,
+                    draw_filled_rect_mut(
+                        &mut green_vegetation_img,
+                        Rect::at(x_pixel, y_pixel)
+                            .of_size(casted_green_block_size_pixel, casted_green_block_size_pixel),
                         color,
                     );
                 }
@@ -86,7 +102,7 @@ pub fn render_vegetation(
         }
     }
 
-    imageops::overlay(&mut base_vegetation_img, &green_1_vegetation_img, 0, 0);
+    imageops::overlay(&mut base_vegetation_img, &green_vegetation_img, 0, 0);
     let vegetation_output_path = tile.render_dir_path.join("vegetation.png");
 
     base_vegetation_img
@@ -138,6 +154,83 @@ fn get_min_value_in_circle(tif_image: &TifImage, x_index: usize, y_index: usize)
     }
 
     return min;
+}
+
+pub fn get_convolution_kernel_matrix(radius: usize) -> Vec<Vec<f32>> {
+    let size = 2 * radius + 1;
+    let sigma = radius as f32 / 2.0_f32; // avoid sigma = 0
+    let two_sigma_sq = 2.0 * sigma * sigma;
+
+    let mut kernel = vec![vec![0.0; size]; size];
+    let mut sum = 0.0;
+
+    let center = radius as isize;
+
+    for y in 0..size {
+        for x in 0..size {
+            let dx = x as isize - center;
+            let dy = y as isize - center;
+
+            let value = E.powf(-((dx * dx + dy * dy) as f32) / two_sigma_sq);
+            kernel[y][x] = value;
+            sum += value;
+        }
+    }
+
+    // Normalize so the kernel sums to 1.0
+    for row in kernel.iter_mut() {
+        for v in row.iter_mut() {
+            *v /= sum;
+        }
+    }
+
+    kernel
+}
+
+fn get_average_pixel_value(
+    low_tif_image: &TifImage,
+    medium_tif_image: &TifImage,
+    x: usize,
+    y: usize,
+    kernel: &Vec<Vec<f32>>,
+    kernel_radius: usize,
+) -> f32 {
+    if kernel.len() <= 1 || kernel[0].len() <= 1 {
+        panic!("kernel should be a square matrix of size 2 at least")
+    }
+
+    let width = medium_tif_image.width as usize;
+    let height = medium_tif_image.height as usize;
+    let size = kernel.len();
+    let radius_i = kernel_radius as isize;
+    let mut weighted_sum = 0.0f32;
+    let mut weight_total = 0.0f32;
+
+    for ky in 0..size {
+        for kx in 0..size {
+            let nx = x as isize + kx as isize - radius_i;
+            let ny = y as isize + ky as isize - radius_i;
+
+            if nx < 0 || ny < 0 || nx >= width as isize || ny >= height as isize {
+                continue;
+            }
+
+            let nxi = nx as usize;
+            let nyi = ny as usize;
+            let low_pixel = low_tif_image.pixels[nyi * width + nxi] as f32;
+            let medium_pixel = medium_tif_image.pixels[nyi * width + nxi] as f32;
+            let weight = kernel[ky][kx];
+
+            weighted_sum += (low_pixel + medium_pixel) * weight;
+            weight_total += weight;
+        }
+    }
+
+    if weight_total > 0.0 {
+        return weighted_sum / weight_total;
+    }
+
+    return 0.;
 }
 
 struct TifImage {

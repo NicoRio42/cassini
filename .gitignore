@@ -10,3 +10,4 @@ osm
 *.laz
 *.las
 lidar
+run.sh
