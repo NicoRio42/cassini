@@ -8,10 +8,11 @@ use crate::{
         FOOTPATH_WIDTH, INCH, INCROSSABLE_BODY_OF_WATER_OUTLINE_WIDTH, MARSH_LINE_SPACING, MARSH_LINE_WIDTH,
         MINOR_WATERCOURSE_DASH_INTERVAL_LENGTH, MINOR_WATERCOURSE_DASH_LENGTH, MINOR_WATERCOURSE_WIDTH,
         POWERLINE_WIDTH, RAILWAY_DASH_INTERVAL_LENGTH, RAILWAY_DASH_LENGTH, RAILWAY_INNER_WIDTH,
-        RAILWAY_OUTER_WIDTH, ROAD_WIDTH, VECTOR_BLACK, VECTOR_BLUE, VECTOR_BUILDING_GRAY, VECTOR_OLIVE_GREEN,
-        VECTOR_PAVED_AREA_BROWN, VECTOR_WHITE, WIDE_ROAD_INNER_WIDTH, WIDE_ROAD_OUTER_WIDTH,
-        XL_WIDE_ROAD_INNER_WIDTH, XL_WIDE_ROAD_OUTER_WIDTH, XXL_WIDE_ROAD_INNER_WIDTH,
-        XXL_WIDE_ROAD_OUTER_WIDTH, _MAJOR_POWERLINE_INNER_WIDTH, _MAJOR_POWERLINE_OUTER_WIDTH,
+        RAILWAY_OUTER_WIDTH, ROAD_WIDTH, UNDERGROWTH_LINE_SPACING, UNDERGROWTH_LINE_WIDTH, VECTOR_BLACK,
+        VECTOR_BLUE, VECTOR_BUILDING_GRAY, VECTOR_OLIVE_GREEN, VECTOR_PAVED_AREA_BROWN, VECTOR_WHITE,
+        WIDE_ROAD_INNER_WIDTH, WIDE_ROAD_OUTER_WIDTH, XL_WIDE_ROAD_INNER_WIDTH, XL_WIDE_ROAD_OUTER_WIDTH,
+        XXL_WIDE_ROAD_INNER_WIDTH, XXL_WIDE_ROAD_OUTER_WIDTH, _MAJOR_POWERLINE_INNER_WIDTH,
+        _MAJOR_POWERLINE_OUTER_WIDTH,
     },
 };
 use shapefile::{
@@ -19,8 +20,14 @@ use shapefile::{
     Point, PolygonRing,
 };
 
+enum StripeDirection {
+    Horizontal,
+    Vertical,
+}
+
 pub struct MapRenderer {
     vegetation_img: Canvas,
+    undergrowth_img: Option<Canvas>,
     olive_green_img: Canvas,
     light_brown_img: Canvas,
     blue_img: Canvas,
@@ -49,11 +56,19 @@ impl MapRenderer {
         scale_factor: f32,
         dpi_resolution: f32,
         vegetation_path: &PathBuf,
+        undergrowth_path: &PathBuf,
         contours_path: &PathBuf,
         cliffs_path: &PathBuf,
     ) -> MapRenderer {
+        let undergrowth_img = if undergrowth_path.is_file() {
+            Some(Canvas::load_from(undergrowth_path.to_str().unwrap()))
+        } else {
+            None
+        };
+
         return MapRenderer {
             vegetation_img: Canvas::load_from(vegetation_path.to_str().unwrap()),
+            undergrowth_img,
             olive_green_img: Canvas::new(image_width as i32, image_height as i32),
             light_brown_img: Canvas::new(image_width as i32, image_height as i32),
             blue_img: Canvas::new(image_width as i32, image_height as i32),
@@ -386,26 +401,78 @@ impl MapRenderer {
     }
 
     #[inline]
+    fn draw_stripes(
+        image: &mut Canvas,
+        image_width: u32,
+        image_height: u32,
+        dpi_resolution: f32,
+        line_width: f32,
+        spacing: f32,
+        direction: StripeDirection,
+    ) {
+        let pixel_marsh_interval = (line_width + spacing) * dpi_resolution * 10.0 / INCH;
+        image.set_transparent_color();
+
+        match direction {
+            StripeDirection::Horizontal => {
+                let number_of_stripes = image_height / pixel_marsh_interval as u32;
+
+                for i in 0..number_of_stripes {
+                    let min_y = i as f32 * pixel_marsh_interval;
+                    let max_y = min_y + spacing * dpi_resolution * 10.0 / INCH;
+
+                    image.draw_filled_polygon(&vec![
+                        (0., min_y),
+                        (image_width as f32, min_y),
+                        (image_width as f32, max_y),
+                        (0., max_y),
+                        (0., min_y),
+                    ]);
+                }
+            }
+            StripeDirection::Vertical => {
+                let number_of_stripes = image_width / pixel_marsh_interval as u32;
+
+                for i in 0..number_of_stripes {
+                    let min_x = i as f32 * pixel_marsh_interval;
+                    let max_x = min_x + spacing * dpi_resolution * 10.0 / INCH;
+
+                    image.draw_filled_polygon(&vec![
+                        (min_x, 0.),
+                        (max_x, 0.),
+                        (max_x, image_height as f32),
+                        (min_x, image_height as f32),
+                        (min_x, 0.),
+                    ]);
+                }
+            }
+        }
+    }
+
+    #[inline]
     pub fn save_as(mut self, path: PathBuf) {
-        let pixel_marsh_interval =
-            (MARSH_LINE_WIDTH + MARSH_LINE_SPACING) * self.dpi_resolution * 10.0 / INCH;
+        Self::draw_stripes(
+            &mut self.striped_blue_img,
+            self.image_width,
+            self.image_height,
+            self.dpi_resolution,
+            MARSH_LINE_WIDTH,
+            MARSH_LINE_SPACING,
+            StripeDirection::Horizontal,
+        );
 
-        let number_of_stripes = self.image_height / pixel_marsh_interval as u32;
-        self.striped_blue_img.set_transparent_color();
+        if let Some(ref mut undergrowth_img) = self.undergrowth_img {
+            Self::draw_stripes(
+                undergrowth_img,
+                self.image_width,
+                self.image_height,
+                self.dpi_resolution,
+                UNDERGROWTH_LINE_WIDTH,
+                UNDERGROWTH_LINE_SPACING,
+                StripeDirection::Vertical,
+            );
 
-        for i in 0..number_of_stripes {
-            let min_y = i as f32 * pixel_marsh_interval;
-
-            let max_y =
-                i as f32 * pixel_marsh_interval + MARSH_LINE_SPACING * self.dpi_resolution * 10.0 / INCH;
-
-            self.striped_blue_img.draw_filled_polygon(&vec![
-                (0., min_y),
-                (self.image_width as f32, min_y),
-                (self.image_width as f32, max_y),
-                (0. as f32, max_y),
-                (0. as f32, min_y),
-            ])
+            self.vegetation_img.overlay(undergrowth_img, 0., 0.);
         }
 
         self.vegetation_img.overlay(&mut self.olive_green_img, 0., 0.);

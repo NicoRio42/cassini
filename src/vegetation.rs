@@ -20,6 +20,7 @@ pub fn render_vegetation(
     image_height: u32,
     config: &Config,
 ) {
+    let draw_low_veg = true;
     let include_low_veg_in_medium_veg = false;
 
     info!(
@@ -50,6 +51,11 @@ pub fn render_vegetation(
     let mut green_vegetation_img = RgbaImage::from_pixel(image_width, image_height, TRANSPARENT);
     let mut undergrowth_vegetation_img = RgbaImage::from_pixel(image_width, image_height, TRANSPARENT);
 
+    let medium_vegetation_kernel_radius = 2;
+    let medium_vegetation_kernel = get_convolution_kernel_matrix(medium_vegetation_kernel_radius);
+    let low_vegetation_kernel_radius = 4;
+    let low_vegetation_kernel = get_convolution_kernel_matrix(low_vegetation_kernel_radius);
+
     for x_index in BUFFER..((tile.max_x + BUFFER as i64 - tile.min_x) as usize) {
         for y_index in BUFFER..((tile.max_y + BUFFER as i64 - tile.min_y) as usize) {
             let x_pixel = ((x_index - BUFFER) as f32 * vegetation_block_size_pixel) as i32;
@@ -67,16 +73,39 @@ pub fn render_vegetation(
                 );
             }
 
-            let kernel_radius = 2;
-            let kernel = get_convolution_kernel_matrix(kernel_radius);
-
-            let mut medium_vegetation_density =
-                get_average_pixel_value(&medium_vegetation, x_index, y_index, &kernel, kernel_radius);
+            let mut medium_vegetation_density = get_average_pixel_value(
+                &medium_vegetation,
+                x_index,
+                y_index,
+                &medium_vegetation_kernel,
+                medium_vegetation_kernel_radius,
+            );
 
             if include_low_veg_in_medium_veg {
-                medium_vegetation_density +=
-                    get_average_pixel_value(&low_vegetation, x_index, y_index, &kernel, kernel_radius);
-            } else {
+                medium_vegetation_density += get_average_pixel_value(
+                    &low_vegetation,
+                    x_index,
+                    y_index,
+                    &medium_vegetation_kernel,
+                    medium_vegetation_kernel_radius,
+                );
+            } else if draw_low_veg {
+                let low_vegetation_density = get_average_pixel_value(
+                    &low_vegetation,
+                    x_index,
+                    y_index,
+                    &low_vegetation_kernel,
+                    low_vegetation_kernel_radius,
+                );
+
+                if low_vegetation_density > 1.0 {
+                    draw_filled_rect_mut(
+                        &mut undergrowth_vegetation_img,
+                        Rect::at(x_pixel, y_pixel)
+                            .of_size(casted_green_block_size_pixel, casted_green_block_size_pixel),
+                        GREEN_3,
+                    );
+                }
             }
 
             let mut green_color: Option<Rgba<u8>> = None;
@@ -108,7 +137,15 @@ pub fn render_vegetation(
 
     base_vegetation_img
         .save(vegetation_output_path)
-        .expect("could not save output png");
+        .expect("could not save vegetation output png");
+
+    if draw_low_veg {
+        let undergrowth_output_path = tile.render_dir_path.join("undergrowth.png");
+
+        undergrowth_vegetation_img
+            .save(undergrowth_output_path)
+            .expect("could not save undergrowth output png");
+    }
 
     let duration = start.elapsed();
 

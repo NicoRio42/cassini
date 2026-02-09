@@ -25,6 +25,7 @@ pub fn render_map_with_osm_vector_shapes(
     image_height: u32,
     config: &Config,
     vegetation_path: &PathBuf,
+    undergrowth_path: &PathBuf,
     contours_path: &PathBuf,
     cliffs_path: &PathBuf,
     skip_520: bool,
@@ -143,6 +144,7 @@ pub fn render_map_with_osm_vector_shapes(
         scale_factor,
         config.dpi_resolution,
         vegetation_path,
+        undergrowth_path,
         contours_path,
         cliffs_path,
     );

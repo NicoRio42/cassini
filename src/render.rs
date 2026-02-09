@@ -35,6 +35,7 @@ pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
 
     let cliffs_path = tile.render_dir_path.join("cliffs.png");
     let vegetation_path = tile.render_dir_path.join("vegetation.png");
+    let undergrowth_path = tile.render_dir_path.join("undergrowth.png");
     let contours_path = tile.render_dir_path.join("contours.png");
 
     if skip_vector {
@@ -54,6 +55,7 @@ pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
             image_height,
             &config,
             &vegetation_path,
+            &undergrowth_path,
             &contours_path,
             &cliffs_path,
             skip_520,
