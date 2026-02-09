@@ -59,17 +59,19 @@ pub fn render_map_with_osm_vector_shapes(
             remove_dir_content(&shapes_outlput_path).unwrap();
         }
 
-        download_osm_file(
-            tile.min_x,
-            tile.min_y,
-            tile.max_x,
-            tile.max_y,
-            &tile.render_dir_path.to_path_buf(),
-        );
-
         let osm_path = tile
             .render_dir_path
             .join(format!("{:0>7}_{:0>7}.osm", tile.min_x, tile.max_y));
+
+        if !osm_path.exists() {
+            download_osm_file(
+                tile.min_x,
+                tile.min_y,
+                tile.max_x,
+                tile.max_y,
+                &tile.render_dir_path.to_path_buf(),
+            );
+        }
 
         let ogr2ogr_output = Command::new("ogr2ogr")
             .args([

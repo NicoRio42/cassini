@@ -99,7 +99,7 @@ out skel qt;
         }
 
         retries_left -= 1;
-        sleep(std::time::Duration::from_secs(2));
+        sleep(std::time::Duration::from_secs(5));
     };
 
     let mut file = File::create(&raw_osm_file_path).expect("Could not create file for osm download.");

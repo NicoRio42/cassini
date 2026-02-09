@@ -100,8 +100,13 @@ pub fn cleanup_render_step_files(tiles: &Vec<TileWithNeighbors>, output_dir: &st
         cleanup_render_step_files_for_single_tile(tile);
     }
 
-    let _ = remove_if_exists(PathBuf::from(output_dir).join("merged-map.pgw"));
-    let _ = remove_if_exists(PathBuf::from(output_dir).join("merged-map.png"));
+    if let Ok(entries) = std::fs::read_dir(output_dir) {
+        for entry in entries.flatten() {
+            if entry.file_name().to_string_lossy().starts_with("merged-map") {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
 }
 
 pub fn cleanup_render_step_files_for_single_tile(tile: &TileWithNeighbors) {
