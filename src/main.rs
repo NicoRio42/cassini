@@ -1,6 +1,6 @@
 use cassini::{
-    batch_process_tiles, generate_default_config, process_single_tile,
-    process_single_tile_lidar_step, process_single_tile_render_step,
+    batch_process_tiles, generate_default_config, process_single_tile, process_single_tile_lidar_step,
+    process_single_tile_render_step, UndergrowthMode,
 };
 use clap::{CommandFactory, Parser, Subcommand};
 use log::info;
@@ -44,6 +44,14 @@ pub enum Commands {
             help = "Prevent the vector renderer to draw the 520 (area that shall not be entered) symbol"
         )]
         skip_520: bool,
+
+        #[arg(
+            long,
+            value_enum,
+            help = "Undergrowth rendering mode",
+            default_value = "merge"
+        )]
+        undergrowth: UndergrowthMode,
     },
 
     /// Run only the LiDAR processing step for a single tile
@@ -62,9 +70,7 @@ pub enum Commands {
 
     /// Run only the map generation step for a single tile
     Render {
-        #[arg(
-            help = "The path to the directory containing the output of the LiDAR processing step"
-        )]
+        #[arg(help = "The path to the directory containing the output of the LiDAR processing step")]
         input_dir: String,
 
         #[arg(
@@ -90,6 +96,14 @@ pub enum Commands {
             help = "Prevent the vector renderer to draw the 520 (area that shall not be entered) symbol"
         )]
         skip_520: bool,
+
+        #[arg(
+            long,
+            value_enum,
+            help = "Undergrowth rendering mode",
+            default_value = "merge"
+        )]
+        undergrowth: UndergrowthMode,
     },
 
     /// Process multiple LiDAR files at once
@@ -130,6 +144,14 @@ pub enum Commands {
             help = "Prevent the vector renderer to draw the 520 (area that shall not be entered) symbol"
         )]
         skip_520: bool,
+
+        #[arg(
+            long,
+            value_enum,
+            help = "Undergrowth rendering mode",
+            default_value = "merge"
+        )]
+        undergrowth: UndergrowthMode,
     },
 
     /// Output a default config.json file.
@@ -172,6 +194,7 @@ fn main() {
                 output_dir: maybe_output_dir,
                 skip_vector,
                 skip_520,
+                undergrowth,
             } => {
                 info!("Tile processing");
                 let start = Instant::now();
@@ -179,7 +202,7 @@ fn main() {
                 let output_dir = maybe_output_dir.unwrap_or("tile".to_owned());
                 let laz_path = Path::new(&file_path).to_path_buf();
                 let dir_path = Path::new(&output_dir).to_path_buf();
-                process_single_tile(&laz_path, &dir_path, skip_vector, skip_520);
+                process_single_tile(&laz_path, &dir_path, skip_vector, skip_520, &undergrowth);
 
                 let duration = start.elapsed();
                 info!("Tile generated in {:.1?}", duration);
@@ -207,6 +230,7 @@ fn main() {
                 neighbors,
                 skip_vector,
                 skip_520,
+                undergrowth,
             } => {
                 info!("Map rendering");
                 let start = Instant::now();
@@ -233,6 +257,7 @@ fn main() {
                     neighbor_tiles,
                     skip_vector,
                     skip_520,
+                    &undergrowth,
                 );
 
                 let duration = start.elapsed();
@@ -246,6 +271,7 @@ fn main() {
                 skip_lidar,
                 skip_vector,
                 skip_520,
+                undergrowth,
             } => {
                 info!("Batch processing");
                 let start = Instant::now();
@@ -253,6 +279,7 @@ fn main() {
                 let input_dir = maybe_input_dir.unwrap_or("in".to_owned());
                 let output_dir = maybe_output_dir.unwrap_or("out".to_owned());
                 let threads = maybe_threads.unwrap_or(3);
+
                 batch_process_tiles(
                     &input_dir,
                     &output_dir,
@@ -260,6 +287,7 @@ fn main() {
                     skip_lidar,
                     skip_vector,
                     skip_520,
+                    &undergrowth,
                 );
 
                 let duration = start.elapsed();

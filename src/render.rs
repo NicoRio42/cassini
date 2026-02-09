@@ -3,6 +3,7 @@ use crate::constants::INCH;
 use crate::contours::generate_contours_with_pullautin_algorithme;
 use crate::vectors::render_map_with_osm_vector_shapes;
 use crate::world_file::create_world_file;
+use crate::UndergrowthMode;
 use crate::{
     cliffs::render_cliffs, config::get_config, dem::create_dem_with_buffer_and_slopes_tiff, tile::Tile,
     vegetation::render_vegetation,
@@ -16,12 +17,21 @@ pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
     neighbor_tiles: Vec<PathBuf>,
     skip_vector: bool,
     skip_520: bool,
+    undergrowth_mode: &UndergrowthMode,
 ) {
     let config = get_config();
     let image_width = ((tile.max_x - tile.min_x) as f32 * config.dpi_resolution / INCH) as u32;
     let image_height = ((tile.max_y - tile.min_y) as f32 * config.dpi_resolution / INCH) as u32;
 
-    render_vegetation(&tile, &neighbor_tiles, image_width, image_height, &config);
+    render_vegetation(
+        &tile,
+        &neighbor_tiles,
+        image_width,
+        image_height,
+        &config,
+        undergrowth_mode,
+    );
+
     create_dem_with_buffer_and_slopes_tiff(&tile, &neighbor_tiles);
     generate_contours_with_pullautin_algorithme(&tile, image_width, image_height, &config);
     render_cliffs(&tile, image_width, image_height, &config);
@@ -38,29 +48,19 @@ pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
     let undergrowth_path = tile.render_dir_path.join("undergrowth.png");
     let contours_path = tile.render_dir_path.join("contours.png");
 
-    if skip_vector {
-        let mut vegetation_canvas = Canvas::load_from(&vegetation_path.to_str().unwrap());
-        let mut cliff_canvas = Canvas::load_from(&cliffs_path.to_str().unwrap());
-        let mut contours_canvas = Canvas::load_from(&contours_path.to_str().unwrap());
-        let mut full_map_canvas = Canvas::new(image_width as i32, image_height as i32);
-        full_map_canvas.overlay(&mut vegetation_canvas, 0.0, 0.0);
-        full_map_canvas.overlay(&mut contours_canvas, 0.0, 0.0);
-        full_map_canvas.overlay(&mut cliff_canvas, 0.0, 0.0);
-        let full_map_path = tile.render_dir_path.join("full-map.png");
-        full_map_canvas.save_as(&full_map_path.to_str().unwrap());
-    } else {
-        render_map_with_osm_vector_shapes(
-            &tile,
-            image_width,
-            image_height,
-            &config,
-            &vegetation_path,
-            &undergrowth_path,
-            &contours_path,
-            &cliffs_path,
-            skip_520,
-        );
-    }
+    render_map_with_osm_vector_shapes(
+        &tile,
+        image_width,
+        image_height,
+        &config,
+        &vegetation_path,
+        &undergrowth_path,
+        &contours_path,
+        &cliffs_path,
+        skip_520,
+        skip_vector,
+        undergrowth_mode,
+    );
 
     let resolution = INCH / (config.dpi_resolution);
     let world_file_path = tile.render_dir_path.join("full-map.pgw");

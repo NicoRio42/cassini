@@ -3,6 +3,7 @@ use crate::{
     merge::merge_maps,
     render::generate_png_from_dem_vegetation_density_tiff_images_and_vector_file,
     tile::{Tile, TileWithNeighbors},
+    UndergrowthMode,
 };
 use las::raw::Header;
 use log::info;
@@ -22,6 +23,7 @@ pub fn batch(
     skip_lidar: bool,
     skip_vector: bool,
     skip_520: bool,
+    undergrowth_mode: &UndergrowthMode,
 ) {
     let tiles = get_tiles_with_neighbors(input_dir, output_dir);
     let tiles_arc = Arc::new(tiles.clone());
@@ -68,6 +70,8 @@ pub fn batch(
     for chunk in tiles_chunks {
         let chunk = Arc::new(chunk);
 
+        let cloned_undergrowth_mode = undergrowth_mode.clone();
+
         let spawned_thread = spawn(move || {
             for tile in chunk.iter() {
                 info!(
@@ -80,6 +84,7 @@ pub fn batch(
                     tile.neighbors.clone(),
                     skip_vector,
                     skip_520,
+                    &cloned_undergrowth_mode,
                 );
             }
 

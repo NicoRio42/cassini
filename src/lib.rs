@@ -20,6 +20,8 @@ mod vectors;
 mod vegetation;
 mod world_file;
 
+pub use vegetation::UndergrowthMode;
+
 use batch::batch;
 use config::default_config;
 use las::raw::Header;
@@ -38,6 +40,7 @@ pub fn process_single_tile(
     output_dir_path: &PathBuf,
     skip_vector: bool,
     skip_520: bool,
+    undergrowth_mode: &UndergrowthMode,
 ) {
     generate_dem_and_vegetation_density_tiff_images_from_laz_file(
         &file_path.to_path_buf(),
@@ -56,7 +59,13 @@ pub fn process_single_tile(
         max_y: header.max_y.round() as i64,
     };
 
-    generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(tile, vec![], skip_vector, skip_520);
+    generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
+        tile,
+        vec![],
+        skip_vector,
+        skip_520,
+        undergrowth_mode,
+    );
 }
 
 pub fn process_single_tile_lidar_step(file_path: &PathBuf, output_dir_path: &PathBuf) {
@@ -69,6 +78,7 @@ pub fn process_single_tile_render_step(
     neighbor_tiles: Vec<PathBuf>,
     skip_vector: bool,
     skip_520: bool,
+    undergrowth_mode: &UndergrowthMode,
 ) {
     create_dir_all(&output_dir_path).expect("Could not create out dir");
 
@@ -88,6 +98,7 @@ pub fn process_single_tile_render_step(
         neighbor_tiles,
         skip_vector,
         skip_520,
+        undergrowth_mode,
     );
 }
 
@@ -98,6 +109,7 @@ pub fn batch_process_tiles(
     skip_lidar: bool,
     skip_vector: bool,
     skip_520: bool,
+    undergrowth_mode: &UndergrowthMode,
 ) {
     batch(
         &input_dir,
@@ -106,6 +118,7 @@ pub fn batch_process_tiles(
         skip_lidar,
         skip_vector,
         skip_520,
+        undergrowth_mode,
     );
 }
 

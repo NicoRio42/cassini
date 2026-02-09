@@ -13,16 +13,24 @@ use log::info;
 use std::{f32::consts::E, fs::File, path::PathBuf, time::Instant, u8};
 use tiff::decoder::{Decoder, DecodingResult};
 
+#[derive(clap::ValueEnum, Clone, Debug)]
+pub enum UndergrowthMode {
+    None,
+    Merge,
+    #[value(name = "406")]
+    Symbol406,
+    #[value(name = "409")]
+    Symbol409,
+}
+
 pub fn render_vegetation(
     tile: &Tile,
     neighbor_tiles: &Vec<PathBuf>,
     image_width: u32,
     image_height: u32,
     config: &Config,
+    undergrowth_mode: &UndergrowthMode,
 ) {
-    let draw_low_veg = true;
-    let include_low_veg_in_medium_veg = false;
-
     info!(
         "Tile min_x={} min_y={} max_x={} max_y={}. Rendering vegetation",
         tile.min_x, tile.min_y, tile.max_x, tile.max_y
@@ -81,31 +89,53 @@ pub fn render_vegetation(
                 medium_vegetation_kernel_radius,
             );
 
-            if include_low_veg_in_medium_veg {
-                medium_vegetation_density += get_average_pixel_value(
-                    &low_vegetation,
-                    x_index,
-                    y_index,
-                    &medium_vegetation_kernel,
-                    medium_vegetation_kernel_radius,
-                );
-            } else if draw_low_veg {
-                let low_vegetation_density = get_average_pixel_value(
-                    &low_vegetation,
-                    x_index,
-                    y_index,
-                    &low_vegetation_kernel,
-                    low_vegetation_kernel_radius,
-                );
-
-                if low_vegetation_density > 1.0 {
-                    draw_filled_rect_mut(
-                        &mut undergrowth_vegetation_img,
-                        Rect::at(x_pixel, y_pixel)
-                            .of_size(casted_green_block_size_pixel, casted_green_block_size_pixel),
-                        GREEN_3,
+            match undergrowth_mode {
+                UndergrowthMode::Merge => {
+                    medium_vegetation_density += get_average_pixel_value(
+                        &low_vegetation,
+                        x_index,
+                        y_index,
+                        &medium_vegetation_kernel,
+                        medium_vegetation_kernel_radius,
                     );
                 }
+                UndergrowthMode::Symbol406 => {
+                    let low_vegetation_density = get_average_pixel_value(
+                        &low_vegetation,
+                        x_index,
+                        y_index,
+                        &low_vegetation_kernel,
+                        low_vegetation_kernel_radius,
+                    );
+
+                    if low_vegetation_density > 1.0 {
+                        draw_filled_rect_mut(
+                            &mut undergrowth_vegetation_img,
+                            Rect::at(x_pixel, y_pixel)
+                                .of_size(casted_green_block_size_pixel, casted_green_block_size_pixel),
+                            GREEN_1,
+                        );
+                    }
+                }
+                UndergrowthMode::Symbol409 => {
+                    let low_vegetation_density = get_average_pixel_value(
+                        &low_vegetation,
+                        x_index,
+                        y_index,
+                        &low_vegetation_kernel,
+                        low_vegetation_kernel_radius,
+                    );
+
+                    if low_vegetation_density > 1.0 {
+                        draw_filled_rect_mut(
+                            &mut undergrowth_vegetation_img,
+                            Rect::at(x_pixel, y_pixel)
+                                .of_size(casted_green_block_size_pixel, casted_green_block_size_pixel),
+                            GREEN_3,
+                        );
+                    }
+                }
+                UndergrowthMode::None => {}
             }
 
             let mut green_color: Option<Rgba<u8>> = None;
@@ -132,20 +162,26 @@ pub fn render_vegetation(
         }
     }
 
+    match undergrowth_mode {
+        UndergrowthMode::Symbol406 => {
+            imageops::overlay(&mut base_vegetation_img, &undergrowth_vegetation_img, 0, 0);
+        }
+        UndergrowthMode::Symbol409 => {
+            let undergrowth_output_path = tile.render_dir_path.join("undergrowth.png");
+
+            undergrowth_vegetation_img
+                .save(undergrowth_output_path)
+                .expect("could not save undergrowth output png");
+        }
+        UndergrowthMode::None | UndergrowthMode::Merge => {}
+    }
+
     imageops::overlay(&mut base_vegetation_img, &green_vegetation_img, 0, 0);
     let vegetation_output_path = tile.render_dir_path.join("vegetation.png");
 
     base_vegetation_img
         .save(vegetation_output_path)
         .expect("could not save vegetation output png");
-
-    if draw_low_veg {
-        let undergrowth_output_path = tile.render_dir_path.join("undergrowth.png");
-
-        undergrowth_vegetation_img
-            .save(undergrowth_output_path)
-            .expect("could not save undergrowth output png");
-    }
 
     let duration = start.elapsed();
 
