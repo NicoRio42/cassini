@@ -174,19 +174,18 @@ pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
     );
 }
 
-const RENDER_STEP_FILES: [&str; 16] = [
+const RENDER_STEP_FILES: [&str; 15] = [
     "cliffs.png",
     "contours",
     "contours.png",
     "contours-raw",
-    "dem-low-resolution-with-buffer.tif",
-    "dem-with-buffer.tif",
+    "dem_with_buffer.tif",
     "formlines",
     "full-map.pgw",
     "full-map.png",
-    "high-vegetation-with-buffer.tif",
-    "low-vegetation-with-buffer.tif",
-    "medium-vegetation-with-buffer.tif",
+    "high_vegetation_with_buffer.tif",
+    "low_vegetation_with_buffer.tif",
+    "medium_vegetation_with_buffer.tif",
     "shapes",
     "slopes.tif",
     "undergrowth.png",

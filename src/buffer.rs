@@ -15,11 +15,11 @@ pub fn create_tif_with_buffer(
 ) {
     let vrt_with_buffer_path = tile
         .render_dir_path
-        .join(format!("{}-with-buffer.vrt", tif_filename_without_extension));
+        .join(format!("{}_with_buffer.vrt", tif_filename_without_extension));
 
     let raster_with_buffer_path = tile
         .render_dir_path
-        .join(format!("{}-with-buffer.tif", tif_filename_without_extension));
+        .join(format!("{}_with_buffer.tif", tif_filename_without_extension));
 
     let tile_raster_path = tile
         .lidar_dir_path

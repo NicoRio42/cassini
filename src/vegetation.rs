@@ -42,18 +42,18 @@ pub fn render_vegetation(
     let casted_base_vegetation_block_size_pixel = (vegetation_block_size_pixel * 2.).ceil() as i32;
     let casted_green_block_size_pixel = (vegetation_block_size_pixel).ceil() as u32;
 
-    create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "high-vegetation", 1.0);
-    create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "medium-vegetation", 1.0);
-    create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "low-vegetation", 1.0);
+    create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "high_vegetation", 1.0);
+    create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "medium_vegetation", 1.0);
+    create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "low_vegetation", 1.0);
 
     let high_vegetation =
-        get_image_data_from_tif(&tile.render_dir_path.join("high-vegetation-with-buffer.tif"));
+        get_image_data_from_tif(&tile.render_dir_path.join("high_vegetation_with_buffer.tif"));
 
     let medium_vegetation =
-        get_image_data_from_tif(&tile.render_dir_path.join("medium-vegetation-with-buffer.tif"));
+        get_image_data_from_tif(&tile.render_dir_path.join("medium_vegetation_with_buffer.tif"));
 
     let low_vegetation =
-        get_image_data_from_tif(&tile.render_dir_path.join("low-vegetation-with-buffer.tif"));
+        get_image_data_from_tif(&tile.render_dir_path.join("low_vegetation_with_buffer.tif"));
 
     let mut base_vegetation_img = RgbaImage::from_pixel(image_width, image_height, YELLOW);
     let mut green_vegetation_img = RgbaImage::from_pixel(image_width, image_height, TRANSPARENT);

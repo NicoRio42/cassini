@@ -15,35 +15,13 @@ pub fn create_dem_with_buffer_and_slopes_tiff(tile: &Tile, neighbor_tiles: &Vec<
 
     let start = Instant::now();
 
-    let dem_with_buffer_path = tile.render_dir_path.join("dem-with-buffer.tif");
+    let dem_with_buffer_path = tile.render_dir_path.join("dem_with_buffer.tif");
     create_tif_with_buffer(tile, &neighbor_tiles, BUFFER as i64, "dem", 0.5);
 
     // Filling holes
     let gdal_fillnodata_output = Command::new("gdal_fillnodata")
         .arg(&dem_with_buffer_path.to_str().unwrap())
         .arg(&dem_with_buffer_path.to_str().unwrap())
-        .output()
-        .expect("failed to execute gdal_fillnodata command");
-
-    if !ExitStatus::success(&gdal_fillnodata_output.status) {
-        error!(
-            "Tile min_x={} min_y={} max_x={} max_y={}. Gdal_fillnodata command failed {:?}",
-            tile.min_x,
-            tile.min_y,
-            tile.max_x,
-            tile.max_y,
-            String::from_utf8(gdal_fillnodata_output.stderr).unwrap()
-        );
-    }
-
-    let dem_low_resolution_with_buffer_path = tile.render_dir_path.join("dem-low-resolution-with-buffer.tif");
-
-    create_tif_with_buffer(tile, &neighbor_tiles, BUFFER as i64, "dem-low-resolution", 2.0);
-
-    // Filling holes
-    let gdal_fillnodata_output = Command::new("gdal_fillnodata")
-        .arg(&dem_low_resolution_with_buffer_path.to_str().unwrap())
-        .arg(&dem_low_resolution_with_buffer_path.to_str().unwrap())
         .output()
         .expect("failed to execute gdal_fillnodata command");
 
@@ -80,7 +58,7 @@ pub fn create_dem_with_buffer_and_slopes_tiff(tile: &Tile, neighbor_tiles: &Vec<
         .args([
             "-a",
             "elev",
-            &dem_low_resolution_with_buffer_path.to_str().unwrap(),
+            &dem_with_buffer_path.to_str().unwrap(),
             &contours_raw_path.to_str().unwrap(),
             "-i",
             "2.5",

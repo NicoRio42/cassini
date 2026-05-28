@@ -34,10 +34,9 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
     }
 
     let dem_path = output_dir_path.join("dem.tif");
-    let dem_low_resolution_path = output_dir_path.join("dem-low-resolution.tif");
-    let low_vegetation_path = output_dir_path.join("low-vegetation.tif");
-    let medium_vegetation_path = output_dir_path.join("medium-vegetation.tif");
-    let high_vegetation_path = output_dir_path.join("high-vegetation.tif");
+    let low_vegetation_path = output_dir_path.join("low_vegetation.tif");
+    let medium_vegetation_path = output_dir_path.join("medium_vegetation.tif");
+    let high_vegetation_path = output_dir_path.join("high_vegetation.tif");
 
     let gdal_dem_options = format!(
         r#""origin_x": {},
@@ -48,17 +47,6 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
         min_y,
         (max_x - min_x) * 2,
         (max_y - min_y) * 2
-    );
-
-    let gdal_dem_low_resolution_options = format!(
-        r#""origin_x": {},
-        "origin_y": {},
-        "width": {},
-        "height": {},"#,
-        min_x,
-        min_y,
-        ((max_x - min_x) as f64 / 2.).ceil() as i64,
-        ((max_y - min_y) as f64 / 2.).ceil() as i64
     );
 
     let gdal_vegetation_options = format!(
@@ -85,16 +73,6 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
         "filename": {:?},
         "binmode": true,
         "resolution": 1,
-        "gdalopts": "COMPRESS=DEFLATE,PREDICTOR=3,ZLEVEL=9",
-        {}
-        "where": "Classification == 2",
-        "output_type": "mean"
-    }},
-    {{
-        "type": "writers.gdal",
-        "filename": {:?},
-        "binmode": true,
-        "resolution": 2,
         "gdalopts": "COMPRESS=DEFLATE,PREDICTOR=3,ZLEVEL=9",
         {}
         "where": "Classification == 2",
@@ -146,8 +124,6 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
         laz_path,
         dem_path,
         gdal_dem_options,
-        dem_low_resolution_path,
-        gdal_dem_low_resolution_options,
         dem_path,
         low_vegetation_path,
         gdal_vegetation_options,

@@ -247,12 +247,17 @@ pub fn pullautin_cull_formlines_render_contours(
                     help2[i] = false;
                 }
             }
-            for i in 0..6 {
-                help2[i] = help2[6]
+
+            // Added
+            if x.len() > 6 {
+                for i in 0..6 {
+                    help2[i] = help2[6]
+                }
+                for i in (x.len() - 6)..x.len() {
+                    help2[i] = help2[x.len() - 7]
+                }
             }
-            for i in (x.len() - 6)..x.len() {
-                help2[i] = help2[x.len() - 7]
-            }
+            
             let mut on = 0.0;
             for i in 0..x.len() {
                 if help2[i] {
