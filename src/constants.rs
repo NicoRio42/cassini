@@ -22,6 +22,7 @@ pub const VECTOR_BLACK: (u8, u8, u8) = (0, 0, 0);
 pub const VECTOR_BUILDING_GRAY: (u8, u8, u8) = (89, 89, 89);
 pub const VECTOR_PAVED_AREA_BROWN: (u8, u8, u8) = (232, 174, 128);
 pub const VECTOR_OLIVE_GREEN: (u8, u8, u8) = (158, 186, 29);
+pub const VECTOR_TUNNEL_ALPHA: u8 = 160;
 
 pub const CLIFF_THICKNESS_1: f32 = 0.25;
 pub const CLIFF_THICKNESS_2: f32 = 0.35;

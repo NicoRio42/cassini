@@ -122,9 +122,16 @@ pub fn render_map_with_osm_vector_shapes(
                 None => "",
             };
 
+            let other_tags = get_and_parse_other_tags(&record);
+            let line_is_tunnel = is_tunnel(&record, &other_tags);
+
             // 502 wide road
             if highway == "motorway" || highway == "motorway_link" {
-                map_renderer = map_renderer.double_track_wide_road_502(&line);
+                map_renderer = if line_is_tunnel {
+                    map_renderer.tunnel_double_track_wide_road_502(&line)
+                } else {
+                    map_renderer.double_track_wide_road_502(&line)
+                };
                 continue;
             }
 
@@ -133,7 +140,11 @@ pub fn render_map_with_osm_vector_shapes(
                 || highway == "primary"
                 || highway == "primary_link"
             {
-                map_renderer = map_renderer.xxl_wide_road_502(&line);
+                map_renderer = if line_is_tunnel {
+                    map_renderer.tunnel_xxl_wide_road_502(&line)
+                } else {
+                    map_renderer.xxl_wide_road_502(&line)
+                };
                 continue;
             }
 
@@ -142,7 +153,11 @@ pub fn render_map_with_osm_vector_shapes(
                 || highway == "tertiary"
                 || highway == "tertiary_link"
             {
-                map_renderer = map_renderer.xl_wide_road_502(&line);
+                map_renderer = if line_is_tunnel {
+                    map_renderer.tunnel_xl_wide_road_502(&line)
+                } else {
+                    map_renderer.xl_wide_road_502(&line)
+                };
                 continue;
             }
 
@@ -156,13 +171,21 @@ pub fn render_map_with_osm_vector_shapes(
                 || highway == "road"
                 || highway == "busway"
             {
-                map_renderer = map_renderer.wide_road_502(&line);
+                map_renderer = if line_is_tunnel {
+                    map_renderer.tunnel_wide_road_502(&line)
+                } else {
+                    map_renderer.wide_road_502(&line)
+                };
                 continue;
             }
 
             // 503 road
             if highway == "track" || highway == "cycleway" {
-                map_renderer = map_renderer.road_503(&line);
+                map_renderer = if line_is_tunnel {
+                    map_renderer.tunnel_road_503(&line)
+                } else {
+                    map_renderer.road_503(&line)
+                };
                 continue;
             }
 
@@ -173,7 +196,11 @@ pub fn render_map_with_osm_vector_shapes(
                 || highway == "path"
                 || highway == "footpath"
             {
-                map_renderer = map_renderer.footpath_505(&line);
+                map_renderer = if line_is_tunnel {
+                    map_renderer.tunnel_footpath_505(&line)
+                } else {
+                    map_renderer.footpath_505(&line)
+                };
                 continue;
             }
 
@@ -219,8 +246,6 @@ pub fn render_map_with_osm_vector_shapes(
                 map_renderer = map_renderer.railway_509(&line);
                 continue;
             }
-
-            let other_tags = get_and_parse_other_tags(&record);
 
             let power = match other_tags.get("power") {
                 Some(p) => p,
@@ -313,6 +338,24 @@ pub fn render_map_with_osm_vector_shapes(
         "Tile min_x={} min_y={} max_x={} max_y={}. Vectors rendered in {:.1?}",
         tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
     );
+}
+
+fn is_tunnel(record: &Record, other_tags: &HashMap<String, String>) -> bool {
+    let tunnel = match record.get("tunnel") {
+        Some(FieldValue::Character(Some(x))) => x.as_str(),
+        Some(_) => "",
+        None => "",
+    };
+    let tunnel = if tunnel == "" {
+        match other_tags.get("tunnel") {
+            Some(x) => x.as_str(),
+            None => "",
+        }
+    } else {
+        tunnel
+    };
+
+    return tunnel != "" && tunnel != "no" && tunnel != "false" && tunnel != "0";
 }
 
 fn get_and_parse_other_tags(record: &Record) -> HashMap<String, String> {

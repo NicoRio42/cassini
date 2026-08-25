@@ -35,7 +35,14 @@ impl Canvas {
 
     #[inline]
     pub fn set_color(&mut self, rgb: (u8, u8, u8)) {
+        self.paint.set_blend_mode(skia_safe::BlendMode::SrcOver);
         self.paint.set_color(Color::from_rgb(rgb.0, rgb.1, rgb.2));
+    }
+
+    #[inline]
+    pub fn set_color_with_alpha(&mut self, rgb: (u8, u8, u8), alpha: u8) {
+        self.paint.set_blend_mode(skia_safe::BlendMode::SrcOver);
+        self.paint.set_color(Color::from_argb(alpha, rgb.0, rgb.1, rgb.2));
     }
 
     #[inline]

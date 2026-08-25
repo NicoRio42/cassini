@@ -9,8 +9,9 @@ use crate::{
         MINOR_WATERCOURSE_DASH_INTERVAL_LENGTH, MINOR_WATERCOURSE_DASH_LENGTH, MINOR_WATERCOURSE_WIDTH,
         POWERLINE_WIDTH, RAILWAY_DASH_INTERVAL_LENGTH, RAILWAY_DASH_LENGTH, RAILWAY_INNER_WIDTH,
         RAILWAY_OUTER_WIDTH, ROAD_WIDTH, UNDERGROWTH_LINE_SPACING, UNDERGROWTH_LINE_WIDTH, VECTOR_BLACK,
-        VECTOR_BLUE, VECTOR_BUILDING_GRAY, VECTOR_OLIVE_GREEN, VECTOR_PAVED_AREA_BROWN, VECTOR_WHITE,
-        WIDE_ROAD_INNER_WIDTH, WIDE_ROAD_OUTER_WIDTH, XL_WIDE_ROAD_INNER_WIDTH, XL_WIDE_ROAD_OUTER_WIDTH,
+        VECTOR_BLUE, VECTOR_BUILDING_GRAY, VECTOR_OLIVE_GREEN, VECTOR_PAVED_AREA_BROWN, VECTOR_TUNNEL_ALPHA,
+        VECTOR_WHITE, WIDE_ROAD_INNER_WIDTH, WIDE_ROAD_OUTER_WIDTH, XL_WIDE_ROAD_INNER_WIDTH,
+        XL_WIDE_ROAD_OUTER_WIDTH,
         XXL_WIDE_ROAD_INNER_WIDTH, XXL_WIDE_ROAD_OUTER_WIDTH, _MAJOR_POWERLINE_INNER_WIDTH,
         _MAJOR_POWERLINE_OUTER_WIDTH,
     },
@@ -34,6 +35,7 @@ pub struct MapRenderer {
     striped_blue_img: Canvas,
     black_road_outlines_img: Canvas,
     light_brown_road_infill_img: Canvas,
+    black_tunnel_road_outlines_img: Canvas,
     gray_img: Canvas,
     contours_img: Canvas,
     blue_lines_and_points_img: Canvas,
@@ -75,6 +77,7 @@ impl MapRenderer {
             striped_blue_img: Canvas::new(image_width as i32, image_height as i32),
             black_road_outlines_img: Canvas::new(image_width as i32, image_height as i32),
             light_brown_road_infill_img: Canvas::new(image_width as i32, image_height as i32),
+            black_tunnel_road_outlines_img: Canvas::new(image_width as i32, image_height as i32),
             gray_img: Canvas::new(image_width as i32, image_height as i32),
             contours_img: Canvas::load_from(contours_path.to_str().unwrap()),
             blue_lines_and_points_img: Canvas::new(image_width as i32, image_height as i32),
@@ -203,6 +206,26 @@ impl MapRenderer {
     }
 
     #[inline]
+    fn tunnel_wide_road(mut self, line: &GenericPolyline<Point>, inner_width: f32, outer_width: f32) -> MapRenderer {
+        for part in line.parts() {
+            let points = self.get_points_from_line_part(part);
+
+            self.black_tunnel_road_outlines_img
+                .set_color_with_alpha(VECTOR_BLACK, VECTOR_TUNNEL_ALPHA);
+            self.black_tunnel_road_outlines_img
+                .set_line_width(outer_width * self.dpi_resolution * 10.0 / INCH);
+            self.black_tunnel_road_outlines_img.draw_polyline(&points);
+
+            self.black_tunnel_road_outlines_img.set_transparent_color();
+            self.black_tunnel_road_outlines_img
+                .set_line_width(inner_width * self.dpi_resolution * 10.0 / INCH);
+            self.black_tunnel_road_outlines_img.draw_polyline(&points);
+        }
+
+        return self;
+    }
+
+    #[inline]
     pub fn double_track_wide_road_502(mut self, line: &GenericPolyline<Point>) -> MapRenderer {
         for part in line.parts() {
             let points = self.get_points_from_line_part(part);
@@ -229,8 +252,22 @@ impl MapRenderer {
     }
 
     #[inline]
+    pub fn tunnel_double_track_wide_road_502(self, line: &GenericPolyline<Point>) -> MapRenderer {
+        return self.tunnel_wide_road(
+            line,
+            DOUBLE_TRACK_WIDE_ROAD_INNER_WIDTH,
+            DOUBLE_TRACK_WIDE_ROAD_OUTER_WIDTH,
+        );
+    }
+
+    #[inline]
     pub fn wide_road_502(self, line: &GenericPolyline<Point>) -> MapRenderer {
         return self.wide_road(line, WIDE_ROAD_INNER_WIDTH, WIDE_ROAD_OUTER_WIDTH);
+    }
+
+    #[inline]
+    pub fn tunnel_wide_road_502(self, line: &GenericPolyline<Point>) -> MapRenderer {
+        return self.tunnel_wide_road(line, WIDE_ROAD_INNER_WIDTH, WIDE_ROAD_OUTER_WIDTH);
     }
 
     #[inline]
@@ -239,8 +276,18 @@ impl MapRenderer {
     }
 
     #[inline]
+    pub fn tunnel_xl_wide_road_502(self, line: &GenericPolyline<Point>) -> MapRenderer {
+        return self.tunnel_wide_road(line, XL_WIDE_ROAD_INNER_WIDTH, XL_WIDE_ROAD_OUTER_WIDTH);
+    }
+
+    #[inline]
     pub fn xxl_wide_road_502(self, line: &GenericPolyline<Point>) -> MapRenderer {
         return self.wide_road(line, XXL_WIDE_ROAD_INNER_WIDTH, XXL_WIDE_ROAD_OUTER_WIDTH);
+    }
+
+    #[inline]
+    pub fn tunnel_xxl_wide_road_502(self, line: &GenericPolyline<Point>) -> MapRenderer {
+        return self.tunnel_wide_road(line, XXL_WIDE_ROAD_INNER_WIDTH, XXL_WIDE_ROAD_OUTER_WIDTH);
     }
 
     #[inline]
@@ -254,6 +301,11 @@ impl MapRenderer {
             self.black_img.draw_polyline(&points);
         }
 
+        return self;
+    }
+
+    #[inline]
+    pub fn tunnel_road_503(self, _line: &GenericPolyline<Point>) -> MapRenderer {
         return self;
     }
 
@@ -273,6 +325,11 @@ impl MapRenderer {
             self.black_img.unset_dash();
         }
 
+        return self;
+    }
+
+    #[inline]
+    pub fn tunnel_footpath_505(self, _line: &GenericPolyline<Point>) -> MapRenderer {
         return self;
     }
 
@@ -483,6 +540,8 @@ impl MapRenderer {
             .overlay(&mut self.black_road_outlines_img, 0., 0.);
         self.vegetation_img
             .overlay(&mut self.light_brown_road_infill_img, 0., 0.);
+        self.vegetation_img
+            .overlay(&mut self.black_tunnel_road_outlines_img, 0., 0.);
         self.vegetation_img.overlay(&mut self.gray_img, 0., 0.);
         self.vegetation_img.overlay(&mut self.contours_img, 0., 0.);
         self.vegetation_img
