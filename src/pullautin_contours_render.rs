@@ -525,54 +525,7 @@ fn is_contour_depression(
         return false;
     }
 
-    let mut contour_min_x = f64::MAX;
-    let mut contour_max_x = f64::MIN;
-    let mut contour_min_y = f64::MAX;
-    let mut contour_max_y = f64::MIN;
-
-    for i in 0..x_array.len() {
-        let x = x_array[i];
-        let y = y_array[i];
-
-        if x < contour_min_x {
-            contour_min_x = x;
-        }
-        if x > contour_max_x {
-            contour_max_x = x;
-        }
-        if y < contour_min_y {
-            contour_min_y = y;
-        }
-        if y > contour_max_y {
-            contour_max_y = y;
-        }
-    }
-
-    // Sample a point inside the closed contour using a grid search that maximizes
-    // distance to edges (approximation of the largest inscribed circle).
-    let mut best_point: Option<(f64, f64)> = None;
-    let mut best_dist = -1.0_f64;
-
-    let mut x = contour_min_x;
-    while x <= contour_max_x {
-        let mut y = contour_min_y;
-
-        while y <= contour_max_y {
-            if point_in_polygon(x, y, x_array, y_array) {
-                let dist = min_distance_to_edges(x, y, x_array, y_array);
-
-                if dist > best_dist {
-                    best_dist = dist;
-                    best_point = Some((x, y));
-                }
-            }
-
-            y += dem_cell_size;
-        }
-        x += dem_cell_size;
-    }
-
-    let Some((px, py)) = best_point else {
+    let Some((px, py)) = find_interior_point(x_array, y_array) else {
         return false;
     };
 
@@ -586,7 +539,95 @@ fn is_contour_depression(
     inside_elevation < *elevation
 }
 
-fn point_in_polygon(x: f64, y: f64, x_array: &Vec<f64>, y_array: &Vec<f64>) -> bool {
+/// Finds a point well inside a contour using a fixed number of horizontal and
+/// vertical scan lines. This makes the work depend on contour complexity rather
+/// than contour area. The previous 2 m grid search tested every grid point
+/// against every edge, which could take effectively forever on large contours.
+fn find_interior_point(x_array: &[f64], y_array: &[f64]) -> Option<(f64, f64)> {
+    const SCAN_LINE_COUNT: usize = 9;
+
+    if x_array.len() < 4 || x_array.len() != y_array.len() {
+        return None;
+    }
+
+    let contour_min_x = x_array.iter().copied().fold(f64::INFINITY, f64::min);
+    let contour_max_x = x_array.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let contour_min_y = y_array.iter().copied().fold(f64::INFINITY, f64::min);
+    let contour_max_y = y_array.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+
+    if !contour_min_x.is_finite()
+        || !contour_max_x.is_finite()
+        || !contour_min_y.is_finite()
+        || !contour_max_y.is_finite()
+    {
+        return None;
+    }
+
+    let mut candidates = Vec::with_capacity(SCAN_LINE_COUNT * 2);
+
+    for index in 1..=SCAN_LINE_COUNT {
+        let fraction = index as f64 / (SCAN_LINE_COUNT + 1) as f64;
+        let scan_y = contour_min_y + fraction * (contour_max_y - contour_min_y);
+
+        if let Some((start_x, end_x)) = widest_scan_line_interval(scan_y, x_array, y_array) {
+            candidates.push(((start_x + end_x) / 2.0, scan_y));
+        }
+
+        let scan_x = contour_min_x + fraction * (contour_max_x - contour_min_x);
+
+        if let Some((start_y, end_y)) = widest_scan_line_interval(scan_x, y_array, x_array) {
+            candidates.push((scan_x, (start_y + end_y) / 2.0));
+        }
+    }
+
+    candidates
+        .into_iter()
+        .filter(|(x, y)| point_in_polygon(*x, *y, x_array, y_array))
+        .max_by(|(x1, y1), (x2, y2)| {
+            min_distance_to_edges(*x1, *y1, x_array, y_array)
+                .total_cmp(&min_distance_to_edges(*x2, *y2, x_array, y_array))
+        })
+}
+
+/// Returns the widest interior interval along a scan line. `scan_coordinates`
+/// are perpendicular to the scan line and `interval_coordinates` run along it.
+fn widest_scan_line_interval(
+    scan_position: f64,
+    interval_coordinates: &[f64],
+    scan_coordinates: &[f64],
+) -> Option<(f64, f64)> {
+    let mut intersections = Vec::new();
+    let mut previous = interval_coordinates.len() - 1;
+
+    for current in 0..interval_coordinates.len() {
+        let current_scan = scan_coordinates[current];
+        let previous_scan = scan_coordinates[previous];
+
+        if (current_scan > scan_position) != (previous_scan > scan_position) {
+            let current_interval = interval_coordinates[current];
+            let previous_interval = interval_coordinates[previous];
+            let intersection = previous_interval
+                + (scan_position - previous_scan) * (current_interval - previous_interval)
+                    / (current_scan - previous_scan);
+
+            if intersection.is_finite() {
+                intersections.push(intersection);
+            }
+        }
+
+        previous = current;
+    }
+
+    intersections.sort_by(f64::total_cmp);
+    intersections
+        .chunks_exact(2)
+        .map(|pair| (pair[0], pair[1]))
+        .max_by(|(start1, end1), (start2, end2)| {
+            (end1 - start1).total_cmp(&(end2 - start2))
+        })
+}
+
+fn point_in_polygon(x: f64, y: f64, x_array: &[f64], y_array: &[f64]) -> bool {
     let mut inside = false;
     let mut j = x_array.len() - 1;
 
@@ -607,7 +648,7 @@ fn point_in_polygon(x: f64, y: f64, x_array: &Vec<f64>, y_array: &Vec<f64>) -> b
     inside
 }
 
-fn min_distance_to_edges(x: f64, y: f64, x_array: &Vec<f64>, y_array: &Vec<f64>) -> f64 {
+fn min_distance_to_edges(x: f64, y: f64, x_array: &[f64], y_array: &[f64]) -> f64 {
     let mut min_dist = f64::MAX;
 
     for i in 1..x_array.len() {
@@ -680,4 +721,29 @@ fn get_point_elevation_from_dem_bilinear_interpolation(
     let v0 = v00 * (1.0 - fx) + v10 * fx;
     let v1 = v01 * (1.0 - fx) + v11 * fx;
     v0 * (1.0 - fy) + v1 * fy
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{find_interior_point, point_in_polygon};
+
+    #[test]
+    fn finds_interior_point_for_large_contour_without_scanning_its_area() {
+        let x = vec![0.0, 1_000_000.0, 1_000_000.0, 0.0, 0.0];
+        let y = vec![0.0, 0.0, 1_000_000.0, 1_000_000.0, 0.0];
+
+        let point = find_interior_point(&x, &y).unwrap();
+
+        assert_eq!(point, (500_000.0, 500_000.0));
+    }
+
+    #[test]
+    fn finds_interior_point_for_concave_contour() {
+        let x = vec![0.0, 10.0, 10.0, 6.0, 6.0, 4.0, 4.0, 0.0, 0.0];
+        let y = vec![0.0, 0.0, 10.0, 10.0, 4.0, 4.0, 10.0, 10.0, 0.0];
+
+        let (point_x, point_y) = find_interior_point(&x, &y).unwrap();
+
+        assert!(point_in_polygon(point_x, point_y, &x, &y));
+    }
 }
