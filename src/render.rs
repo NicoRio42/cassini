@@ -1,6 +1,5 @@
 use crate::constants::INCH;
 use crate::contours::generate_contours_with_pullautin_algorithme;
-use crate::download::download_osm_file;
 use crate::helpers::{remove_dir_content, remove_if_exists};
 use crate::tile::TileWithNeighbors;
 use crate::vectors::render_map_with_osm_vector_shapes;
@@ -64,16 +63,6 @@ pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
         let osm_path = tile
             .render_dir_path
             .join(format!("{:0>7}_{:0>7}.osm", tile.min_x, tile.max_y));
-
-        if !osm_path.exists() {
-            download_osm_file(
-                tile.min_x,
-                tile.min_y,
-                tile.max_x,
-                tile.max_y,
-                &tile.render_dir_path.to_path_buf(),
-            );
-        }
 
         info!(
             "Tile min_x={} min_y={} max_x={} max_y={}. Transforming osm file to shapefiles",

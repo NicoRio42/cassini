@@ -1,18 +1,19 @@
 use log::{info, warn};
 use reqwest::blocking::Client;
-use reqwest::header::{CONTENT_TYPE, USER_AGENT};
+use reqwest::header::{CONTENT_TYPE, RETRY_AFTER, USER_AGENT};
 use std::{
     fs::File,
     io::{copy, BufRead, BufReader, BufWriter, Write},
     path::PathBuf,
     process::{Command, Stdio},
     thread::sleep,
-    time::Instant,
+    time::{Duration, Instant, SystemTime},
 };
 
 use crate::constants::BUFFER;
 
 const OVERPASS_API_URL: &str = "https://overpass-api.de/api/interpreter";
+const DEFAULT_RETRY_DELAY: Duration = Duration::from_secs(5);
 const USER_AGENT_VALUE: &str = concat!(
     env!("CARGO_PKG_NAME"),
     "/",
@@ -82,7 +83,7 @@ out skel qt;
             .header(USER_AGENT, USER_AGENT_VALUE)
             .send();
 
-        match response_result {
+        let retry_delay = match response_result {
             Ok(response) => {
                 let status = response.status();
                 if status.is_success() {
@@ -93,10 +94,13 @@ out skel qt;
                     panic!("Overpass API returned error status: {}", status);
                 }
 
+                let retry_delay = retry_delay_from_response(&response);
                 warn!(
-                    "Overpass API returned error status {}. Retrying in 2s ({} retries left)",
-                    status, retries_left
+                    "Overpass API returned error status {}. Retrying in {:.1?} ({} retries left)",
+                    status, retry_delay, retries_left
                 );
+
+                retry_delay
             }
             Err(error) => {
                 if retries_left == 0 {
@@ -104,14 +108,16 @@ out skel qt;
                 }
 
                 warn!(
-                    "Overpass API request failed: {}. Retrying in 2s ({} retries left)",
-                    error, retries_left
+                    "Overpass API request failed: {}. Retrying in {:.1?} ({} retries left)",
+                    error, DEFAULT_RETRY_DELAY, retries_left
                 );
+
+                DEFAULT_RETRY_DELAY
             }
-        }
+        };
 
         retries_left -= 1;
-        sleep(std::time::Duration::from_secs(5));
+        sleep(retry_delay);
     };
 
     let mut file = File::create(&raw_osm_file_path).expect("Could not create file for osm download.");
@@ -126,6 +132,25 @@ out skel qt;
         "Tile min_x={} min_y={} max_x={} max_y={}. Osm files downloaded in {:.1?}",
         min_x, min_y, max_x, max_y, duration
     );
+}
+
+fn retry_delay_from_response(response: &reqwest::blocking::Response) -> Duration {
+    response
+        .headers()
+        .get(RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(parse_retry_after)
+        .unwrap_or(DEFAULT_RETRY_DELAY)
+}
+
+fn parse_retry_after(value: &str) -> Option<Duration> {
+    if let Ok(seconds) = value.parse::<u64>() {
+        return Some(Duration::from_secs(seconds));
+    }
+
+    httpdate::parse_http_date(value)
+        .ok()
+        .map(|date| date.duration_since(SystemTime::now()).unwrap_or(Duration::ZERO))
 }
 
 fn convert_coords_from_lambert_93_to_gps(x: f64, y: f64) -> (f64, f64) {
@@ -196,5 +221,26 @@ fn fix_osm_file(input: &PathBuf, output: &PathBuf) {
         }
 
         writeln!(writer, "{}", line).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_retry_after;
+    use std::time::Duration;
+
+    #[test]
+    fn parses_retry_after_as_seconds() {
+        assert_eq!(parse_retry_after("12"), Some(Duration::from_secs(12)));
+    }
+
+    #[test]
+    fn parses_retry_after_as_http_date() {
+        assert!(parse_retry_after("Wed, 21 Oct 2099 07:28:00 GMT").is_some());
+    }
+
+    #[test]
+    fn ignores_invalid_retry_after() {
+        assert_eq!(parse_retry_after("not a delay"), None);
     }
 }

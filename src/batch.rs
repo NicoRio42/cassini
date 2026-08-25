@@ -1,4 +1,5 @@
 use crate::{
+    download::download_osm_file,
     lidar::generate_dem_and_vegetation_density_tiff_images_from_laz_file,
     merge::merge_maps,
     render::{
@@ -63,6 +64,25 @@ pub fn batch(
 
         for handle in handles {
             handle.join().unwrap();
+        }
+    }
+
+    if !skip_vector {
+        for tile in tiles.iter() {
+            let osm_path = tile
+                .tile
+                .render_dir_path
+                .join(format!("{:0>7}_{:0>7}.osm", tile.tile.min_x, tile.tile.max_y));
+
+            if !osm_path.exists() {
+                download_osm_file(
+                    tile.tile.min_x,
+                    tile.tile.min_y,
+                    tile.tile.max_x,
+                    tile.tile.max_y,
+                    &tile.tile.render_dir_path,
+                );
+            }
         }
     }
 

@@ -24,6 +24,7 @@ pub use vegetation::UndergrowthMode;
 
 use batch::batch;
 use config::default_config;
+use download::download_osm_file;
 use las::raw::Header;
 use lidar::generate_dem_and_vegetation_density_tiff_images_from_laz_file;
 use render::generate_png_from_dem_vegetation_density_tiff_images_and_vector_file;
@@ -59,6 +60,10 @@ pub fn process_single_tile(
         max_x: header.max_x.round() as i64,
         max_y: header.max_y.round() as i64,
     };
+
+    if shapefiles_dir.is_none() && !skip_vector {
+        download_osm_file_if_needed(&tile);
+    }
 
     generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
         tile,
@@ -96,6 +101,10 @@ pub fn process_single_tile_render_step(
         max_y,
     };
 
+    if shapefiles_dir.is_none() && !skip_vector {
+        download_osm_file_if_needed(&tile);
+    }
+
     generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
         tile,
         neighbor_tiles,
@@ -104,6 +113,16 @@ pub fn process_single_tile_render_step(
         undergrowth_mode,
         shapefiles_dir,
     );
+}
+
+fn download_osm_file_if_needed(tile: &Tile) {
+    let osm_path = tile
+        .render_dir_path
+        .join(format!("{:0>7}_{:0>7}.osm", tile.min_x, tile.max_y));
+
+    if !osm_path.exists() {
+        download_osm_file(tile.min_x, tile.min_y, tile.max_x, tile.max_y, &tile.render_dir_path);
+    }
 }
 
 pub fn batch_process_tiles(
