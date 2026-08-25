@@ -1,5 +1,6 @@
 use log::{info, warn};
 use reqwest::blocking::Client;
+use reqwest::header::{CONTENT_TYPE, USER_AGENT};
 use std::{
     fs::File,
     io::{copy, BufRead, BufReader, BufWriter, Write},
@@ -10,6 +11,16 @@ use std::{
 };
 
 use crate::constants::BUFFER;
+
+const OVERPASS_API_URL: &str = "https://overpass-api.de/api/interpreter";
+const USER_AGENT_VALUE: &str = concat!(
+    env!("CARGO_PKG_NAME"),
+    "/",
+    env!("CARGO_PKG_VERSION"),
+    " (+",
+    env!("CARGO_PKG_REPOSITORY"),
+    ")"
+);
 
 pub fn download_osm_file(min_x: i64, min_y: i64, max_x: i64, max_y: i64, output_dir_path: &PathBuf) {
     let raw_osm_file_path = output_dir_path.join(format!("{:0>7}_{:0>7}_raw.osm", min_x, max_y));
@@ -65,9 +76,10 @@ out skel qt;
 
     let mut response = loop {
         let response_result = client
-            .post("https://overpass-api.de/api/interpreter")
+            .post(OVERPASS_API_URL)
             .body(formatted_query.clone())
-            .header("Content-Type", "application/x-www-form-urlencoded")
+            .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .header(USER_AGENT, USER_AGENT_VALUE)
             .send();
 
         match response_result {
