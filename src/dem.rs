@@ -53,12 +53,32 @@ pub fn create_dem_with_buffer_and_slopes_tiff(tile: &Tile, neighbor_tiles: &Vec<
     let contours_raw_dir = tile.render_dir_path.join("contours-raw");
     create_dir_all(&contours_raw_dir).expect("Could not create contours-raw dir");
     let contours_raw_path = contours_raw_dir.join("contours-raw.shp");
+    let dem_2m_with_buffer_path = tile.render_dir_path.join("dem_2m_with_buffer.tif");
+
+    let gdal_translate_output = Command::new("gdal_translate")
+        .args(["-tr", "2", "2", "-r", "average"])
+        .arg(&dem_with_buffer_path)
+        .arg(&dem_2m_with_buffer_path)
+        .arg("--quiet")
+        .output()
+        .expect("failed to execute gdal_translate command");
+
+    if !ExitStatus::success(&gdal_translate_output.status) {
+        error!(
+            "Tile min_x={} min_y={} max_x={} max_y={}. Gdal_translate command failed {:?}",
+            tile.min_x,
+            tile.min_y,
+            tile.max_x,
+            tile.max_y,
+            String::from_utf8(gdal_translate_output.stderr).unwrap()
+        );
+    }
 
     let gdal_contours_output = Command::new("gdal_contour")
         .args([
             "-a",
             "elev",
-            &dem_with_buffer_path.to_str().unwrap(),
+            &dem_2m_with_buffer_path.to_str().unwrap(),
             &contours_raw_path.to_str().unwrap(),
             "-i",
             "2.5",

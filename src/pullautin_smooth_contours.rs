@@ -278,7 +278,7 @@ pub fn pullautin_smooth_contours(tile: &Tile, avg_alt: &Vec<Vec<f64>>) -> Vec<(V
 }
 
 pub fn get_elevation_matrix_from_dem(tile: &Tile) -> Vec<Vec<f64>> {
-    let dem_path = tile.render_dir_path.join("dem_with_buffer.tif");
+    let dem_path = tile.render_dir_path.join("dem_2m_with_buffer.tif");
     let dem_tif_file = File::open(dem_path).expect("Cannot find dem tif image!");
 
     let mut dem_img_decoder = Decoder::new(dem_tif_file).expect("Cannot create decoder");
@@ -288,10 +288,7 @@ pub fn get_elevation_matrix_from_dem(tile: &Tile) -> Vec<Vec<f64>> {
 
     let width: usize = dem_width as usize;
     let height: usize = dem_height as usize;
-    let downsample_factor = 4;
-    let downsampled_width = width.div_ceil(downsample_factor);
-    let downsampled_height = height.div_ceil(downsample_factor);
-    let mut avg_alt = vec![vec![f64::NAN; downsampled_height + 2]; downsampled_width + 2];
+    let mut avg_alt = vec![vec![f64::NAN; height + 2]; width + 2];
 
     let image_data = match dem_img_decoder.read_image().unwrap() {
         DecodingResult::F32(image_data) => image_data.into_iter().map(f64::from).collect(),
@@ -299,33 +296,10 @@ pub fn get_elevation_matrix_from_dem(tile: &Tile) -> Vec<Vec<f64>> {
         _ => panic!("Cannot read band data"),
     };
 
-    for coarse_y in 0..downsampled_height {
-        let source_y_start = coarse_y * downsample_factor;
-        let source_y_end = usize::min(source_y_start + downsample_factor, height);
-
-        for coarse_x in 0..downsampled_width {
-            let source_x_start = coarse_x * downsample_factor;
-            let source_x_end = usize::min(source_x_start + downsample_factor, width);
-            let mut elevation_sum = 0.0;
-            let mut elevation_count = 0usize;
-
-            for source_y in source_y_start..source_y_end {
-                let row_offset = source_y * width;
-
-                for source_x in source_x_start..source_x_end {
-                    let elevation = image_data[row_offset + source_x];
-
-                    if !elevation.is_nan() {
-                        elevation_sum += elevation;
-                        elevation_count += 1;
-                    }
-                }
-            }
-
-            if elevation_count > 0 {
-                avg_alt[coarse_x][downsampled_height - coarse_y] = elevation_sum / elevation_count as f64;
-            }
-        }
+    for (index, elevation) in image_data.into_iter().enumerate() {
+        let x = index % width;
+        let y = height - index / width;
+        avg_alt[x][y] = elevation;
     }
 
     return avg_alt;

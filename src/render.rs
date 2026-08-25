@@ -163,11 +163,12 @@ pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
     );
 }
 
-const RENDER_STEP_FILES: [&str; 15] = [
+const RENDER_STEP_FILES: [&str; 16] = [
     "cliffs.png",
     "contours",
     "contours.png",
     "contours-raw",
+    "dem_2m_with_buffer.tif",
     "dem_with_buffer.tif",
     "formlines",
     "full-map.pgw",
