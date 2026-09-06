@@ -3,17 +3,15 @@ use std::{path::Path, time::Instant};
 
 use crate::{
     canvas::Canvas,
-    config::get_config,
+    config::Config,
     constants::{INCH, MAX_MERGED_PIXEL_WIDTH_AND_HEIGHT},
     tile::TileWithNeighbors,
     world_file::create_world_file,
 };
 
-pub fn merge_maps(output_dir: &str, tiles_with_neighbors: Vec<TileWithNeighbors>) {
+pub fn merge_maps(output_dir: &str, tiles_with_neighbors: Vec<TileWithNeighbors>, config: &Config) {
     info!("Merging maps");
     let start = Instant::now();
-
-    let config = get_config();
 
     if tiles_with_neighbors.len() == 0 {
         warn!("No map to merge.");

@@ -1,6 +1,7 @@
 use cassini::{
-    batch_process_tiles, generate_default_config, process_single_tile, process_single_tile_lidar_step,
-    process_single_tile_render_step, UndergrowthMode,
+    batch_process_tiles_with_config, generate_default_config, process_single_tile,
+    process_single_tile_lidar_step_with_config, process_single_tile_render_step_with_config,
+    UndergrowthMode,
 };
 use clap::{CommandFactory, Parser, Subcommand};
 use log::info;
@@ -72,12 +73,18 @@ pub enum Commands {
             default_value = "lidar"
         )]
         output_dir: Option<String>,
+
+        #[arg(long, short = 'C', help = "The path to the configuration file to use")]
+        config: Option<PathBuf>,
     },
 
     /// Run only the map generation step for a single tile
     Render {
         #[arg(help = "The path to the directory containing the output of the LiDAR processing step")]
         input_dir: String,
+
+        #[arg(long, short = 'C', help = "The path to the configuration file to use")]
+        config: Option<PathBuf>,
 
         #[arg(
             long,
@@ -125,6 +132,9 @@ pub enum Commands {
             default_value = "in"
         )]
         input_dir: Option<String>,
+
+        #[arg(long, short = 'C', help = "The path to the configuration file to use")]
+        config: Option<PathBuf>,
 
         #[arg(
             long,
@@ -225,6 +235,7 @@ fn main() {
             Commands::Lidar {
                 file_path,
                 output_dir: maybe_output_dir,
+                config,
             } => {
                 info!("LiDAR processing");
                 let start = Instant::now();
@@ -232,7 +243,7 @@ fn main() {
                 let output_dir = maybe_output_dir.unwrap_or("lidar".to_owned());
                 let laz_path = Path::new(&file_path).to_path_buf();
                 let dir_path = Path::new(&output_dir).to_path_buf();
-                process_single_tile_lidar_step(&laz_path, &dir_path);
+                process_single_tile_lidar_step_with_config(&laz_path, &dir_path, config.as_deref());
 
                 let duration = start.elapsed();
                 info!("LiDAR file processed in {:.1?}", duration);
@@ -240,6 +251,7 @@ fn main() {
 
             Commands::Render {
                 input_dir,
+                config,
                 output_dir: maybe_output_dir,
                 neighbors,
                 skip_vector,
@@ -267,7 +279,7 @@ fn main() {
                 }
 
                 let shapefiles_dir = shapefiles.map(PathBuf::from);
-                process_single_tile_render_step(
+                process_single_tile_render_step_with_config(
                     &input_dir_path,
                     &output_dir_path,
                     neighbor_tiles,
@@ -275,6 +287,7 @@ fn main() {
                     skip_520,
                     &undergrowth,
                     shapefiles_dir,
+                    config.as_deref(),
                 );
 
                 let duration = start.elapsed();
@@ -283,6 +296,7 @@ fn main() {
 
             Commands::Batch {
                 input_dir: maybe_input_dir,
+                config,
                 output_dir: maybe_output_dir,
                 threads: maybe_threads,
                 skip_lidar,
@@ -297,7 +311,7 @@ fn main() {
                 let output_dir = maybe_output_dir.unwrap_or("out".to_owned());
                 let threads = maybe_threads.unwrap_or(3);
 
-                batch_process_tiles(
+                batch_process_tiles_with_config(
                     &input_dir,
                     &output_dir,
                     threads,
@@ -305,11 +319,45 @@ fn main() {
                     skip_vector,
                     skip_520,
                     &undergrowth,
+                    config.as_deref(),
                 );
 
                 let duration = start.elapsed();
                 info!("Tiles generated in {:.1?}", duration);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Args, Commands};
+    use clap::Parser;
+    use std::path::PathBuf;
+
+    fn parsed_config(command: &str, option: &str) -> Option<PathBuf> {
+        let args = Args::try_parse_from(["cassini", command, "input", option, "custom.json"])
+            .expect("command should accept a config path");
+
+        match args.command.unwrap() {
+            Commands::Lidar { config, .. }
+            | Commands::Render { config, .. }
+            | Commands::Batch { config, .. } => config,
+            _ => panic!("unexpected command"),
+        }
+    }
+
+    #[test]
+    fn config_option_is_available_on_processing_commands() {
+        for command in ["lidar", "render", "batch"] {
+            assert_eq!(
+                parsed_config(command, "--config"),
+                Some(PathBuf::from("custom.json"))
+            );
+            assert_eq!(
+                parsed_config(command, "-C"),
+                Some(PathBuf::from("custom.json"))
+            );
         }
     }
 }

@@ -1,4 +1,5 @@
 use crate::{
+    config::Config,
     download::download_osm_file,
     lidar::generate_dem_and_vegetation_density_tiff_images_from_laz_file,
     merge::merge_maps,
@@ -27,6 +28,7 @@ pub fn batch(
     skip_vector: bool,
     skip_520: bool,
     undergrowth_mode: &UndergrowthMode,
+    config: Config,
 ) {
     let tiles = get_tiles_with_neighbors(input_dir, output_dir);
     let tiles_arc = Arc::new(tiles.clone());
@@ -95,6 +97,7 @@ pub fn batch(
         let chunk = Arc::new(chunk);
 
         let cloned_undergrowth_mode = undergrowth_mode.clone();
+        let cloned_config = config.clone();
 
         let spawned_thread = spawn(move || {
             for tile in chunk.iter() {
@@ -110,6 +113,7 @@ pub fn batch(
                     skip_520,
                     &cloned_undergrowth_mode,
                     None,
+                    &cloned_config,
                 );
             }
 
@@ -123,7 +127,7 @@ pub fn batch(
         handle.join().unwrap();
     }
 
-    merge_maps(output_dir, tiles);
+    merge_maps(output_dir, tiles, &config);
 }
 
 pub fn get_tiles_with_neighbors(input_dir: &str, output_dir: &str) -> Vec<TileWithNeighbors> {

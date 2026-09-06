@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File},
     io::Write,
+    path::Path,
 };
 
 const DEFAULT_YELLOW_THRESHOLD: f32 = 1.; // Update the docs when modifying
@@ -20,7 +21,7 @@ const DEFAULT_FORM_LINES_MIN_LENGTH: f64 = 10.0; // Update the docs when modifyi
 const DEFAULT_FORM_LINES_MIN_GAP_LENGTH: f64 = 50.0; // Update the docs when modifying
 const DEFAULT_FORM_LINES_ADDITIONAL_TAIL_LENGTH: f64 = 15.0; // Update the docs when modifying
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default = "default_yellow_threshold")]
     pub yellow_threshold: f32,
@@ -71,9 +72,17 @@ impl _FormLineConfig {
     }
 }
 
-pub fn get_config() -> Config {
-    let raw_config = fs::read_to_string("./config.json").unwrap_or("{}".to_owned());
-    return serde_json::from_str(&raw_config).unwrap();
+pub fn get_config(config_path: Option<&Path>) -> Config {
+    let raw_config = match config_path {
+        Some(path) => fs::read_to_string(path)
+            .unwrap_or_else(|error| panic!("Could not read config file {}: {}", path.display(), error)),
+        None => fs::read_to_string("./config.json").unwrap_or("{}".to_owned()),
+    };
+
+    serde_json::from_str(&raw_config).unwrap_or_else(|error| {
+        let path = config_path.unwrap_or_else(|| Path::new("./config.json"));
+        panic!("Could not parse config file {}: {}", path.display(), error)
+    })
 }
 
 pub fn default_config() {
@@ -137,4 +146,25 @@ fn default_form_lines_min_gap_length() -> f64 {
 
 fn default_form_lines_additional_tail_length() -> f64 {
     DEFAULT_FORM_LINES_ADDITIONAL_TAIL_LENGTH
+}
+
+#[cfg(test)]
+mod tests {
+    use super::get_config;
+    use std::{fs, time::SystemTime};
+
+    #[test]
+    fn loads_config_from_the_selected_path() {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("cassini-config-{unique}.json"));
+        fs::write(&path, r#"{"dpi_resolution": 300}"#).unwrap();
+
+        let config = get_config(Some(&path));
+
+        fs::remove_file(path).unwrap();
+        assert_eq!(config.dpi_resolution, 300.0);
+    }
 }

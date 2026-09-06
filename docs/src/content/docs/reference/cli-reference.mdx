@@ -106,6 +106,16 @@ cassini lidar ./path/to/my/tile.laz
 
 The output directory for the processed <GlossaryLink slug="lidar" /> file.
 
+#### `--config` or `-C`
+
+<p>
+
+**Type:** `string`<br />
+
+</p>
+
+The path to the configuration file to use. If omitted, Cassini uses `./config.json` when it exists, or the built-in defaults otherwise.
+
 ## `cassini render`
 
 Run only the map rendering step for a single tile. The `render` subcommand takes the path to the directory containing the output of the <GlossaryLink slug="lidar" /> processing step as an argument:
@@ -149,6 +159,16 @@ cassini render ./path/to/lidar/step/output/directory
 
 The output directory for the processed tile.
 
+#### `--config` or `-C`
+
+<p>
+
+**Type:** `string`<br />
+
+</p>
+
+The path to the configuration file to use. If omitted, Cassini uses `./config.json` when it exists, or the built-in defaults otherwise.
+
 #### `--neighbors` or `-n`
 
 <p>
@@ -191,6 +211,16 @@ cassini batch
 </p>
 
 The output directory for the processed LiDAR files.
+
+#### `--config` or `-C`
+
+<p>
+
+**Type:** `string`<br />
+
+</p>
+
+The path to the configuration file to use. If omitted, Cassini uses `./config.json` when it exists, or the built-in defaults otherwise.
 
 #### `--threads` or `-t`
 

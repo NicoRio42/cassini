@@ -5,7 +5,7 @@ description: The reference for the Cassini configuration.
 
 import GlossaryLink from "../../../components/GlossaryLink.astro";
 
-The following reference covers all supported configuration options in Cassini. The configuration should be in a `config.json` file in the directory you are running the `cassini` command. To generate a default configuration file, run the `config` subcommand:
+The following reference covers all supported configuration options in Cassini. By default, the configuration should be in a `config.json` file in the directory where you run Cassini. For the `lidar`, `render`, and `batch` commands, you can select another file with `--config path/to/config.json` or `-C path/to/config.json`. To generate a default configuration file, run the `config` subcommand:
 
 ```sh frame="none"
 cassini config

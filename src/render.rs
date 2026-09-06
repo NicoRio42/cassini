@@ -1,4 +1,5 @@
 use crate::constants::INCH;
+use crate::config::Config;
 use crate::contours::generate_contours_with_pullautin_algorithme;
 use crate::helpers::{remove_dir_content, remove_if_exists};
 use crate::tile::TileWithNeighbors;
@@ -6,8 +7,7 @@ use crate::vectors::render_map_with_osm_vector_shapes;
 use crate::world_file::create_world_file;
 use crate::UndergrowthMode;
 use crate::{
-    cliffs::render_cliffs, config::get_config, dem::create_dem_with_buffer_and_slopes_tiff, tile::Tile,
-    vegetation::render_vegetation,
+    cliffs::render_cliffs, dem::create_dem_with_buffer_and_slopes_tiff, tile::Tile, vegetation::render_vegetation,
 };
 use log::{error, info};
 use std::path::PathBuf;
@@ -21,8 +21,8 @@ pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
     skip_520: bool,
     undergrowth_mode: &UndergrowthMode,
     shapefiles_dir: Option<PathBuf>,
+    config: &Config,
 ) {
-    let config = get_config();
     let image_width = ((tile.max_x - tile.min_x) as f32 * config.dpi_resolution / INCH) as u32;
     let image_height = ((tile.max_y - tile.min_y) as f32 * config.dpi_resolution / INCH) as u32;
 
@@ -31,13 +31,13 @@ pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
         &neighbor_tiles,
         image_width,
         image_height,
-        &config,
+        config,
         undergrowth_mode,
     );
 
     create_dem_with_buffer_and_slopes_tiff(&tile, &neighbor_tiles);
-    generate_contours_with_pullautin_algorithme(&tile, image_width, image_height, &config);
-    render_cliffs(&tile, image_width, image_height, &config);
+    generate_contours_with_pullautin_algorithme(&tile, image_width, image_height, config);
+    render_cliffs(&tile, image_width, image_height, config);
 
     info!(
         "Tile min_x={} min_y={} max_x={} max_y={}. Rendering map to png",
@@ -140,7 +140,7 @@ pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
         &tile,
         image_width,
         image_height,
-        &config,
+        config,
         &vegetation_path,
         &undergrowth_path,
         &contours_path,
