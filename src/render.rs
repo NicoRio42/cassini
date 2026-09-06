@@ -5,9 +5,11 @@ use crate::helpers::{remove_dir_content, remove_if_exists};
 use crate::tile::TileWithNeighbors;
 use crate::vectors::render_map_with_osm_vector_shapes;
 use crate::world_file::create_world_file;
-use crate::UndergrowthMode;
 use crate::{
-    cliffs::render_cliffs, dem::create_dem_with_buffer_and_slopes_tiff, tile::Tile, vegetation::render_vegetation,
+    cliffs::render_cliffs,
+    dem::create_dem_with_buffer_and_slopes_tiff,
+    tile::Tile,
+    vegetation::{render_vegetation, UndergrowthMode},
 };
 use log::{error, info};
 use std::path::PathBuf;

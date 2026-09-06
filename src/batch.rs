@@ -7,7 +7,7 @@ use crate::{
         cleanup_render_step_files, generate_png_from_dem_vegetation_density_tiff_images_and_vector_file,
     },
     tile::{Tile, TileWithNeighbors},
-    UndergrowthMode,
+    vegetation::UndergrowthMode,
 };
 use las::raw::Header;
 use log::info;

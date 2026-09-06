@@ -1,14 +1,40 @@
-use cassini::{
-    batch_process_tiles_with_config, generate_default_config, process_single_tile,
-    process_single_tile_lidar_step_with_config, process_single_tile_render_step_with_config,
-    UndergrowthMode,
-};
+mod batch;
+mod buffer;
+mod canvas;
+mod cliffs;
+mod coastlines;
+mod config;
+mod constants;
+mod contours;
+mod dem;
+mod download;
+mod helpers;
+mod lidar;
+mod map_renderer;
+mod merge;
+mod pullautin_contours_render;
+mod pullautin_smooth_contours;
+mod render;
+mod tile;
+mod vectors;
+mod vegetation;
+mod world_file;
+
+use batch::batch;
 use clap::{CommandFactory, Parser, Subcommand};
+use config::{default_config, get_config};
+use download::download_osm_file;
+use las::raw::Header;
+use lidar::generate_dem_and_vegetation_density_tiff_images_from_laz_file;
 use log::info;
+use render::generate_png_from_dem_vegetation_density_tiff_images_and_vector_file;
 use std::{
+    fs::{create_dir_all, File},
     path::{Path, PathBuf},
     time::Instant,
 };
+use tile::{get_extent_from_lidar_dir_path, Tile};
+use vegetation::UndergrowthMode;
 
 // Update the docs when modifying
 #[derive(Parser, Debug)]
@@ -17,13 +43,13 @@ use std::{
     about = "A software that generates highly accurate topographic maps from LiDAR data. See documentation: https://cassini-map.com. GDAL and PDAL must be installed on the system for this program to work.",
     long_about = "Cassini is a software that generates highly accurate topographic maps from LiDAR data and shapefile vector data in record times."
 )]
-pub struct Args {
+struct Args {
     #[command(subcommand)]
-    pub command: Option<Commands>,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand, Debug)]
-pub enum Commands {
+enum Commands {
     /// Generate a map from a single LiDAR file
     Process {
         #[arg(help = "The path to the LiDAR file to process")]
@@ -80,7 +106,9 @@ pub enum Commands {
 
     /// Run only the map generation step for a single tile
     Render {
-        #[arg(help = "The path to the directory containing the output of the LiDAR processing step")]
+        #[arg(
+            help = "The path to the directory containing the output of the LiDAR processing step"
+        )]
         input_dir: String,
 
         #[arg(long, short = 'C', help = "The path to the configuration file to use")]
@@ -180,6 +208,142 @@ pub enum Commands {
     Config,
 }
 
+fn process_single_tile(
+    file_path: &Path,
+    output_dir_path: &Path,
+    skip_vector: bool,
+    skip_520: bool,
+    undergrowth_mode: &UndergrowthMode,
+    shapefiles_dir: Option<PathBuf>,
+) {
+    let config = get_config(None);
+
+    generate_dem_and_vegetation_density_tiff_images_from_laz_file(
+        &file_path.to_path_buf(),
+        &output_dir_path.to_path_buf(),
+    );
+
+    let mut file = File::open(file_path).expect("Cound not open laz file");
+    let header = Header::read_from(&mut file).unwrap();
+
+    let tile = Tile {
+        lidar_dir_path: output_dir_path.to_path_buf(),
+        render_dir_path: output_dir_path.to_path_buf(),
+        min_x: header.min_x.round() as i64,
+        min_y: header.min_y.round() as i64,
+        max_x: header.max_x.round() as i64,
+        max_y: header.max_y.round() as i64,
+    };
+
+    if shapefiles_dir.is_none() && !skip_vector {
+        download_osm_file_if_needed(&tile);
+    }
+
+    generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
+        tile,
+        vec![],
+        skip_vector,
+        skip_520,
+        undergrowth_mode,
+        shapefiles_dir,
+        &config,
+    );
+}
+
+fn process_single_tile_lidar_step(
+    file_path: &Path,
+    output_dir_path: &Path,
+    config_path: Option<&Path>,
+) {
+    if config_path.is_some() {
+        get_config(config_path);
+    }
+
+    generate_dem_and_vegetation_density_tiff_images_from_laz_file(
+        &file_path.to_path_buf(),
+        &output_dir_path.to_path_buf(),
+    );
+}
+
+fn process_single_tile_render_step(
+    input_dir_path: &Path,
+    output_dir_path: &Path,
+    neighbor_tiles: Vec<PathBuf>,
+    skip_vector: bool,
+    skip_520: bool,
+    undergrowth_mode: &UndergrowthMode,
+    shapefiles_dir: Option<PathBuf>,
+    config_path: Option<&Path>,
+) {
+    let config = get_config(config_path);
+    create_dir_all(output_dir_path).expect("Could not create out dir");
+
+    let (min_x, min_y, max_x, max_y) =
+        get_extent_from_lidar_dir_path(&input_dir_path.to_path_buf());
+
+    let tile = Tile {
+        lidar_dir_path: input_dir_path.to_path_buf(),
+        render_dir_path: output_dir_path.to_path_buf(),
+        min_x,
+        min_y,
+        max_x,
+        max_y,
+    };
+
+    if shapefiles_dir.is_none() && !skip_vector {
+        download_osm_file_if_needed(&tile);
+    }
+
+    generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
+        tile,
+        neighbor_tiles,
+        skip_vector,
+        skip_520,
+        undergrowth_mode,
+        shapefiles_dir,
+        &config,
+    );
+}
+
+fn download_osm_file_if_needed(tile: &Tile) {
+    let osm_path = tile
+        .render_dir_path
+        .join(format!("{:0>7}_{:0>7}.osm", tile.min_x, tile.max_y));
+
+    if !osm_path.exists() {
+        download_osm_file(
+            tile.min_x,
+            tile.min_y,
+            tile.max_x,
+            tile.max_y,
+            &tile.render_dir_path,
+        );
+    }
+}
+
+fn batch_process_tiles(
+    input_dir: &str,
+    output_dir: &str,
+    number_of_threads: usize,
+    skip_lidar: bool,
+    skip_vector: bool,
+    skip_520: bool,
+    undergrowth_mode: &UndergrowthMode,
+    config_path: Option<&Path>,
+) {
+    let config = get_config(config_path);
+    batch(
+        input_dir,
+        output_dir,
+        number_of_threads,
+        skip_lidar,
+        skip_vector,
+        skip_520,
+        undergrowth_mode,
+        config,
+    );
+}
+
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format(|buf, record| {
@@ -208,7 +372,7 @@ fn main() {
     if let Some(command) = args.command {
         match command {
             Commands::Config {} => {
-                generate_default_config();
+                default_config();
             }
 
             Commands::Process {
@@ -226,7 +390,14 @@ fn main() {
                 let laz_path = Path::new(&file_path).to_path_buf();
                 let dir_path = Path::new(&output_dir).to_path_buf();
                 let shapefiles_dir = shapefiles.map(PathBuf::from);
-                process_single_tile(&laz_path, &dir_path, skip_vector, skip_520, &undergrowth, shapefiles_dir);
+                process_single_tile(
+                    &laz_path,
+                    &dir_path,
+                    skip_vector,
+                    skip_520,
+                    &undergrowth,
+                    shapefiles_dir,
+                );
 
                 let duration = start.elapsed();
                 info!("Tile generated in {:.1?}", duration);
@@ -243,7 +414,7 @@ fn main() {
                 let output_dir = maybe_output_dir.unwrap_or("lidar".to_owned());
                 let laz_path = Path::new(&file_path).to_path_buf();
                 let dir_path = Path::new(&output_dir).to_path_buf();
-                process_single_tile_lidar_step_with_config(&laz_path, &dir_path, config.as_deref());
+                process_single_tile_lidar_step(&laz_path, &dir_path, config.as_deref());
 
                 let duration = start.elapsed();
                 info!("LiDAR file processed in {:.1?}", duration);
@@ -279,7 +450,7 @@ fn main() {
                 }
 
                 let shapefiles_dir = shapefiles.map(PathBuf::from);
-                process_single_tile_render_step_with_config(
+                process_single_tile_render_step(
                     &input_dir_path,
                     &output_dir_path,
                     neighbor_tiles,
@@ -311,7 +482,7 @@ fn main() {
                 let output_dir = maybe_output_dir.unwrap_or("out".to_owned());
                 let threads = maybe_threads.unwrap_or(3);
 
-                batch_process_tiles_with_config(
+                batch_process_tiles(
                     &input_dir,
                     &output_dir,
                     threads,
