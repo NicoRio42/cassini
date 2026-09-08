@@ -11,6 +11,7 @@ pub fn create_tif_with_buffer(
     buffer: i64,
     tif_filename_without_extension: &str,
     resolution: f32,
+    output_type: Option<&str>,
 ) -> Result<()> {
     let vrt_with_buffer_path = tile.render_dir_path.join(format!(
         "{}_with_buffer.vrt",
@@ -47,24 +48,29 @@ pub fn create_tif_with_buffer(
     )?;
     ensure_file(&vrt_with_buffer_path)?;
 
-    // Then outpouting croped tif with buffer
-    checked_output(
-        Command::new("gdal_translate")
-            .args([
-                "-projwin",
-                &(tile.min_x - buffer).to_string(),
-                &(tile.max_y + buffer).to_string(),
-                &(tile.max_x + buffer).to_string(),
-                &(tile.min_y - buffer).to_string(),
-            ])
-            .args(["-of", "GTiff"])
-            .args(["-tr", &resolution.to_string(), &resolution.to_string()])
-            .arg(&vrt_with_buffer_path)
-            .arg(&raster_with_buffer_path)
-            .arg("--quiet"),
-        Stage::Buffer,
-        tile_id,
-    )?;
+    // Then outputting the cropped TIFF with a buffer.
+    let mut translate_command = Command::new("gdal_translate");
+    translate_command
+        .args([
+            "-projwin",
+            &(tile.min_x - buffer).to_string(),
+            &(tile.max_y + buffer).to_string(),
+            &(tile.max_x + buffer).to_string(),
+            &(tile.min_y - buffer).to_string(),
+        ])
+        .args(["-of", "GTiff"])
+        .args(["-tr", &resolution.to_string(), &resolution.to_string()]);
+
+    if let Some(output_type) = output_type {
+        translate_command.args(["-ot", output_type]);
+    }
+
+    translate_command
+        .arg(&vrt_with_buffer_path)
+        .arg(&raster_with_buffer_path)
+        .arg("--quiet");
+
+    checked_output(&mut translate_command, Stage::Buffer, tile_id)?;
     ensure_file(&raster_with_buffer_path)?;
 
     // Finally removing the vrt file

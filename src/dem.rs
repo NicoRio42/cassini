@@ -20,7 +20,14 @@ pub fn create_dem_with_buffer_and_slopes_tiff(
     let start = Instant::now();
 
     let dem_with_buffer_path = tile.render_dir_path.join("dem_with_buffer.tif");
-    create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "dem", 0.5)?;
+    create_tif_with_buffer(
+        tile,
+        neighbor_tiles,
+        BUFFER as i64,
+        "dem",
+        0.5,
+        Some("Float32"),
+    )?;
     let tile_id = Some(TileId::from(tile));
 
     // Filling holes

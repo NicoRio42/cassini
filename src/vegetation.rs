@@ -50,15 +50,30 @@ pub fn render_vegetation(
     let casted_base_vegetation_block_size_pixel = (vegetation_block_size_pixel * 2.).ceil() as i32;
     let casted_green_block_size_pixel = (vegetation_block_size_pixel).ceil() as u32;
 
-    create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "high_vegetation", 1.0)?;
+    create_tif_with_buffer(
+        tile,
+        neighbor_tiles,
+        BUFFER as i64,
+        "high_vegetation",
+        1.0,
+        None,
+    )?;
     create_tif_with_buffer(
         tile,
         neighbor_tiles,
         BUFFER as i64,
         "medium_vegetation",
         1.0,
+        None,
     )?;
-    create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "low_vegetation", 1.0)?;
+    create_tif_with_buffer(
+        tile,
+        neighbor_tiles,
+        BUFFER as i64,
+        "low_vegetation",
+        1.0,
+        None,
+    )?;
 
     let high_vegetation =
         get_image_data_from_tif(&tile.render_dir_path.join("high_vegetation_with_buffer.tif"))?;
