@@ -27,28 +27,30 @@ pub fn create_tif_with_buffer(
         .lidar_dir_path
         .join(format!("{}.tif", tif_filename_without_extension));
 
-    let mut rasters_paths = vec![tile_raster_path];
-
-    for neighbor_tile in neighbor_tiles {
-        let path = neighbor_tile.join(format!("{}.tif", tif_filename_without_extension));
-
-        rasters_paths.push(path);
-    }
-
     let tile_id = Some(TileId::from(tile));
 
-    // First creating a GDAL Virtual Dataset
-    checked_output(
-        Command::new("gdalbuildvrt")
-            .arg(&vrt_with_buffer_path)
-            .args(&rasters_paths)
-            .arg("--quiet"),
-        Stage::Buffer,
-        tile_id,
-    )?;
-    ensure_file(&vrt_with_buffer_path)?;
+    let translate_input_path = if neighbor_tiles.is_empty() {
+        tile_raster_path
+    } else {
+        let mut rasters_paths = vec![tile_raster_path];
+        rasters_paths.extend(neighbor_tiles.iter().map(|neighbor_tile| {
+            neighbor_tile.join(format!("{}.tif", tif_filename_without_extension))
+        }));
 
-    // Then outputting the cropped TIFF with a buffer.
+        // A VRT is only needed to mosaic the tile with its neighbors.
+        checked_output(
+            Command::new("gdalbuildvrt")
+                .arg(&vrt_with_buffer_path)
+                .args(&rasters_paths)
+                .arg("-q"),
+            Stage::Buffer,
+            tile_id,
+        )?;
+        ensure_file(&vrt_with_buffer_path)?;
+        vrt_with_buffer_path.clone()
+    };
+
+    // Output the cropped TIFF with a buffer.
     let mut translate_command = Command::new("gdal_translate");
     translate_command
         .args([
@@ -66,17 +68,18 @@ pub fn create_tif_with_buffer(
     }
 
     translate_command
-        .arg(&vrt_with_buffer_path)
+        .arg(&translate_input_path)
         .arg(&raster_with_buffer_path)
-        .arg("--quiet");
+        .arg("-q");
 
     checked_output(&mut translate_command, Stage::Buffer, tile_id)?;
     ensure_file(&raster_with_buffer_path)?;
 
-    // Finally removing the vrt file
-    std::fs::remove_file(&vrt_with_buffer_path).context(format!(
-        "could not remove temporary VRT `{}`",
-        vrt_with_buffer_path.display()
-    ))?;
+    if !neighbor_tiles.is_empty() {
+        std::fs::remove_file(&vrt_with_buffer_path).context(format!(
+            "could not remove temporary VRT `{}`",
+            vrt_with_buffer_path.display()
+        ))?;
+    }
     Ok(())
 }

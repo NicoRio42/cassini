@@ -39,3 +39,26 @@ For the full Cassini pipeline, smoothed contour displacement must remain below
 20 cm and changed final-image pixels below 0.01% at 600 DPI. These latter two
 checks require a render from the pre-change revision and are therefore recorded
 manually rather than enforced by the single-revision benchmark script.
+
+## Single-source buffering benchmark
+
+`single-source-buffer.sh` measures the no-neighbor optimization described in
+finding two of `specs/research/render-pipeline-performance-report.md`. It times
+the four buffering operations performed during a render in two forms:
+
+- The previous path, which creates a one-source VRT before each translation.
+- The optimized path, which passes each source TIFF directly to
+  `gdal_translate`.
+
+Pass a Cassini LiDAR artifact directory containing `extent.txt`, `dem.tif`, and
+the three vegetation TIFFs:
+
+```sh
+CASSINI_BENCHMARK_REPETITIONS=20 benchmarks/single-source-buffer.sh \
+  target/dem-float32-benchmark/lidar
+```
+
+The strategies are alternated to reduce ordering bias. The script writes raw
+timings to `target/single-source-buffer-benchmark/results.csv`, reports the mean
+time and savings, and uses `gdalcompare.py` to require equivalent geospatial
+metadata and pixel values for all four outputs.
