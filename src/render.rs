@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::Instant;
 
-pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
+pub fn generate_map_from_dem_vegetation_density_tiff_images_and_vector_file(
     tile: Tile,
     neighbor_tiles: Vec<PathBuf>,
     skip_vector: bool,
@@ -59,7 +59,7 @@ pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
     render_cliffs(&tile, image_width, image_height, config)?;
 
     info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. Rendering map to png",
+        "Tile min_x={} min_y={} max_x={} max_y={}. Rendering final map",
         tile.min_x, tile.min_y, tile.max_x, tile.max_y
     );
 
@@ -172,14 +172,14 @@ pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
     let duration = start.elapsed();
 
     info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. Map rendered to png in {:.1?}",
+        "Tile min_x={} min_y={} max_x={} max_y={}. Map rendered to lossless WebP in {:.1?}",
         tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
     );
 
     Ok(())
 }
 
-const RENDER_STEP_FILES: [&str; 16] = [
+const RENDER_STEP_FILES: [&str; 17] = [
     "cliffs.png",
     "contours",
     "contours.png",
@@ -189,6 +189,7 @@ const RENDER_STEP_FILES: [&str; 16] = [
     "formlines",
     "full-map.pgw",
     "full-map.png",
+    "full-map.webp",
     "high_vegetation_with_buffer.tif",
     "low_vegetation_with_buffer.tif",
     "medium_vegetation_with_buffer.tif",
