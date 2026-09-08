@@ -5,6 +5,9 @@ use skia_safe::{
 use std::fs::File;
 use std::io::Write;
 use std::mem;
+use std::path::Path as FsPath;
+
+use crate::error::{CassiniError, Result, ResultContext};
 
 pub struct Canvas {
     surface: Surface,
@@ -13,19 +16,29 @@ pub struct Canvas {
 }
 
 impl Canvas {
-    pub fn new(width: i32, height: i32) -> Canvas {
-        let mut surface = surfaces::raster_n32_premul((width, height)).expect("surface");
+    pub fn new(width: i32, height: i32) -> Result<Canvas> {
+        if width <= 0 || height <= 0 {
+            return Err(CassiniError::InvalidInput {
+                message: format!("canvas dimensions must be positive, got {width}x{height}"),
+            });
+        }
+
+        let mut surface = surfaces::raster_n32_premul((width, height)).ok_or_else(|| {
+            CassiniError::InvalidInput {
+                message: format!("could not allocate a {width}x{height} canvas"),
+            }
+        })?;
         let path = Path::new();
         let mut paint = Paint::default();
         paint.set_color(Color::BLACK);
         paint.set_anti_alias(true);
         paint.set_stroke_width(1.0);
         surface.canvas().clear(0x00000000);
-        Canvas {
+        Ok(Canvas {
             surface,
             path,
             paint,
-        }
+        })
     }
 
     #[inline]
@@ -42,7 +55,8 @@ impl Canvas {
     #[inline]
     pub fn set_color_with_alpha(&mut self, rgb: (u8, u8, u8), alpha: u8) {
         self.paint.set_blend_mode(skia_safe::BlendMode::SrcOver);
-        self.paint.set_color(Color::from_argb(alpha, rgb.0, rgb.1, rgb.2));
+        self.paint
+            .set_color(Color::from_argb(alpha, rgb.0, rgb.1, rgb.2));
     }
 
     #[inline]
@@ -140,12 +154,14 @@ impl Canvas {
     }
 
     #[inline]
-    pub fn data(&mut self) -> Data {
+    pub fn data(&mut self) -> Result<Data> {
         let image = self.surface.image_snapshot();
         let mut context = self.surface.direct_context();
         image
             .encode(context.as_mut(), EncodedImageFormat::PNG, None)
-            .unwrap()
+            .ok_or_else(|| CassiniError::InvalidInput {
+                message: "could not encode canvas as PNG".to_owned(),
+            })
     }
 
     #[inline]
@@ -159,20 +175,29 @@ impl Canvas {
     }
 
     #[inline]
-    pub fn save_as(&mut self, filename: &str) {
-        let d = self.data();
-        let mut file = File::create(filename).unwrap();
+    pub fn save_as(&mut self, filename: &FsPath) -> Result<()> {
+        let d = self.data()?;
+        let mut file =
+            File::create(filename).context(format!("could not create `{}`", filename.display()))?;
         let bytes = d.as_bytes();
-        file.write_all(bytes).unwrap();
+        file.write_all(bytes)
+            .context(format!("could not write `{}`", filename.display()))?;
+        Ok(())
     }
 
     #[inline]
-    pub fn load_from(filename: &str) -> Canvas {
-        let data = Data::from_filename(filename).unwrap();
-        let image = Image::from_encoded(data).unwrap();
-        let mut c = Canvas::new(image.width(), image.height());
+    pub fn load_from(filename: &FsPath) -> Result<Canvas> {
+        let data = Data::from_filename(filename).ok_or_else(|| CassiniError::InvalidArtifact {
+            path: filename.to_path_buf(),
+            message: "could not read image data".to_owned(),
+        })?;
+        let image = Image::from_encoded(data).ok_or_else(|| CassiniError::InvalidArtifact {
+            path: filename.to_path_buf(),
+            message: "could not decode image".to_owned(),
+        })?;
+        let mut c = Canvas::new(image.width(), image.height())?;
         c.draw_image(image);
-        c
+        Ok(c)
     }
 
     #[inline]

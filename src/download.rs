@@ -4,16 +4,21 @@ use reqwest::header::{CONTENT_TYPE, RETRY_AFTER, USER_AGENT};
 use std::{
     fs::File,
     io::{copy, BufRead, BufReader, BufWriter, Write},
-    path::PathBuf,
-    process::{Command, Stdio},
+    path::Path,
+    process::Command,
     thread::sleep,
     time::{Duration, Instant, SystemTime},
 };
 
-use crate::constants::BUFFER;
+use crate::{
+    constants::BUFFER,
+    error::{CassiniError, Result, ResultContext, Stage, TileId},
+    process::checked_output_with_input,
+};
 
 const OVERPASS_API_URL: &str = "https://overpass-api.de/api/interpreter";
 const DEFAULT_RETRY_DELAY: Duration = Duration::from_secs(5);
+const MAX_RETRY_DELAY: Duration = Duration::from_secs(60);
 const USER_AGENT_VALUE: &str = concat!(
     env!("CARGO_PKG_NAME"),
     "/",
@@ -23,7 +28,13 @@ const USER_AGENT_VALUE: &str = concat!(
     ")"
 );
 
-pub fn download_osm_file(min_x: i64, min_y: i64, max_x: i64, max_y: i64, output_dir_path: &PathBuf) {
+pub fn download_osm_file(
+    min_x: i64,
+    min_y: i64,
+    max_x: i64,
+    max_y: i64,
+    output_dir_path: &Path,
+) -> Result<()> {
     let raw_osm_file_path = output_dir_path.join(format!("{:0>7}_{:0>7}_raw.osm", min_x, max_y));
     let osm_file_path = output_dir_path.join(format!("{:0>7}_{:0>7}.osm", min_x, max_y));
 
@@ -34,11 +45,24 @@ pub fn download_osm_file(min_x: i64, min_y: i64, max_x: i64, max_y: i64, output_
 
     let start = Instant::now();
 
-    let (min_lon, min_lat) =
-        convert_coords_from_lambert_93_to_gps((min_x - BUFFER as i64) as f64, (min_y - BUFFER as i64) as f64);
+    let tile_id = TileId {
+        min_x,
+        min_y,
+        max_x,
+        max_y,
+    };
 
-    let (max_lon, max_lat) =
-        convert_coords_from_lambert_93_to_gps((max_x + BUFFER as i64) as f64, (max_y + BUFFER as i64) as f64);
+    let (min_lon, min_lat) = convert_coords_from_lambert_93_to_gps(
+        (min_x - BUFFER as i64) as f64,
+        (min_y - BUFFER as i64) as f64,
+        tile_id,
+    )?;
+
+    let (max_lon, max_lat) = convert_coords_from_lambert_93_to_gps(
+        (max_x + BUFFER as i64) as f64,
+        (max_y + BUFFER as i64) as f64,
+        tile_id,
+    )?;
 
     // Overpass Query
     let query = r#"
@@ -71,7 +95,11 @@ out skel qt;
     // Replace {{bbox}} with your bounding box (south, west, north, east)
     let bbox = format!("{},{},{},{}", min_lat, min_lon, max_lat, max_lon);
     let formatted_query = query.replace("{{bbox}}", &bbox);
-    let client = Client::new();
+    let client = Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(60))
+        .build()
+        .context("could not create the Overpass HTTP client")?;
 
     let mut retries_left = 5;
 
@@ -90,8 +118,11 @@ out skel qt;
                     break response;
                 }
 
-                if retries_left == 0 {
-                    panic!("Overpass API returned error status: {}", status);
+                if !is_transient_status(status.as_u16()) || retries_left == 0 {
+                    return Err(CassiniError::HttpStatus {
+                        url: OVERPASS_API_URL.to_owned(),
+                        status: status.as_u16(),
+                    });
                 }
 
                 let retry_delay = retry_delay_from_response(&response);
@@ -104,7 +135,10 @@ out skel qt;
             }
             Err(error) => {
                 if retries_left == 0 {
-                    panic!("Could not get osm data from Overpass API: {}", error);
+                    return Err(CassiniError::operation(
+                        format!("could not download vector data for tile {tile_id}"),
+                        error,
+                    ));
                 }
 
                 warn!(
@@ -120,11 +154,18 @@ out skel qt;
         sleep(retry_delay);
     };
 
-    let mut file = File::create(&raw_osm_file_path).expect("Could not create file for osm download.");
-    copy(&mut response, &mut file).expect("Could not copy file content.");
+    let mut file = File::create(&raw_osm_file_path).context(format!(
+        "could not create `{}`",
+        raw_osm_file_path.display()
+    ))?;
+    copy(&mut response, &mut file)
+        .context(format!("could not write `{}`", raw_osm_file_path.display()))?;
 
-    fix_osm_file(&raw_osm_file_path, &osm_file_path);
-    std::fs::remove_file(&raw_osm_file_path).expect("Could not remove raw osm file");
+    fix_osm_file(&raw_osm_file_path, &osm_file_path)?;
+    std::fs::remove_file(&raw_osm_file_path).context(format!(
+        "could not remove temporary download `{}`",
+        raw_osm_file_path.display()
+    ))?;
 
     let duration = start.elapsed();
 
@@ -132,6 +173,8 @@ out skel qt;
         "Tile min_x={} min_y={} max_x={} max_y={}. Osm files downloaded in {:.1?}",
         min_x, min_y, max_x, max_y, duration
     );
+
+    Ok(())
 }
 
 fn retry_delay_from_response(response: &reqwest::blocking::Response) -> Duration {
@@ -141,6 +184,11 @@ fn retry_delay_from_response(response: &reqwest::blocking::Response) -> Duration
         .and_then(|value| value.to_str().ok())
         .and_then(parse_retry_after)
         .unwrap_or(DEFAULT_RETRY_DELAY)
+        .min(MAX_RETRY_DELAY)
+}
+
+fn is_transient_status(status: u16) -> bool {
+    status == 429 || matches!(status, 500 | 502 | 503 | 504)
 }
 
 fn parse_retry_after(value: &str) -> Option<Duration> {
@@ -148,58 +196,62 @@ fn parse_retry_after(value: &str) -> Option<Duration> {
         return Some(Duration::from_secs(seconds));
     }
 
-    httpdate::parse_http_date(value)
-        .ok()
-        .map(|date| date.duration_since(SystemTime::now()).unwrap_or(Duration::ZERO))
+    httpdate::parse_http_date(value).ok().map(|date| {
+        date.duration_since(SystemTime::now())
+            .unwrap_or(Duration::ZERO)
+    })
 }
 
-fn convert_coords_from_lambert_93_to_gps(x: f64, y: f64) -> (f64, f64) {
-    let mut cs2cs = Command::new("cs2cs")
-        .args(["+init=epsg:2154", "+to", "+init=epsg:4326", "-f", "%.8f"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .expect("Failed to start cs2cs");
+fn convert_coords_from_lambert_93_to_gps(x: f64, y: f64, tile: TileId) -> Result<(f64, f64)> {
+    let input = format!("{x:.1} {y:.1}\n");
+    let output = checked_output_with_input(
+        Command::new("cs2cs").args(["+init=epsg:2154", "+to", "+init=epsg:4326", "-f", "%.8f"]),
+        input.as_bytes(),
+        Stage::Download,
+        Some(tile),
+    )?;
 
-    if let Some(mut stdin) = cs2cs.stdin.take() {
-        writeln!(stdin, "{:.1} {:.1}", x, y).expect("Failed to write to stdin");
-    }
-
-    let output = cs2cs.wait_with_output().expect("Failed to read cs2cs output");
-
-    if !output.status.success() {
-        panic!("Proj conversion failed.")
-    }
-
-    let result = String::from_utf8(output.stdout).unwrap();
-    let coords: Vec<&str> = result.trim().split_whitespace().collect();
+    let result = String::from_utf8(output.stdout)
+        .context("`cs2cs` returned output that was not valid UTF-8")?;
+    let coords: Vec<&str> = result.split_whitespace().collect();
 
     if coords.len() < 2 {
-        panic!("Wrong Proj conversion result format")
+        return Err(CassiniError::InvalidInput {
+            message: format!("`cs2cs` returned malformed coordinates for tile {tile}"),
+        });
     }
 
-    let lon: f64 = coords[0].parse().expect("Failed to parse longitude");
-    let lat: f64 = coords[1].parse().expect("Failed to parse latitude");
+    let lon: f64 = coords[0]
+        .parse()
+        .context("could not parse longitude returned by `cs2cs`")?;
+    let lat: f64 = coords[1]
+        .parse()
+        .context("could not parse latitude returned by `cs2cs`")?;
 
-    return (lon, lat);
+    Ok((lon, lat))
 }
 
-fn fix_osm_file(input: &PathBuf, output: &PathBuf) {
-    let reader = BufReader::new(File::open(&input).unwrap());
-    let mut writer = BufWriter::new(File::create(&output).unwrap());
+fn fix_osm_file(input: &Path, output: &Path) -> Result<()> {
+    let reader =
+        BufReader::new(File::open(input).context(format!("could not open `{}`", input.display()))?);
+    let mut writer = BufWriter::new(
+        File::create(output).context(format!("could not create `{}`", output.display()))?,
+    );
     let mut relations_lines: Vec<String> = vec![];
 
     let mut is_inside_relation = false;
 
     for line in reader.lines() {
-        let line = line.unwrap();
+        let line = line.context(format!("could not read `{}`", input.display()))?;
 
         if line.contains("</osm>") {
             for relations_line in &relations_lines {
-                writeln!(writer, "{}", relations_line).unwrap();
+                writeln!(writer, "{}", relations_line)
+                    .context(format!("could not write `{}`", output.display()))?;
             }
 
-            writeln!(writer, "{}", line).unwrap();
+            writeln!(writer, "{}", line)
+                .context(format!("could not write `{}`", output.display()))?;
             break;
         }
 
@@ -220,8 +272,12 @@ fn fix_osm_file(input: &PathBuf, output: &PathBuf) {
             continue;
         }
 
-        writeln!(writer, "{}", line).unwrap();
+        writeln!(writer, "{}", line).context(format!("could not write `{}`", output.display()))?;
     }
+    writer
+        .flush()
+        .context(format!("could not flush `{}`", output.display()))?;
+    Ok(())
 }
 
 #[cfg(test)]

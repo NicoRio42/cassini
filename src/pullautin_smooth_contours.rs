@@ -9,9 +9,13 @@ use std::time::Instant;
 use tiff::decoder::{Decoder, DecodingResult};
 
 use crate::constants::BUFFER;
+use crate::error::{CassiniError, Result, ResultContext};
 use crate::tile::Tile;
 
-pub fn pullautin_smooth_contours(tile: &Tile, avg_alt: &Vec<Vec<f64>>) -> Vec<(Vec<f64>, Vec<f64>, f64)> {
+pub fn pullautin_smooth_contours(
+    tile: &Tile,
+    avg_alt: &[Vec<f64>],
+) -> Result<Vec<(Vec<f64>, Vec<f64>, f64)>> {
     info!(
         "Tile min_x={} min_y={} max_x={} max_y={}. Smoothing contours",
         tile.min_x, tile.min_y, tile.max_x, tile.max_y
@@ -53,24 +57,45 @@ pub fn pullautin_smooth_contours(tile: &Tile, avg_alt: &Vec<Vec<f64>>) -> Vec<(V
         }
     }
 
-    let contours_polylines_path = tile.render_dir_path.join("contours-raw").join("contours-raw.shp");
+    let contours_polylines_path = tile
+        .render_dir_path
+        .join("contours-raw")
+        .join("contours-raw.shp");
 
     let mut contours_polylines_reader: shapefile::Reader<BufReader<File>, BufReader<File>> =
-        Reader::from_path(&contours_polylines_path).unwrap();
+        Reader::from_path(&contours_polylines_path).context(format!(
+            "could not open contour shapefile `{}`",
+            contours_polylines_path.display()
+        ))?;
 
-    let contours_polylines_reader_for_table_info: shapefile::Reader<BufReader<File>, BufReader<File>> =
-        Reader::from_path(&contours_polylines_path).unwrap();
+    let contours_polylines_reader_for_table_info: shapefile::Reader<
+        BufReader<File>,
+        BufReader<File>,
+    > = Reader::from_path(&contours_polylines_path).context(format!(
+        "could not read contour table metadata `{}`",
+        contours_polylines_path.display()
+    ))?;
 
     let table_info = contours_polylines_reader_for_table_info.into_table_info();
 
     let contours_dir = tile.render_dir_path.join("contours");
-    create_dir_all(&contours_dir).expect("Could not create contours dir");
+    create_dir_all(&contours_dir).context(format!(
+        "could not create contour directory `{}`",
+        contours_dir.display()
+    ))?;
 
-    let mut writer =
-        shapefile::Writer::from_path_with_info(contours_dir.join("contours.shp"), table_info).unwrap();
+    let contours_output_path = contours_dir.join("contours.shp");
+    let mut writer = shapefile::Writer::from_path_with_info(&contours_output_path, table_info)
+        .context(format!(
+            "could not create contour shapefile `{}`",
+            contours_output_path.display()
+        ))?;
 
     for shape_record in contours_polylines_reader.iter_shapes_and_records_as::<Polyline, Record>() {
-        let (line, record) = shape_record.unwrap();
+        let (line, record) = shape_record.context(format!(
+            "could not read a contour from `{}`",
+            contours_polylines_path.display()
+        ))?;
         let mut x_array = Vec::<f64>::new();
         let mut y_array = Vec::<f64>::new();
 
@@ -85,7 +110,12 @@ pub fn pullautin_smooth_contours(tile: &Tile, avg_alt: &Vec<Vec<f64>>) -> Vec<(V
         let elevation = match record.get("elev") {
             Some(FieldValue::Numeric(Some(x))) => x,
             Some(_) => &f64::NAN,
-            None => panic!("Field 'elev' is not within polygon-dataset"),
+            None => {
+                return Err(CassiniError::InvalidArtifact {
+                    path: contours_polylines_path.clone(),
+                    message: "required `elev` field is missing".to_owned(),
+                });
+            }
         };
 
         let mut el_x_len = x_array.len();
@@ -179,16 +209,16 @@ pub fn pullautin_smooth_contours(tile: &Tile, avg_alt: &Vec<Vec<f64>>) -> Vec<(V
             ya[el_x_len - 1] = y_array[el_x_len - 1];
         }
         for k in 1..(el_x_len - 1) {
-            x_array[k] =
-                (xa[k - 1] + xa[k] / (0.01 + smoothing) + xa[k + 1]) / (2.0 + 1.0 / (0.01 + smoothing));
-            y_array[k] =
-                (ya[k - 1] + ya[k] / (0.01 + smoothing) + ya[k + 1]) / (2.0 + 1.0 / (0.01 + smoothing));
+            x_array[k] = (xa[k - 1] + xa[k] / (0.01 + smoothing) + xa[k + 1])
+                / (2.0 + 1.0 / (0.01 + smoothing));
+            y_array[k] = (ya[k - 1] + ya[k] / (0.01 + smoothing) + ya[k + 1])
+                / (2.0 + 1.0 / (0.01 + smoothing));
         }
         if xa.first() == xa.last() && ya.first() == ya.last() {
-            let vx =
-                (xa[1] + xa[0] / (0.01 + smoothing) + xa[el_x_len - 2]) / (2.0 + 1.0 / (0.01 + smoothing));
-            let vy =
-                (ya[1] + ya[0] / (0.01 + smoothing) + ya[el_x_len - 2]) / (2.0 + 1.0 / (0.01 + smoothing));
+            let vx = (xa[1] + xa[0] / (0.01 + smoothing) + xa[el_x_len - 2])
+                / (2.0 + 1.0 / (0.01 + smoothing));
+            let vy = (ya[1] + ya[0] / (0.01 + smoothing) + ya[el_x_len - 2])
+                / (2.0 + 1.0 / (0.01 + smoothing));
             x_array[0] = vx;
             y_array[0] = vy;
             x_array[el_x_len - 1] = vx;
@@ -263,7 +293,12 @@ pub fn pullautin_smooth_contours(tile: &Tile, avg_alt: &Vec<Vec<f64>>) -> Vec<(V
         }
 
         let smoothed_polyline = GenericPolyline::new(points);
-        let _ = writer.write_shape_and_record(&smoothed_polyline, &record);
+        writer
+            .write_shape_and_record(&smoothed_polyline, &record)
+            .context(format!(
+                "could not write smoothed contour to `{}`",
+                contours_output_path.display()
+            ))?;
         smoothed_contours.push((x_array, y_array, height));
     }
 
@@ -274,26 +309,41 @@ pub fn pullautin_smooth_contours(tile: &Tile, avg_alt: &Vec<Vec<f64>>) -> Vec<(V
         tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
     );
 
-    return smoothed_contours;
+    Ok(smoothed_contours)
 }
 
-pub fn get_elevation_matrix_from_dem(tile: &Tile) -> Vec<Vec<f64>> {
+pub fn get_elevation_matrix_from_dem(tile: &Tile) -> Result<Vec<Vec<f64>>> {
     let dem_path = tile.render_dir_path.join("dem_2m_with_buffer.tif");
-    let dem_tif_file = File::open(dem_path).expect("Cannot find dem tif image!");
+    let dem_tif_file =
+        File::open(&dem_path).context(format!("could not open `{}`", dem_path.display()))?;
 
-    let mut dem_img_decoder = Decoder::new(dem_tif_file).expect("Cannot create decoder");
+    let mut dem_img_decoder = Decoder::new(dem_tif_file).context(format!(
+        "could not create decoder for `{}`",
+        dem_path.display()
+    ))?;
     dem_img_decoder = dem_img_decoder.with_limits(tiff::decoder::Limits::unlimited());
 
-    let (dem_width, dem_height) = dem_img_decoder.dimensions().unwrap();
+    let (dem_width, dem_height) = dem_img_decoder.dimensions().context(format!(
+        "could not read dimensions from `{}`",
+        dem_path.display()
+    ))?;
 
     let width: usize = dem_width as usize;
     let height: usize = dem_height as usize;
     let mut avg_alt = vec![vec![f64::NAN; height + 2]; width + 2];
 
-    let image_data = match dem_img_decoder.read_image().unwrap() {
+    let image_data = match dem_img_decoder
+        .read_image()
+        .context(format!("could not decode `{}`", dem_path.display()))?
+    {
         DecodingResult::F32(image_data) => image_data.into_iter().map(f64::from).collect(),
         DecodingResult::F64(image_data) => image_data,
-        _ => panic!("Cannot read band data"),
+        _ => {
+            return Err(CassiniError::InvalidArtifact {
+                path: dem_path,
+                message: "expected a floating-point TIFF band".to_owned(),
+            });
+        }
     };
 
     for (index, elevation) in image_data.into_iter().enumerate() {
@@ -302,5 +352,5 @@ pub fn get_elevation_matrix_from_dem(tile: &Tile) -> Vec<Vec<f64>> {
         avg_alt[x][y] = elevation;
     }
 
-    return avg_alt;
+    Ok(avg_alt)
 }

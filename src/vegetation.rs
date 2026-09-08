@@ -1,7 +1,10 @@
 use crate::{
     buffer::create_tif_with_buffer,
     config::Config,
-    constants::{BUFFER, GREEN_1, GREEN_2, GREEN_3, INCH, TRANSPARENT, VEGETATION_BLOCK_SIZE, WHITE, YELLOW},
+    constants::{
+        BUFFER, GREEN_1, GREEN_2, GREEN_3, INCH, TRANSPARENT, VEGETATION_BLOCK_SIZE, WHITE, YELLOW,
+    },
+    error::{CassiniError, Result, ResultContext},
     tile::Tile,
 };
 use image::{imageops, Rgba, RgbaImage};
@@ -10,7 +13,12 @@ use imageproc::{
     rect::Rect,
 };
 use log::info;
-use std::{f32::consts::E, fs::File, path::PathBuf, time::Instant, u8};
+use std::{
+    f32::consts::E,
+    fs::File,
+    path::{Path, PathBuf},
+    time::Instant,
+};
 use tiff::decoder::{Decoder, DecodingResult};
 
 #[derive(clap::ValueEnum, Clone, Debug)]
@@ -25,12 +33,12 @@ pub enum UndergrowthMode {
 
 pub fn render_vegetation(
     tile: &Tile,
-    neighbor_tiles: &Vec<PathBuf>,
+    neighbor_tiles: &[PathBuf],
     image_width: u32,
     image_height: u32,
     config: &Config,
     undergrowth_mode: &UndergrowthMode,
-) {
+) -> Result<()> {
     info!(
         "Tile min_x={} min_y={} max_x={} max_y={}. Rendering vegetation",
         tile.min_x, tile.min_y, tile.max_x, tile.max_y
@@ -42,22 +50,32 @@ pub fn render_vegetation(
     let casted_base_vegetation_block_size_pixel = (vegetation_block_size_pixel * 2.).ceil() as i32;
     let casted_green_block_size_pixel = (vegetation_block_size_pixel).ceil() as u32;
 
-    create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "high_vegetation", 1.0);
-    create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "medium_vegetation", 1.0);
-    create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "low_vegetation", 1.0);
+    create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "high_vegetation", 1.0)?;
+    create_tif_with_buffer(
+        tile,
+        neighbor_tiles,
+        BUFFER as i64,
+        "medium_vegetation",
+        1.0,
+    )?;
+    create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "low_vegetation", 1.0)?;
 
     let high_vegetation =
-        get_image_data_from_tif(&tile.render_dir_path.join("high_vegetation_with_buffer.tif"));
+        get_image_data_from_tif(&tile.render_dir_path.join("high_vegetation_with_buffer.tif"))?;
 
-    let medium_vegetation =
-        get_image_data_from_tif(&tile.render_dir_path.join("medium_vegetation_with_buffer.tif"));
+    let medium_vegetation = get_image_data_from_tif(
+        &tile
+            .render_dir_path
+            .join("medium_vegetation_with_buffer.tif"),
+    )?;
 
     let low_vegetation =
-        get_image_data_from_tif(&tile.render_dir_path.join("low_vegetation_with_buffer.tif"));
+        get_image_data_from_tif(&tile.render_dir_path.join("low_vegetation_with_buffer.tif"))?;
 
     let mut base_vegetation_img = RgbaImage::from_pixel(image_width, image_height, YELLOW);
     let mut green_vegetation_img = RgbaImage::from_pixel(image_width, image_height, TRANSPARENT);
-    let mut undergrowth_vegetation_img = RgbaImage::from_pixel(image_width, image_height, TRANSPARENT);
+    let mut undergrowth_vegetation_img =
+        RgbaImage::from_pixel(image_width, image_height, TRANSPARENT);
 
     let medium_vegetation_kernel_radius = 2;
     let medium_vegetation_kernel = get_convolution_kernel_matrix(medium_vegetation_kernel_radius);
@@ -69,7 +87,8 @@ pub fn render_vegetation(
             let x_pixel = ((x_index - BUFFER) as f32 * vegetation_block_size_pixel) as i32;
             let y_pixel = ((y_index - BUFFER) as f32 * vegetation_block_size_pixel) as i32;
 
-            let high_vegetation_density = get_min_value_in_circle(&high_vegetation, x_index, y_index);
+            let high_vegetation_density =
+                get_min_value_in_circle(&high_vegetation, x_index, y_index);
 
             if high_vegetation_density > config.yellow_threshold as u8 {
                 draw_filled_ellipse_mut(
@@ -165,8 +184,11 @@ pub fn render_vegetation(
             let undergrowth_output_path = tile.render_dir_path.join("undergrowth.png");
 
             undergrowth_vegetation_img
-                .save(undergrowth_output_path)
-                .expect("could not save undergrowth output png");
+                .save(&undergrowth_output_path)
+                .context(format!(
+                    "could not save `{}`",
+                    undergrowth_output_path.display()
+                ))?;
         }
         UndergrowthMode::None | UndergrowthMode::Merge => {}
     }
@@ -175,8 +197,11 @@ pub fn render_vegetation(
     let vegetation_output_path = tile.render_dir_path.join("vegetation.png");
 
     base_vegetation_img
-        .save(vegetation_output_path)
-        .expect("could not save vegetation output png");
+        .save(&vegetation_output_path)
+        .context(format!(
+            "could not save `{}`",
+            vegetation_output_path.display()
+        ))?;
 
     let duration = start.elapsed();
 
@@ -184,6 +209,8 @@ pub fn render_vegetation(
         "Tile min_x={} min_y={} max_x={} max_y={}. Vegetation rendered in {:.1?}",
         tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
     );
+
+    Ok(())
 }
 
 fn get_min_value_in_circle(tif_image: &TifImage, x_index: usize, y_index: usize) -> u8 {
@@ -191,9 +218,7 @@ fn get_min_value_in_circle(tif_image: &TifImage, x_index: usize, y_index: usize)
     let width = tif_image.width as usize;
     let height = tif_image.height as usize;
 
-    if tif_image.pixels.len() == 0 {
-        panic!("Image with no pixels")
-    }
+    debug_assert!(!tif_image.pixels.is_empty());
 
     for y_matrix in 0..5 {
         for x_matrix in 0..5 {
@@ -210,7 +235,7 @@ fn get_min_value_in_circle(tif_image: &TifImage, x_index: usize, y_index: usize)
             let x = x_index + x_matrix - 2;
             let y = y_index + y_matrix - 2;
 
-            if x > width || y > height {
+            if x >= width || y >= height {
                 continue;
             }
 
@@ -263,9 +288,10 @@ fn get_average_pixel_value(
     kernel: &Vec<Vec<f32>>,
     kernel_radius: usize,
 ) -> f32 {
-    if kernel.len() <= 1 || kernel[0].len() <= 1 {
-        panic!("kernel should be a square matrix of size 2 at least")
-    }
+    assert!(
+        kernel.len() > 1 && kernel.iter().all(|row| row.len() == kernel.len()),
+        "kernel should be a square matrix of size 2 at least"
+    );
 
     let width = tif_image.width as usize;
     let height = tif_image.height as usize;
@@ -306,19 +332,45 @@ struct TifImage {
     height: u32,
 }
 
-fn get_image_data_from_tif(path: &PathBuf) -> TifImage {
-    let tif_file = File::open(path).expect("Cannot find high vegetation tif image!");
-    let mut img_decoder = Decoder::new(tif_file).expect("Cannot create decoder");
+fn get_image_data_from_tif(path: &Path) -> Result<TifImage> {
+    let tif_file = File::open(path).context(format!("could not open `{}`", path.display()))?;
+    let mut img_decoder = Decoder::new(tif_file)
+        .context(format!("could not create decoder for `{}`", path.display()))?;
     img_decoder = img_decoder.with_limits(tiff::decoder::Limits::unlimited());
-    let (width, height) = img_decoder.dimensions().unwrap();
+    let (width, height) = img_decoder.dimensions().context(format!(
+        "could not read dimensions from `{}`",
+        path.display()
+    ))?;
 
-    let DecodingResult::U8(image_data) = img_decoder.read_image().unwrap() else {
-        panic!("Cannot read band data")
+    let decoded = img_decoder
+        .read_image()
+        .context(format!("could not decode `{}`", path.display()))?;
+    let DecodingResult::U8(image_data) = decoded else {
+        return Err(CassiniError::InvalidArtifact {
+            path: path.to_path_buf(),
+            message: "expected an 8-bit TIFF band".to_owned(),
+        });
     };
 
-    return TifImage {
+    let expected_len = (width as usize)
+        .checked_mul(height as usize)
+        .ok_or_else(|| CassiniError::InvalidArtifact {
+            path: path.to_path_buf(),
+            message: "TIFF dimensions overflow addressable memory".to_owned(),
+        })?;
+    if image_data.len() != expected_len {
+        return Err(CassiniError::InvalidArtifact {
+            path: path.to_path_buf(),
+            message: format!(
+                "TIFF contains {} pixels but its dimensions require {expected_len}",
+                image_data.len()
+            ),
+        });
+    }
+
+    Ok(TifImage {
         pixels: image_data,
         width,
         height,
-    };
+    })
 }

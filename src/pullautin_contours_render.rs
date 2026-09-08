@@ -9,12 +9,15 @@ use std::io::{BufReader, Write};
 use std::time::Instant;
 
 struct FormLineRecord {
-    id: i32,
+    id: f64,
     elev: f64,
 }
 
 impl WritableRecord for FormLineRecord {
-    fn write_using<'a, W>(&self, field_writer: &mut FieldWriter<'a, W>) -> Result<(), FieldIOError>
+    fn write_using<'a, W>(
+        &self,
+        field_writer: &mut FieldWriter<'a, W>,
+    ) -> std::result::Result<(), FieldIOError>
     where
         W: Write,
     {
@@ -28,6 +31,7 @@ use crate::config::Config;
 use crate::constants::{BUFFER, INCH, PURPLE};
 use crate::{
     constants::{BROWN, TRANSPARENT},
+    error::{Result, ResultContext},
     tile::Tile,
 };
 
@@ -38,7 +42,7 @@ pub fn pullautin_cull_formlines_render_contours(
     config: &Config,
     avg_alt: &Vec<Vec<f64>>,
     smoothed_contours: Vec<(Vec<f64>, Vec<f64>, f64)>,
-) {
+) -> Result<()> {
     info!(
         "Tile min_x={} min_y={} max_x={} max_y={}. Culling formlines and rendering contours",
         tile.min_x, tile.min_y, tile.max_x, tile.max_y
@@ -86,8 +90,8 @@ pub fn pullautin_cull_formlines_render_contours(
 
             let mut temp = (xyz_i_m4_j - xyz_i_j).abs() / 4.0;
             let temp2 = (xyz_i_j - xyz_i_4_j).abs() / 4.0;
-            let det2 =
-                (xyz_i_j - 0.5 * (xyz_i_m4_j + xyz_i_4_j)).abs() - 0.05 * (xyz_i_m4_j - xyz_i_4_j).abs();
+            let det2 = (xyz_i_j - 0.5 * (xyz_i_m4_j + xyz_i_4_j)).abs()
+                - 0.05 * (xyz_i_m4_j - xyz_i_4_j).abs();
             let mut porr = (((avg_alt[i - 6][j] - avg_alt[i + 6][j]) / 12.0).abs()
                 - ((avg_alt[i - 3][j] - avg_alt[i + 3][j]) / 6.0).abs())
             .abs();
@@ -104,8 +108,8 @@ pub fn pullautin_cull_formlines_render_contours(
 
             let mut temp = (xyz_i_j_m4 - xyz_i_j).abs() / 4.0;
             let temp2 = (xyz_i_j - xyz_i_j_m4).abs() / 4.0;
-            let det2 =
-                (xyz_i_j - 0.5 * (xyz_i_j_m4 + xyz_i_j_4)).abs() - 0.05 * (xyz_i_j_m4 - xyz_i_j_4).abs();
+            let det2 = (xyz_i_j - 0.5 * (xyz_i_j_m4 + xyz_i_j_4)).abs()
+                - 0.05 * (xyz_i_j_m4 - xyz_i_j_4).abs();
             let porr2 = (((avg_alt[i][j - 6] - avg_alt[i][j + 6]) / 12.0).abs()
                 - ((avg_alt[i][j - 3] - avg_alt[i][j + 3]) / 6.0).abs())
             .abs();
@@ -178,24 +182,38 @@ pub fn pullautin_cull_formlines_render_contours(
     }
 
     let mut id: i32 = 0;
-    let contours_polylines_path = tile.render_dir_path.join("contours-raw").join("contours-raw.shp");
+    let contours_polylines_path = tile
+        .render_dir_path
+        .join("contours-raw")
+        .join("contours-raw.shp");
 
     let contours_polylines_reader: shapefile::Reader<BufReader<File>, BufReader<File>> =
-        Reader::from_path(&contours_polylines_path).unwrap();
+        Reader::from_path(&contours_polylines_path).context(format!(
+            "could not open contour shapefile `{}`",
+            contours_polylines_path.display()
+        ))?;
 
     let table_info = contours_polylines_reader.into_table_info();
 
     let formlines_dir = tile.render_dir_path.join("formlines");
-    create_dir_all(&formlines_dir).expect("Could not create formlines dir");
+    create_dir_all(&formlines_dir).context(format!(
+        "could not create formline directory `{}`",
+        formlines_dir.display()
+    ))?;
 
-    let mut writer = Writer::from_path_with_info(formlines_dir.join("formlines.shp"), table_info).unwrap();
+    let formlines_path = formlines_dir.join("formlines.shp");
+    let mut writer = Writer::from_path_with_info(&formlines_path, table_info).context(format!(
+        "could not create formline shapefile `{}`",
+        formlines_path.display()
+    ))?;
 
     for smoothed_contour in smoothed_contours {
-        let color = if is_contour_depression(&smoothed_contour, xstart, ystart, avg_alt, dem_cell_size) {
-            PURPLE
-        } else {
-            BROWN
-        };
+        let color =
+            if is_contour_depression(&smoothed_contour, xstart, ystart, avg_alt, dem_cell_size) {
+                PURPLE
+            } else {
+                BROWN
+            };
 
         let (x_array, y_array, elevation) = smoothed_contour;
         let mut x = Vec::<f64>::new();
@@ -224,8 +242,10 @@ pub fn pullautin_cull_formlines_render_contours(
             for i in 0..x.len() {
                 help[i] = false;
                 help2[i] = true;
-                let xx = (((x[i] / 600.0 * 254.0 * scalefactor + x0) - xstart) / dem_cell_size).floor();
-                let yy = (((-y[i] / 600.0 * 254.0 * scalefactor + y0) - ystart) / dem_cell_size).floor();
+                let xx =
+                    (((x[i] / 600.0 * 254.0 * scalefactor + x0) - xstart) / dem_cell_size).floor();
+                let yy =
+                    (((-y[i] / 600.0 * 254.0 * scalefactor + y0) - ystart) / dem_cell_size).floor();
 
                 if curvew != 1.5
                     || &steepness[xx as usize][yy as usize] < &formlinesteepness
@@ -257,7 +277,7 @@ pub fn pullautin_cull_formlines_render_contours(
                     help2[i] = help2[x.len() - 7]
                 }
             }
-            
+
             let mut on = 0.0;
             for i in 0..x.len() {
                 if help2[i] {
@@ -379,7 +399,9 @@ pub fn pullautin_cull_formlines_render_contours(
                             }
                         }
                         if !toonearend
-                            && ((x[i - 5] - x[i + 5]).powi(2) + (y[i - 5] - y[i + 5]).powi(2)).sqrt() * 1.138
+                            && ((x[i - 5] - x[i + 5]).powi(2) + (y[i - 5] - y[i + 5]).powi(2))
+                                .sqrt()
+                                * 1.138
                                 > sum
                         {
                             linedist = 0.0;
@@ -404,7 +426,8 @@ pub fn pullautin_cull_formlines_render_contours(
                                             - buffer_in_pixels,
                                         image_height as f32
                                             + buffer_in_pixels
-                                            + ((-y[i - 1] * gap + (step + gap) * y[i]) / step + m) as f32,
+                                            + ((-y[i - 1] * gap + (step + gap) * y[i]) / step + m)
+                                                as f32,
                                     );
 
                                     let end = (
@@ -462,21 +485,33 @@ pub fn pullautin_cull_formlines_render_contours(
                     }
                 }
             } else if formlinestart {
-                write_formline_shape_to_shapefile(&current_formline, id, elevation, &mut writer);
+                write_formline_shape_to_shapefile(
+                    &current_formline,
+                    id,
+                    elevation,
+                    &mut writer,
+                    &formlines_path,
+                )?;
                 id += 1;
                 formlinestart = false;
             }
         }
 
         if formlinestart {
-            write_formline_shape_to_shapefile(&current_formline, id, elevation, &mut writer);
+            write_formline_shape_to_shapefile(
+                &current_formline,
+                id,
+                elevation,
+                &mut writer,
+                &formlines_path,
+            )?;
             id += 1;
         }
     }
 
     // TODO: img.save takes 8 seconds, maybe mutualize with other images saving
     img.save(tile.render_dir_path.join("contours.png"))
-        .expect("could not save output png");
+        .context("could not save rendered contours")?;
 
     let duration = start.elapsed();
 
@@ -484,6 +519,8 @@ pub fn pullautin_cull_formlines_render_contours(
         "Tile min_x={} min_y={} max_x={} max_y={}. Formlines and contours generated in {:.1?}",
         tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
     );
+
+    Ok(())
 }
 
 fn write_formline_shape_to_shapefile(
@@ -491,9 +528,10 @@ fn write_formline_shape_to_shapefile(
     id: i32,
     elevation: f64,
     writer: &mut shapefile::Writer<std::io::BufWriter<File>>,
-) {
+    output_path: &std::path::Path,
+) -> Result<()> {
     if current_formline.len() < 2 {
-        return;
+        return Ok(());
     }
 
     let mut points: Vec<Point> = vec![];
@@ -502,10 +540,21 @@ fn write_formline_shape_to_shapefile(
         points.push(Point { x: *x, y: *y });
     }
 
-    let record = FormLineRecord { id, elev: elevation };
+    let record = FormLineRecord {
+        // dBase Numeric fields are serialized from f64, even when they have
+        // zero decimal places and represent an integer identifier.
+        id: f64::from(id),
+        elev: elevation,
+    };
 
     let smoothed_polyline = GenericPolyline::new(points);
-    let _ = writer.write_shape_and_record(&smoothed_polyline, &record);
+    writer
+        .write_shape_and_record(&smoothed_polyline, &record)
+        .context(format!(
+            "could not write formline to `{}`",
+            output_path.display()
+        ))?;
+    Ok(())
 }
 
 fn is_contour_depression(
@@ -529,8 +578,14 @@ fn is_contour_depression(
         return false;
     };
 
-    let inside_elevation =
-        get_point_elevation_from_dem_bilinear_interpolation(px, py, xstart, ystart, dem_cell_size, avg_alt);
+    let inside_elevation = get_point_elevation_from_dem_bilinear_interpolation(
+        px,
+        py,
+        xstart,
+        ystart,
+        dem_cell_size,
+        avg_alt,
+    );
 
     if inside_elevation.is_nan() {
         return false;
@@ -622,9 +677,7 @@ fn widest_scan_line_interval(
     intersections
         .chunks_exact(2)
         .map(|pair| (pair[0], pair[1]))
-        .max_by(|(start1, end1), (start2, end2)| {
-            (end1 - start1).total_cmp(&(end2 - start2))
-        })
+        .max_by(|(start1, end1), (start2, end2)| (end1 - start1).total_cmp(&(end2 - start2)))
 }
 
 fn point_in_polygon(x: f64, y: f64, x_array: &[f64], y_array: &[f64]) -> bool {
@@ -637,7 +690,8 @@ fn point_in_polygon(x: f64, y: f64, x_array: &[f64], y_array: &[f64]) -> bool {
         let xj = x_array[j];
         let yj = y_array[j];
 
-        let intersect = ((yi > y) != (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi + f64::EPSILON) + xi);
+        let intersect =
+            ((yi > y) != (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi + f64::EPSILON) + xi);
 
         if intersect {
             inside = !inside;
@@ -725,7 +779,9 @@ fn get_point_elevation_from_dem_bilinear_interpolation(
 
 #[cfg(test)]
 mod tests {
-    use super::{find_interior_point, point_in_polygon};
+    use super::{find_interior_point, point_in_polygon, FormLineRecord};
+    use shapefile::dbase::{FieldName, TableWriterBuilder};
+    use std::io::Cursor;
 
     #[test]
     fn finds_interior_point_for_large_contour_without_scanning_its_area() {
@@ -745,5 +801,20 @@ mod tests {
         let (point_x, point_y) = find_interior_point(&x, &y).unwrap();
 
         assert!(point_in_polygon(point_x, point_y, &x, &y));
+    }
+
+    #[test]
+    fn writes_formline_record_to_numeric_contour_schema() {
+        let mut writer = TableWriterBuilder::new()
+            .add_numeric_field(FieldName::try_from("ID").unwrap(), 8, 0)
+            .add_numeric_field(FieldName::try_from("elev").unwrap(), 12, 3)
+            .build_with_dest(Cursor::new(Vec::<u8>::new()));
+
+        writer
+            .write_record(&FormLineRecord {
+                id: 0.0,
+                elev: 123.5,
+            })
+            .unwrap();
     }
 }

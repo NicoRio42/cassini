@@ -1,13 +1,17 @@
-use crate::{buffer::create_tif_with_buffer, constants::BUFFER, tile::Tile};
-use log::{error, info};
-use std::{
-    fs::create_dir_all,
-    path::PathBuf,
-    process::{Command, ExitStatus},
-    time::Instant,
+use crate::{
+    buffer::create_tif_with_buffer,
+    constants::BUFFER,
+    error::{Result, ResultContext, Stage, TileId},
+    process::{checked_output, ensure_file},
+    tile::Tile,
 };
+use log::info;
+use std::{fs::create_dir_all, path::PathBuf, process::Command, time::Instant};
 
-pub fn create_dem_with_buffer_and_slopes_tiff(tile: &Tile, neighbor_tiles: &Vec<PathBuf>) {
+pub fn create_dem_with_buffer_and_slopes_tiff(
+    tile: &Tile,
+    neighbor_tiles: &[PathBuf],
+) -> Result<()> {
     info!(
         "Tile min_x={} min_y={} max_x={} max_y={}. Generating dem with buffer",
         tile.min_x, tile.min_y, tile.max_x, tile.max_y
@@ -16,25 +20,18 @@ pub fn create_dem_with_buffer_and_slopes_tiff(tile: &Tile, neighbor_tiles: &Vec<
     let start = Instant::now();
 
     let dem_with_buffer_path = tile.render_dir_path.join("dem_with_buffer.tif");
-    create_tif_with_buffer(tile, &neighbor_tiles, BUFFER as i64, "dem", 0.5);
+    create_tif_with_buffer(tile, neighbor_tiles, BUFFER as i64, "dem", 0.5)?;
+    let tile_id = Some(TileId::from(tile));
 
     // Filling holes
-    let gdal_fillnodata_output = Command::new("gdal_fillnodata")
-        .arg(&dem_with_buffer_path.to_str().unwrap())
-        .arg(&dem_with_buffer_path.to_str().unwrap())
-        .output()
-        .expect("failed to execute gdal_fillnodata command");
-
-    if !ExitStatus::success(&gdal_fillnodata_output.status) {
-        error!(
-            "Tile min_x={} min_y={} max_x={} max_y={}. Gdal_fillnodata command failed {:?}",
-            tile.min_x,
-            tile.min_y,
-            tile.max_x,
-            tile.max_y,
-            String::from_utf8(gdal_fillnodata_output.stderr).unwrap()
-        );
-    }
+    checked_output(
+        Command::new("gdal_fillnodata")
+            .arg(&dem_with_buffer_path)
+            .arg(&dem_with_buffer_path),
+        Stage::Dem,
+        tile_id,
+    )?;
+    ensure_file(&dem_with_buffer_path)?;
 
     let duration = start.elapsed();
 
@@ -51,51 +48,34 @@ pub fn create_dem_with_buffer_and_slopes_tiff(tile: &Tile, neighbor_tiles: &Vec<
     let start = Instant::now();
 
     let contours_raw_dir = tile.render_dir_path.join("contours-raw");
-    create_dir_all(&contours_raw_dir).expect("Could not create contours-raw dir");
+    create_dir_all(&contours_raw_dir).context(format!(
+        "could not create contour directory `{}`",
+        contours_raw_dir.display()
+    ))?;
     let contours_raw_path = contours_raw_dir.join("contours-raw.shp");
     let dem_2m_with_buffer_path = tile.render_dir_path.join("dem_2m_with_buffer.tif");
 
-    let gdal_translate_output = Command::new("gdal_translate")
-        .args(["-tr", "2", "2", "-r", "average"])
-        .arg(&dem_with_buffer_path)
-        .arg(&dem_2m_with_buffer_path)
-        .arg("--quiet")
-        .output()
-        .expect("failed to execute gdal_translate command");
+    checked_output(
+        Command::new("gdal_translate")
+            .args(["-tr", "2", "2", "-r", "average"])
+            .arg(&dem_with_buffer_path)
+            .arg(&dem_2m_with_buffer_path)
+            .arg("--quiet"),
+        Stage::Dem,
+        tile_id,
+    )?;
+    ensure_file(&dem_2m_with_buffer_path)?;
 
-    if !ExitStatus::success(&gdal_translate_output.status) {
-        error!(
-            "Tile min_x={} min_y={} max_x={} max_y={}. Gdal_translate command failed {:?}",
-            tile.min_x,
-            tile.min_y,
-            tile.max_x,
-            tile.max_y,
-            String::from_utf8(gdal_translate_output.stderr).unwrap()
-        );
-    }
-
-    let gdal_contours_output = Command::new("gdal_contour")
-        .args([
-            "-a",
-            "elev",
-            &dem_2m_with_buffer_path.to_str().unwrap(),
-            &contours_raw_path.to_str().unwrap(),
-            "-i",
-            "2.5",
-        ])
-        .output()
-        .expect("failed to execute gdal_contour command");
-
-    if !ExitStatus::success(&gdal_contours_output.status) {
-        error!(
-            "Tile min_x={} min_y={} max_x={} max_y={}. Gdal_contour command failed {:?}",
-            tile.min_x,
-            tile.min_y,
-            tile.max_x,
-            tile.max_y,
-            String::from_utf8(gdal_contours_output.stderr).unwrap()
-        );
-    }
+    checked_output(
+        Command::new("gdal_contour")
+            .args(["-a", "elev"])
+            .arg(&dem_2m_with_buffer_path)
+            .arg(&contours_raw_path)
+            .args(["-i", "2.5"]),
+        Stage::Contours,
+        tile_id,
+    )?;
+    ensure_file(&contours_raw_path)?;
 
     let duration = start.elapsed();
 
@@ -113,25 +93,15 @@ pub fn create_dem_with_buffer_and_slopes_tiff(tile: &Tile, neighbor_tiles: &Vec<
 
     let slopes_path = tile.render_dir_path.join("slopes.tif");
 
-    let gdaldem_output = Command::new("gdaldem")
-        .args([
-            "slope",
-            &dem_with_buffer_path.to_str().unwrap(),
-            &slopes_path.to_str().unwrap(),
-        ])
-        .output()
-        .expect("failed to execute gdaldem command");
-
-    if !ExitStatus::success(&gdaldem_output.status) {
-        error!(
-            "Tile min_x={} min_y={} max_x={} max_y={}. Gdaldem command failed {:?}",
-            tile.min_x,
-            tile.min_y,
-            tile.max_x,
-            tile.max_y,
-            String::from_utf8(gdaldem_output.stderr).unwrap()
-        );
-    }
+    checked_output(
+        Command::new("gdaldem")
+            .arg("slope")
+            .arg(&dem_with_buffer_path)
+            .arg(&slopes_path),
+        Stage::Dem,
+        tile_id,
+    )?;
+    ensure_file(&slopes_path)?;
 
     let duration = start.elapsed();
 
@@ -139,4 +109,6 @@ pub fn create_dem_with_buffer_and_slopes_tiff(tile: &Tile, neighbor_tiles: &Vec<
         "Tile min_x={} min_y={} max_x={} max_y={}. Slopes tif image generated in {:.1?}",
         tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
     );
+
+    Ok(())
 }

@@ -8,10 +8,12 @@ mod constants;
 mod contours;
 mod dem;
 mod download;
+mod error;
 mod helpers;
 mod lidar;
 mod map_renderer;
 mod merge;
+mod process;
 mod pullautin_contours_render;
 mod pullautin_smooth_contours;
 mod render;
@@ -24,13 +26,16 @@ use batch::batch;
 use clap::{CommandFactory, Parser, Subcommand};
 use config::{default_config, get_config};
 use download::download_osm_file;
+use error::{CassiniError, Result, ResultContext};
 use las::raw::Header;
 use lidar::generate_dem_and_vegetation_density_tiff_images_from_laz_file;
 use log::info;
 use render::generate_png_from_dem_vegetation_density_tiff_images_and_vector_file;
 use std::{
     fs::{create_dir_all, File},
+    num::NonZeroUsize,
     path::{Path, PathBuf},
+    process::ExitCode,
     time::Instant,
 };
 use tile::{get_extent_from_lidar_dir_path, Tile};
@@ -178,7 +183,7 @@ enum Commands {
             help = "Number of threads used by Cassini to parallelize the work in batch mode",
             default_value = "3"
         )]
-        threads: Option<usize>,
+        threads: Option<NonZeroUsize>,
 
         #[arg(
             long,
@@ -215,16 +220,19 @@ fn process_single_tile(
     skip_520: bool,
     undergrowth_mode: &UndergrowthMode,
     shapefiles_dir: Option<PathBuf>,
-) {
-    let config = get_config(None);
+) -> Result<()> {
+    let config = get_config(None)?;
 
-    generate_dem_and_vegetation_density_tiff_images_from_laz_file(
-        &file_path.to_path_buf(),
-        &output_dir_path.to_path_buf(),
-    );
+    generate_dem_and_vegetation_density_tiff_images_from_laz_file(file_path, output_dir_path)?;
 
-    let mut file = File::open(file_path).expect("Cound not open laz file");
-    let header = Header::read_from(&mut file).unwrap();
+    let mut file = File::open(file_path).context(format!(
+        "could not open LiDAR file `{}`",
+        file_path.display()
+    ))?;
+    let header = Header::read_from(&mut file).context(format!(
+        "could not read LiDAR header `{}`",
+        file_path.display()
+    ))?;
 
     let tile = Tile {
         lidar_dir_path: output_dir_path.to_path_buf(),
@@ -236,7 +244,7 @@ fn process_single_tile(
     };
 
     if shapefiles_dir.is_none() && !skip_vector {
-        download_osm_file_if_needed(&tile);
+        download_osm_file_if_needed(&tile)?;
     }
 
     generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
@@ -247,22 +255,19 @@ fn process_single_tile(
         undergrowth_mode,
         shapefiles_dir,
         &config,
-    );
+    )
 }
 
 fn process_single_tile_lidar_step(
     file_path: &Path,
     output_dir_path: &Path,
     config_path: Option<&Path>,
-) {
+) -> Result<()> {
     if config_path.is_some() {
-        get_config(config_path);
+        get_config(config_path)?;
     }
 
-    generate_dem_and_vegetation_density_tiff_images_from_laz_file(
-        &file_path.to_path_buf(),
-        &output_dir_path.to_path_buf(),
-    );
+    generate_dem_and_vegetation_density_tiff_images_from_laz_file(file_path, output_dir_path)
 }
 
 fn process_single_tile_render_step(
@@ -274,12 +279,14 @@ fn process_single_tile_render_step(
     undergrowth_mode: &UndergrowthMode,
     shapefiles_dir: Option<PathBuf>,
     config_path: Option<&Path>,
-) {
-    let config = get_config(config_path);
-    create_dir_all(output_dir_path).expect("Could not create out dir");
+) -> Result<()> {
+    let config = get_config(config_path)?;
+    create_dir_all(output_dir_path).context(format!(
+        "could not create render output directory `{}`",
+        output_dir_path.display()
+    ))?;
 
-    let (min_x, min_y, max_x, max_y) =
-        get_extent_from_lidar_dir_path(&input_dir_path.to_path_buf());
+    let (min_x, min_y, max_x, max_y) = get_extent_from_lidar_dir_path(input_dir_path)?;
 
     let tile = Tile {
         lidar_dir_path: input_dir_path.to_path_buf(),
@@ -291,7 +298,7 @@ fn process_single_tile_render_step(
     };
 
     if shapefiles_dir.is_none() && !skip_vector {
-        download_osm_file_if_needed(&tile);
+        download_osm_file_if_needed(&tile)?;
     }
 
     generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
@@ -302,10 +309,10 @@ fn process_single_tile_render_step(
         undergrowth_mode,
         shapefiles_dir,
         &config,
-    );
+    )
 }
 
-fn download_osm_file_if_needed(tile: &Tile) {
+fn download_osm_file_if_needed(tile: &Tile) -> Result<()> {
     let osm_path = tile
         .render_dir_path
         .join(format!("{:0>7}_{:0>7}.osm", tile.min_x, tile.max_y));
@@ -317,8 +324,9 @@ fn download_osm_file_if_needed(tile: &Tile) {
             tile.max_x,
             tile.max_y,
             &tile.render_dir_path,
-        );
+        )?;
     }
+    Ok(())
 }
 
 fn batch_process_tiles(
@@ -330,8 +338,8 @@ fn batch_process_tiles(
     skip_520: bool,
     undergrowth_mode: &UndergrowthMode,
     config_path: Option<&Path>,
-) {
-    let config = get_config(config_path);
+) -> Result<()> {
+    let config = get_config(config_path)?;
     batch(
         input_dir,
         output_dir,
@@ -341,10 +349,10 @@ fn batch_process_tiles(
         skip_520,
         undergrowth_mode,
         config,
-    );
+    )
 }
 
-fn main() {
+fn run() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format(|buf, record| {
             use std::io::Write;
@@ -365,14 +373,16 @@ fn main() {
     let args = Args::parse();
 
     if std::env::args().len() == 1 {
-        Args::command().print_help().unwrap();
-        return;
+        Args::command()
+            .print_help()
+            .context("could not print command help")?;
+        return Ok(());
     }
 
     if let Some(command) = args.command {
         match command {
             Commands::Config {} => {
-                default_config();
+                default_config()?;
             }
 
             Commands::Process {
@@ -397,7 +407,7 @@ fn main() {
                     skip_520,
                     &undergrowth,
                     shapefiles_dir,
-                );
+                )?;
 
                 let duration = start.elapsed();
                 info!("Tile generated in {:.1?}", duration);
@@ -414,7 +424,7 @@ fn main() {
                 let output_dir = maybe_output_dir.unwrap_or("lidar".to_owned());
                 let laz_path = Path::new(&file_path).to_path_buf();
                 let dir_path = Path::new(&output_dir).to_path_buf();
-                process_single_tile_lidar_step(&laz_path, &dir_path, config.as_deref());
+                process_single_tile_lidar_step(&laz_path, &dir_path, config.as_deref())?;
 
                 let duration = start.elapsed();
                 info!("LiDAR file processed in {:.1?}", duration);
@@ -443,7 +453,9 @@ fn main() {
                     let neighbor_path = Path::new(&neighbor).to_path_buf();
 
                     if !neighbor_path.exists() {
-                        panic!("{} does not exist", neighbor)
+                        return Err(CassiniError::InvalidInput {
+                            message: format!("neighbor directory `{neighbor}` does not exist"),
+                        });
                     }
 
                     neighbor_tiles.push(neighbor_path);
@@ -459,7 +471,7 @@ fn main() {
                     &undergrowth,
                     shapefiles_dir,
                     config.as_deref(),
-                );
+                )?;
 
                 let duration = start.elapsed();
                 info!("Map rendered in {:.1?}", duration);
@@ -480,7 +492,7 @@ fn main() {
 
                 let input_dir = maybe_input_dir.unwrap_or("in".to_owned());
                 let output_dir = maybe_output_dir.unwrap_or("out".to_owned());
-                let threads = maybe_threads.unwrap_or(3);
+                let threads = maybe_threads.map(NonZeroUsize::get).unwrap_or(3);
 
                 batch_process_tiles(
                     &input_dir,
@@ -491,11 +503,45 @@ fn main() {
                     skip_520,
                     &undergrowth,
                     config.as_deref(),
-                );
+                )?;
 
                 let duration = start.elapsed();
                 info!("Tiles generated in {:.1?}", duration);
             }
+        }
+    }
+
+    Ok(())
+}
+
+fn report_error(error: &CassiniError) {
+    eprintln!("error: {error}");
+
+    if let CassiniError::Batch { failures, .. } = error {
+        for (index, failure) in failures.iter().enumerate() {
+            eprintln!("  {}. {failure}", index + 1);
+            let mut source = std::error::Error::source(failure);
+            while let Some(cause) = source {
+                eprintln!("     caused by: {cause}");
+                source = cause.source();
+            }
+        }
+        return;
+    }
+
+    let mut source = std::error::Error::source(error);
+    while let Some(cause) = source {
+        eprintln!("  caused by: {cause}");
+        source = cause.source();
+    }
+}
+
+fn main() -> ExitCode {
+    match run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            report_error(&error);
+            ExitCode::FAILURE
         }
     }
 }
