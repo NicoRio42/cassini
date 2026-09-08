@@ -81,3 +81,20 @@ CASSINI_BENCHMARK_REPETITIONS=30 \
   CASSINI_CANVAS_BENCHMARK_GEOMETRIES=100000 \
   benchmarks/canvas-state-saves.sh
 ```
+
+## Vegetation filtering benchmark
+
+`vegetation-filtering.sh` measures finding five. It compares the previous
+column-major, two-dimensional Gaussian classification loop with the optimized
+row-major, separable implementation on a deterministic synthetic buffered
+raster. Both merged undergrowth and symbol 409 are measured, and their logical
+cell classifications must match before timings are reported.
+
+The default logical tile is 1000 by 1000 cells, matching a 1 km tile at the
+vegetation raster's 1 m resolution:
+
+```sh
+CASSINI_BENCHMARK_REPETITIONS=5 \
+  CASSINI_VEGETATION_BENCHMARK_SIZE=1000 \
+  benchmarks/vegetation-filtering.sh
+```

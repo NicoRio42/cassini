@@ -7,7 +7,7 @@ use crate::{
     error::{CassiniError, Result, ResultContext},
     tile::Tile,
 };
-use image::{imageops, Rgba, RgbaImage};
+use image::{imageops, RgbaImage};
 use imageproc::{
     drawing::{draw_filled_ellipse_mut, draw_filled_rect_mut},
     rect::Rect,
@@ -92,20 +92,29 @@ pub fn render_vegetation(
     let mut undergrowth_vegetation_img =
         RgbaImage::from_pixel(image_width, image_height, TRANSPARENT);
 
-    let medium_vegetation_kernel_radius = 2;
-    let medium_vegetation_kernel = get_convolution_kernel_matrix(medium_vegetation_kernel_radius);
-    let low_vegetation_kernel_radius = 4;
-    let low_vegetation_kernel = get_convolution_kernel_matrix(low_vegetation_kernel_radius);
+    let interior = vegetation_interior(
+        tile,
+        [&high_vegetation, &medium_vegetation, &low_vegetation],
+    )?;
+    let classification = classify_vegetation(
+        &high_vegetation,
+        &medium_vegetation,
+        &low_vegetation,
+        interior,
+        config,
+        undergrowth_mode,
+    );
 
-    for x_index in BUFFER..((tile.max_x + BUFFER as i64 - tile.min_x) as usize) {
-        for y_index in BUFFER..((tile.max_y + BUFFER as i64 - tile.min_y) as usize) {
-            let x_pixel = ((x_index - BUFFER) as f32 * vegetation_block_size_pixel) as i32;
-            let y_pixel = ((y_index - BUFFER) as f32 * vegetation_block_size_pixel) as i32;
+    // High vegetation and undergrowth use a single color per layer, so they can
+    // be rasterized in cache-friendly row-major order without changing overlap
+    // precedence.
+    for y in 0..classification.height {
+        let y_pixel = (y as f32 * vegetation_block_size_pixel) as i32;
+        for x in 0..classification.width {
+            let index = y * classification.width + x;
+            let x_pixel = (x as f32 * vegetation_block_size_pixel) as i32;
 
-            let high_vegetation_density =
-                get_min_value_in_circle(&high_vegetation, x_index, y_index);
-
-            if high_vegetation_density > config.yellow_threshold as u8 {
+            if classification.high[index] != 0 {
                 draw_filled_ellipse_mut(
                     &mut base_vegetation_img,
                     (x_pixel, y_pixel),
@@ -115,79 +124,42 @@ pub fn render_vegetation(
                 );
             }
 
-            let mut medium_vegetation_density = get_average_pixel_value(
-                &medium_vegetation,
-                x_index,
-                y_index,
-                &medium_vegetation_kernel,
-                medium_vegetation_kernel_radius,
+            if classification.undergrowth[index] != 0 {
+                let color = match undergrowth_mode {
+                    UndergrowthMode::Symbol406 => GREEN_1,
+                    UndergrowthMode::Symbol409 => GREEN_3,
+                    UndergrowthMode::None | UndergrowthMode::Merge => unreachable!(),
+                };
+                draw_filled_rect_mut(
+                    &mut undergrowth_vegetation_img,
+                    Rect::at(x_pixel, y_pixel)
+                        .of_size(casted_green_block_size_pixel, casted_green_block_size_pixel),
+                    color,
+                );
+            }
+        }
+    }
+
+    // Green rectangles may overlap after DPI scaling and have different colors.
+    // Keep the original x-major drawing order so existing color precedence is
+    // unchanged even though classification now traverses source pixels by row.
+    for x in 0..classification.width {
+        let x_pixel = (x as f32 * vegetation_block_size_pixel) as i32;
+        for y in 0..classification.height {
+            let index = y * classification.width + x;
+            let color = match classification.green[index] {
+                1 => GREEN_1,
+                2 => GREEN_2,
+                3 => GREEN_3,
+                _ => continue,
+            };
+            let y_pixel = (y as f32 * vegetation_block_size_pixel) as i32;
+            draw_filled_rect_mut(
+                &mut green_vegetation_img,
+                Rect::at(x_pixel, y_pixel)
+                    .of_size(casted_green_block_size_pixel, casted_green_block_size_pixel),
+                color,
             );
-
-            match undergrowth_mode {
-                UndergrowthMode::Merge => {
-                    medium_vegetation_density += get_average_pixel_value(
-                        &low_vegetation,
-                        x_index,
-                        y_index,
-                        &medium_vegetation_kernel,
-                        medium_vegetation_kernel_radius,
-                    );
-                }
-                UndergrowthMode::Symbol406 | UndergrowthMode::Symbol409 => {
-                    let low_vegetation_density = get_average_pixel_value(
-                        &low_vegetation,
-                        x_index,
-                        y_index,
-                        &low_vegetation_kernel,
-                        low_vegetation_kernel_radius,
-                    );
-
-                    let undergrowth_color = match undergrowth_mode {
-                        UndergrowthMode::Symbol406 => Some(GREEN_1),
-                        UndergrowthMode::Symbol409 => Some(GREEN_3),
-                        _ => None,
-                    };
-
-                    if low_vegetation_density > config.low_vegetation_density_threshold {
-                        match undergrowth_color {
-                            Some(color) => {
-                                draw_filled_rect_mut(
-                                    &mut undergrowth_vegetation_img,
-                                    Rect::at(x_pixel, y_pixel).of_size(
-                                        casted_green_block_size_pixel,
-                                        casted_green_block_size_pixel,
-                                    ),
-                                    color,
-                                );
-                            }
-                            _ => (),
-                        }
-                    }
-                }
-                UndergrowthMode::None => {}
-            }
-
-            let mut green_color: Option<Rgba<u8>> = None;
-
-            if medium_vegetation_density > config.green_threshold_3 {
-                green_color = Some(GREEN_3);
-            } else if medium_vegetation_density > config.green_threshold_2 {
-                green_color = Some(GREEN_2);
-            } else if medium_vegetation_density > config.green_threshold_1 {
-                green_color = Some(GREEN_1);
-            }
-
-            match green_color {
-                Some(color) => {
-                    draw_filled_rect_mut(
-                        &mut green_vegetation_img,
-                        Rect::at(x_pixel, y_pixel)
-                            .of_size(casted_green_block_size_pixel, casted_green_block_size_pixel),
-                        color,
-                    );
-                }
-                _ => (),
-            }
         }
     }
 
@@ -228,117 +200,232 @@ pub fn render_vegetation(
     Ok(())
 }
 
-fn get_min_value_in_circle(tif_image: &TifImage, x_index: usize, y_index: usize) -> u8 {
-    let mut min = u8::MAX;
-    let width = tif_image.width as usize;
-    let height = tif_image.height as usize;
+#[derive(Clone, Copy)]
+struct RasterInterior {
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+}
 
-    debug_assert!(!tif_image.pixels.is_empty());
+struct VegetationClassification {
+    width: usize,
+    height: usize,
+    high: Vec<u8>,
+    green: Vec<u8>,
+    undergrowth: Vec<u8>,
+}
 
-    for y_matrix in 0..5 {
-        for x_matrix in 0..5 {
-            if x_index + x_matrix < 2
-                || y_index + y_matrix < 2
-                || y_matrix == 0
-                || x_matrix == 0
-                || y_matrix == 4
-                || x_matrix == 4
-            {
-                continue;
-            }
+fn vegetation_interior(tile: &Tile, images: [&TifImage; 3]) -> Result<RasterInterior> {
+    let width = tile
+        .max_x
+        .checked_sub(tile.min_x)
+        .and_then(|width| usize::try_from(width).ok())
+        .ok_or_else(|| CassiniError::InvalidArtifact {
+            path: tile.render_dir_path.clone(),
+            message: "tile width must be non-negative and addressable".to_owned(),
+        })?;
+    let height = tile
+        .max_y
+        .checked_sub(tile.min_y)
+        .and_then(|height| usize::try_from(height).ok())
+        .ok_or_else(|| CassiniError::InvalidArtifact {
+            path: tile.render_dir_path.clone(),
+            message: "tile height must be non-negative and addressable".to_owned(),
+        })?;
+    let required_width = BUFFER
+        .checked_mul(2)
+        .and_then(|buffer| width.checked_add(buffer))
+        .ok_or_else(|| CassiniError::InvalidArtifact {
+            path: tile.render_dir_path.clone(),
+            message: "buffered vegetation width overflows addressable memory".to_owned(),
+        })?;
+    let required_height = BUFFER
+        .checked_mul(2)
+        .and_then(|buffer| height.checked_add(buffer))
+        .ok_or_else(|| CassiniError::InvalidArtifact {
+            path: tile.render_dir_path.clone(),
+            message: "buffered vegetation height overflows addressable memory".to_owned(),
+        })?;
 
-            let x = x_index + x_matrix - 2;
-            let y = y_index + y_matrix - 2;
+    let dimensions = (images[0].width, images[0].height);
+    if images
+        .iter()
+        .any(|image| (image.width, image.height) != dimensions)
+    {
+        return Err(CassiniError::InvalidArtifact {
+            path: tile.render_dir_path.clone(),
+            message: "buffered vegetation rasters must have identical dimensions".to_owned(),
+        });
+    }
+    if (dimensions.0 as usize) < required_width || (dimensions.1 as usize) < required_height {
+        return Err(CassiniError::InvalidArtifact {
+            path: tile.render_dir_path.clone(),
+            message: format!(
+                "buffered vegetation rasters are {}x{} but at least {required_width}x{required_height} pixels are required",
+                dimensions.0, dimensions.1
+            ),
+        });
+    }
 
-            if x >= width || y >= height {
-                continue;
-            }
+    Ok(RasterInterior {
+        x: BUFFER,
+        y: BUFFER,
+        width,
+        height,
+    })
+}
 
-            let pixel_value = tif_image.pixels[y * width + x];
+fn classify_vegetation(
+    high: &TifImage,
+    medium: &TifImage,
+    low: &TifImage,
+    interior: RasterInterior,
+    config: &Config,
+    undergrowth_mode: &UndergrowthMode,
+) -> VegetationClassification {
+    let medium_kernel = gaussian_kernel(2);
+    let merge_low = matches!(undergrowth_mode, UndergrowthMode::Merge).then_some(&low.pixels[..]);
+    let medium_density = separable_gaussian_filter(
+        &medium.pixels,
+        merge_low,
+        medium.width as usize,
+        interior,
+        &medium_kernel,
+    );
+    let low_density = matches!(
+        undergrowth_mode,
+        UndergrowthMode::Symbol406 | UndergrowthMode::Symbol409
+    )
+    .then(|| {
+        separable_gaussian_filter(
+            &low.pixels,
+            None,
+            low.width as usize,
+            interior,
+            &gaussian_kernel(4),
+        )
+    });
 
-            if pixel_value < min {
-                min = pixel_value;
+    let output_len = interior.width * interior.height;
+    let mut classification = VegetationClassification {
+        width: interior.width,
+        height: interior.height,
+        high: vec![0; output_len],
+        green: vec![0; output_len],
+        undergrowth: vec![0; output_len],
+    };
+    let input_width = high.width as usize;
+
+    for output_y in 0..interior.height {
+        let source_y = interior.y + output_y;
+        for output_x in 0..interior.width {
+            let source_x = interior.x + output_x;
+            let output_index = output_y * interior.width + output_x;
+            classification.high[output_index] = u8::from(
+                minimum_3_by_3(&high.pixels, input_width, source_x, source_y)
+                    > config.yellow_threshold as u8,
+            );
+
+            let density = medium_density[output_index];
+            classification.green[output_index] = if density > config.green_threshold_3 {
+                3
+            } else if density > config.green_threshold_2 {
+                2
+            } else if density > config.green_threshold_1 {
+                1
+            } else {
+                0
+            };
+
+            if let Some(low_density) = &low_density {
+                classification.undergrowth[output_index] =
+                    u8::from(low_density[output_index] > config.low_vegetation_density_threshold);
             }
         }
     }
 
-    return min;
+    classification
 }
 
-pub fn get_convolution_kernel_matrix(radius: usize) -> Vec<Vec<f32>> {
+#[inline]
+fn minimum_3_by_3(pixels: &[u8], width: usize, x: usize, y: usize) -> u8 {
+    let mut minimum = u8::MAX;
+    for row in (y - 1)..=(y + 1) {
+        for &pixel in &pixels[(row * width + x - 1)..=(row * width + x + 1)] {
+            minimum = minimum.min(pixel);
+        }
+    }
+    minimum
+}
+
+fn gaussian_kernel(radius: usize) -> Vec<f32> {
     let size = 2 * radius + 1;
     let sigma = radius as f32 / 2.0_f32; // avoid sigma = 0
     let two_sigma_sq = 2.0 * sigma * sigma;
-
-    let mut kernel = vec![vec![0.0; size]; size];
+    let mut kernel = Vec::with_capacity(size);
     let mut sum = 0.0;
-
     let center = radius as isize;
 
-    for y in 0..size {
-        for x in 0..size {
-            let dx = x as isize - center;
-            let dy = y as isize - center;
-
-            let value = E.powf(-((dx * dx + dy * dy) as f32) / two_sigma_sq);
-            kernel[y][x] = value;
-            sum += value;
-        }
+    for x in 0..size {
+        let dx = x as isize - center;
+        let value = E.powf(-((dx * dx) as f32) / two_sigma_sq);
+        kernel.push(value);
+        sum += value;
     }
-
-    // Normalize so the kernel sums to 1.0
-    for row in kernel.iter_mut() {
-        for v in row.iter_mut() {
-            *v /= sum;
-        }
+    for value in &mut kernel {
+        *value /= sum;
     }
 
     kernel
 }
 
-fn get_average_pixel_value(
-    tif_image: &TifImage,
-    x: usize,
-    y: usize,
-    kernel: &Vec<Vec<f32>>,
-    kernel_radius: usize,
-) -> f32 {
-    assert!(
-        kernel.len() > 1 && kernel.iter().all(|row| row.len() == kernel.len()),
-        "kernel should be a square matrix of size 2 at least"
-    );
+fn separable_gaussian_filter(
+    primary: &[u8],
+    secondary: Option<&[u8]>,
+    input_width: usize,
+    interior: RasterInterior,
+    kernel: &[f32],
+) -> Vec<f32> {
+    debug_assert!(kernel.len() > 1 && kernel.len() % 2 == 1);
+    debug_assert!(secondary.is_none_or(|pixels| pixels.len() == primary.len()));
+    let radius = kernel.len() / 2;
+    let intermediate_height = interior.height + 2 * radius;
+    let mut horizontal = vec![0.0f32; interior.width * intermediate_height];
 
-    let width = tif_image.width as usize;
-    let height = tif_image.height as usize;
-    let size = kernel.len();
-    let radius_i = kernel_radius as isize;
-    let mut weighted_sum = 0.0f32;
-    let mut weight_total = 0.0f32;
-
-    for ky in 0..size {
-        for kx in 0..size {
-            let nx = x as isize + kx as isize - radius_i;
-            let ny = y as isize + ky as isize - radius_i;
-
-            if nx < 0 || ny < 0 || nx >= width as isize || ny >= height as isize {
-                continue;
+    for intermediate_y in 0..intermediate_height {
+        let source_y = interior.y + intermediate_y - radius;
+        let source_row = source_y * input_width;
+        let target_row = intermediate_y * interior.width;
+        for output_x in 0..interior.width {
+            let source_x = interior.x + output_x;
+            let mut sum = 0.0f32;
+            for (kernel_x, &weight) in kernel.iter().enumerate() {
+                let source_index = source_row + source_x + kernel_x - radius;
+                let value = match secondary {
+                    Some(secondary) => {
+                        primary[source_index] as u16 + secondary[source_index] as u16
+                    }
+                    None => primary[source_index] as u16,
+                };
+                sum += value as f32 * weight;
             }
-
-            let nxi = nx as usize;
-            let nyi = ny as usize;
-            let pixel = tif_image.pixels[nyi * width + nxi] as f32;
-            let weight = kernel[ky][kx];
-
-            weighted_sum += pixel * weight;
-            weight_total += weight;
+            horizontal[target_row + output_x] = sum;
         }
     }
 
-    if weight_total > 0.0 {
-        return weighted_sum / weight_total;
+    let mut output = vec![0.0f32; interior.width * interior.height];
+    for output_y in 0..interior.height {
+        let output_row = output_y * interior.width;
+        for output_x in 0..interior.width {
+            let mut sum = 0.0f32;
+            for (kernel_y, &weight) in kernel.iter().enumerate() {
+                sum += horizontal[(output_y + kernel_y) * interior.width + output_x] * weight;
+            }
+            output[output_row + output_x] = sum;
+        }
     }
-
-    return 0.;
+    output
 }
 
 struct TifImage {
@@ -388,4 +475,345 @@ fn get_image_data_from_tif(path: &Path) -> Result<TifImage> {
         width,
         height,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{hint::black_box, time::Instant};
+
+    fn synthetic_image(width: usize, height: usize, seed: u32) -> TifImage {
+        let mut state = seed;
+        let pixels = (0..width * height)
+            .map(|_| {
+                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                (state >> 24) as u8
+            })
+            .collect();
+        TifImage {
+            pixels,
+            width: width as u32,
+            height: height as u32,
+        }
+    }
+
+    fn legacy_kernel(radius: usize) -> Vec<Vec<f32>> {
+        let size = 2 * radius + 1;
+        let sigma = radius as f32 / 2.0;
+        let two_sigma_sq = 2.0 * sigma * sigma;
+        let center = radius as isize;
+        let mut kernel = vec![vec![0.0; size]; size];
+        let mut sum = 0.0;
+        for (y, row) in kernel.iter_mut().enumerate() {
+            for (x, value) in row.iter_mut().enumerate() {
+                let dx = x as isize - center;
+                let dy = y as isize - center;
+                *value = E.powf(-((dx * dx + dy * dy) as f32) / two_sigma_sq);
+                sum += *value;
+            }
+        }
+        for row in &mut kernel {
+            for value in row {
+                *value /= sum;
+            }
+        }
+        kernel
+    }
+
+    fn legacy_filter(image: &TifImage, interior: RasterInterior, radius: usize) -> Vec<f32> {
+        let kernel = legacy_kernel(radius);
+        let input_width = image.width as usize;
+        let input_height = image.height as usize;
+        let mut output = vec![0.0; interior.width * interior.height];
+        for output_x in 0..interior.width {
+            for output_y in 0..interior.height {
+                let source_x = interior.x + output_x;
+                let source_y = interior.y + output_y;
+                let mut weighted_sum = 0.0;
+                let mut weight_total = 0.0;
+                for (kernel_y, row) in kernel.iter().enumerate() {
+                    for (kernel_x, &weight) in row.iter().enumerate() {
+                        let x = source_x as isize + kernel_x as isize - radius as isize;
+                        let y = source_y as isize + kernel_y as isize - radius as isize;
+                        if x < 0 || y < 0 || x >= input_width as isize || y >= input_height as isize
+                        {
+                            continue;
+                        }
+                        weighted_sum +=
+                            image.pixels[y as usize * input_width + x as usize] as f32 * weight;
+                        weight_total += weight;
+                    }
+                }
+                output[output_y * interior.width + output_x] = weighted_sum / weight_total;
+            }
+        }
+        output
+    }
+
+    fn legacy_minimum(image: &TifImage, x: usize, y: usize) -> u8 {
+        let mut minimum = u8::MAX;
+        let width = image.width as usize;
+        let height = image.height as usize;
+        for matrix_y in 0..5 {
+            for matrix_x in 0..5 {
+                if x + matrix_x < 2
+                    || y + matrix_y < 2
+                    || matrix_y == 0
+                    || matrix_x == 0
+                    || matrix_y == 4
+                    || matrix_x == 4
+                {
+                    continue;
+                }
+                let sample_x = x + matrix_x - 2;
+                let sample_y = y + matrix_y - 2;
+                if sample_x < width && sample_y < height {
+                    minimum = minimum.min(image.pixels[sample_y * width + sample_x]);
+                }
+            }
+        }
+        minimum
+    }
+
+    fn legacy_classify(
+        high: &TifImage,
+        medium: &TifImage,
+        low: &TifImage,
+        interior: RasterInterior,
+        config: &Config,
+        undergrowth_mode: &UndergrowthMode,
+    ) -> VegetationClassification {
+        let mut medium_density = legacy_filter(medium, interior, 2);
+        if matches!(undergrowth_mode, UndergrowthMode::Merge) {
+            let low_medium_density = legacy_filter(low, interior, 2);
+            for (medium, low) in medium_density.iter_mut().zip(low_medium_density) {
+                *medium += low;
+            }
+        }
+        let low_density = matches!(
+            undergrowth_mode,
+            UndergrowthMode::Symbol406 | UndergrowthMode::Symbol409
+        )
+        .then(|| legacy_filter(low, interior, 4));
+        let output_len = interior.width * interior.height;
+        let mut result = VegetationClassification {
+            width: interior.width,
+            height: interior.height,
+            high: vec![0; output_len],
+            green: vec![0; output_len],
+            undergrowth: vec![0; output_len],
+        };
+        for output_x in 0..interior.width {
+            for output_y in 0..interior.height {
+                let source_x = interior.x + output_x;
+                let source_y = interior.y + output_y;
+                let output_index = output_y * interior.width + output_x;
+                result.high[output_index] = u8::from(
+                    legacy_minimum(high, source_x, source_y) > config.yellow_threshold as u8,
+                );
+                let density = medium_density[output_index];
+                result.green[output_index] = if density > config.green_threshold_3 {
+                    3
+                } else if density > config.green_threshold_2 {
+                    2
+                } else if density > config.green_threshold_1 {
+                    1
+                } else {
+                    0
+                };
+                if let Some(low_density) = &low_density {
+                    result.undergrowth[output_index] = u8::from(
+                        low_density[output_index] > config.low_vegetation_density_threshold,
+                    );
+                }
+            }
+        }
+        result
+    }
+
+    fn assert_same_classification(
+        actual: &VegetationClassification,
+        expected: &VegetationClassification,
+    ) {
+        assert_eq!(actual.high, expected.high);
+        assert_eq!(actual.green, expected.green);
+        assert_eq!(actual.undergrowth, expected.undergrowth);
+    }
+
+    #[test]
+    fn separable_filter_stays_within_float_tolerance_of_legacy_filter() {
+        let width = 40;
+        let height = 38;
+        let primary = synthetic_image(width, height, 1);
+        let secondary = synthetic_image(width, height, 2);
+        let interior = RasterInterior {
+            x: 6,
+            y: 6,
+            width: 27,
+            height: 25,
+        };
+
+        for (radius, second) in [(2, None), (2, Some(&secondary)), (4, None)] {
+            let optimized = separable_gaussian_filter(
+                &primary.pixels,
+                second.map(|image| &image.pixels[..]),
+                width,
+                interior,
+                &gaussian_kernel(radius),
+            );
+            let mut legacy = legacy_filter(&primary, interior, radius);
+            if let Some(second) = second {
+                let legacy_second = legacy_filter(second, interior, radius);
+                for (primary, secondary) in legacy.iter_mut().zip(legacy_second) {
+                    *primary += secondary;
+                }
+            }
+            let max_difference = optimized
+                .iter()
+                .zip(legacy.iter())
+                .map(|(optimized, legacy)| (optimized - legacy).abs())
+                .fold(0.0f32, f32::max);
+            assert!(
+                max_difference < 0.0002,
+                "maximum filter difference was {max_difference}"
+            );
+        }
+    }
+
+    #[test]
+    fn classification_has_strict_threshold_boundaries() {
+        let width = 15;
+        let height = 15;
+        let interior = RasterInterior {
+            x: 5,
+            y: 5,
+            width: 5,
+            height: 5,
+        };
+        let config = Config::default();
+        for value in 0..=5 {
+            let image = TifImage {
+                pixels: vec![value; width * height],
+                width: width as u32,
+                height: height as u32,
+            };
+            for mode in [
+                UndergrowthMode::None,
+                UndergrowthMode::Merge,
+                UndergrowthMode::Symbol406,
+                UndergrowthMode::Symbol409,
+            ] {
+                let optimized =
+                    classify_vegetation(&image, &image, &image, interior, &config, &mode);
+                let expected_high = u8::from(value > 1);
+                let density = if matches!(mode, UndergrowthMode::Merge) {
+                    value * 2
+                } else {
+                    value
+                };
+                let expected_green = if density > 3 {
+                    3
+                } else if density > 2 {
+                    2
+                } else if density > 1 {
+                    1
+                } else {
+                    0
+                };
+                let expected_undergrowth = u8::from(
+                    matches!(
+                        mode,
+                        UndergrowthMode::Symbol406 | UndergrowthMode::Symbol409
+                    ) && value > 1,
+                );
+                assert!(optimized.high.iter().all(|&class| class == expected_high));
+                assert!(
+                    optimized.green.iter().all(|&class| class == expected_green),
+                    "unexpected green class for value={value}, mode={mode:?}"
+                );
+                assert!(
+                    optimized
+                        .undergrowth
+                        .iter()
+                        .all(|&class| class == expected_undergrowth),
+                    "unexpected undergrowth class for value={value}, mode={mode:?}"
+                );
+            }
+        }
+    }
+
+    fn benchmark_strategy(
+        optimized: bool,
+        high: &TifImage,
+        medium: &TifImage,
+        low: &TifImage,
+        interior: RasterInterior,
+        config: &Config,
+        mode: &UndergrowthMode,
+    ) -> (f64, VegetationClassification) {
+        let started = Instant::now();
+        let result = if optimized {
+            classify_vegetation(high, medium, low, interior, config, mode)
+        } else {
+            legacy_classify(high, medium, low, interior, config, mode)
+        };
+        let elapsed = started.elapsed().as_secs_f64();
+        black_box(&result);
+        (elapsed, result)
+    }
+
+    #[test]
+    #[ignore = "performance benchmark; run explicitly with --ignored"]
+    fn benchmark_vegetation_classification() {
+        let size = std::env::var("CASSINI_VEGETATION_BENCHMARK_SIZE")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(1_000);
+        let repetitions = std::env::var("CASSINI_BENCHMARK_REPETITIONS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(5);
+        let input_size = size + 2 * BUFFER;
+        let high = synthetic_image(input_size, input_size, 11);
+        let medium = synthetic_image(input_size, input_size, 22);
+        let low = synthetic_image(input_size, input_size, 33);
+        let interior = RasterInterior {
+            x: BUFFER,
+            y: BUFFER,
+            width: size,
+            height: size,
+        };
+        let config = Config::default();
+
+        for mode in [UndergrowthMode::Merge, UndergrowthMode::Symbol409] {
+            let mut legacy_timings = Vec::with_capacity(repetitions);
+            let mut optimized_timings = Vec::with_capacity(repetitions);
+            for repetition in 0..repetitions {
+                let mut expected = None;
+                for optimized in [repetition % 2 != 0, repetition % 2 == 0] {
+                    let (elapsed, result) = benchmark_strategy(
+                        optimized, &high, &medium, &low, interior, &config, &mode,
+                    );
+                    if let Some(expected) = &expected {
+                        assert_same_classification(&result, expected);
+                    } else {
+                        expected = Some(result);
+                    }
+                    if optimized {
+                        optimized_timings.push(elapsed);
+                    } else {
+                        legacy_timings.push(elapsed);
+                    }
+                }
+            }
+
+            let legacy_mean = legacy_timings.iter().sum::<f64>() / repetitions as f64;
+            let optimized_mean = optimized_timings.iter().sum::<f64>() / repetitions as f64;
+            let improvement = 100.0 * (legacy_mean - optimized_mean) / legacy_mean;
+            println!(
+                "vegetation benchmark: mode={mode:?}, cells={}, repetitions={repetitions}, legacy_mean={legacy_mean:.6}s, optimized_mean={optimized_mean:.6}s, improvement={improvement:.2}%",
+                size * size
+            );
+        }
+    }
 }
