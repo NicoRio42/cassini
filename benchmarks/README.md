@@ -62,3 +62,22 @@ The strategies are alternated to reduce ordering bias. The script writes raw
 timings to `target/single-source-buffer-benchmark/results.csv`, reports the mean
 time and savings, and uses `gdalcompare.py` to require equivalent geospatial
 metadata and pixel values for all four outputs.
+
+## Canvas state-save benchmark
+
+`canvas-state-saves.sh` measures finding three with a vector-dense synthetic
+scene containing an equal mix of polylines, filled polygons, and filled
+polygons with holes. Each repetition alternates the order of two strategies:
+
+- The previous behavior, emulated by saving the Skia canvas after every draw.
+- The optimized behavior, which draws without changing the canvas save stack.
+
+The benchmark requires the encoded WebP output from both strategies to be
+byte-identical. It reports their mean release-build drawing times and final
+save counts. Run it with:
+
+```sh
+CASSINI_BENCHMARK_REPETITIONS=30 \
+  CASSINI_CANVAS_BENCHMARK_GEOMETRIES=100000 \
+  benchmarks/canvas-state-saves.sh
+```
