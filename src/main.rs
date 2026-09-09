@@ -30,7 +30,7 @@ use error::{CassiniError, Result, ResultContext};
 use las::raw::Header;
 use lidar::generate_dem_and_vegetation_density_tiff_images_from_laz_file;
 use log::info;
-use render::generate_map_from_dem_vegetation_density_tiff_images_and_vector_file;
+use render::generate_png_from_dem_vegetation_density_tiff_images_and_vector_file;
 use std::{
     fs::{create_dir_all, File},
     num::NonZeroUsize,
@@ -247,7 +247,7 @@ fn process_single_tile(
         download_osm_file_if_needed(&tile)?;
     }
 
-    generate_map_from_dem_vegetation_density_tiff_images_and_vector_file(
+    generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
         tile,
         vec![],
         skip_vector,
@@ -301,7 +301,7 @@ fn process_single_tile_render_step(
         download_osm_file_if_needed(&tile)?;
     }
 
-    generate_map_from_dem_vegetation_density_tiff_images_and_vector_file(
+    generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
         tile,
         neighbor_tiles,
         skip_vector,
@@ -575,6 +575,13 @@ mod tests {
                 parsed_config(command, "-C"),
                 Some(PathBuf::from("custom.json"))
             );
+        }
+    }
+
+    #[test]
+    fn lossy_option_is_rejected() {
+        for command in ["process", "render", "batch"] {
+            assert!(Args::try_parse_from(["cassini", command, "input", "--lossy"]).is_err());
         }
     }
 }

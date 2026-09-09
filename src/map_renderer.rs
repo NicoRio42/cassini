@@ -538,7 +538,7 @@ impl MapRenderer {
     }
 
     #[inline]
-    pub fn save_as_lossless_webp(mut self, path: PathBuf) -> Result<()> {
+    pub fn save_as(mut self, path: PathBuf) -> Result<()> {
         Self::draw_stripes(
             &mut self.striped_blue_img,
             self.image_width,
@@ -583,6 +583,6 @@ impl MapRenderer {
         self.vegetation_img.overlay(&mut self.cliffs_img, 0., 0.);
         self.vegetation_img.overlay(&mut self.black_img, 0., 0.);
 
-        self.vegetation_img.save_as_lossless_webp(&path)
+        self.vegetation_img.save_as(&path)
     }
 }

@@ -103,7 +103,7 @@ pub fn merge_maps(
                     continue;
                 }
 
-                let mut map = Canvas::load_from(&t.render_dir_path.join("full-map.webp"))?;
+                let mut map = Canvas::load_from(&t.render_dir_path.join("full-map.png"))?;
 
                 // Tile pixel offset in the full merged image
                 let tile_full_px_x =
@@ -118,17 +118,17 @@ pub fn merge_maps(
                 chunk_canvas.overlay(&mut map, overlay_x, overlay_y);
             }
 
-            let (webp_name, pgw_name) = if is_single_chunk {
-                ("merged-map.webp".to_string(), "merged-map.pgw".to_string())
+            let (png_name, pgw_name) = if is_single_chunk {
+                ("merged-map.png".to_string(), "merged-map.pgw".to_string())
             } else {
                 (
-                    format!("merged-map-{}.webp", chunk_index),
+                    format!("merged-map-{}.png", chunk_index),
                     format!("merged-map-{}.pgw", chunk_index),
                 )
             };
 
-            let webp_path = Path::new(output_dir).join(&webp_name);
-            chunk_canvas.save_as_lossless_webp(&webp_path)?;
+            let png_path = Path::new(output_dir).join(&png_name);
+            chunk_canvas.save_as(&png_path)?;
 
             let world_file_path = Path::new(output_dir).join(&pgw_name);
             create_world_file(
@@ -141,7 +141,7 @@ pub fn merge_maps(
 
             info!(
                 "Saved chunk {}/{}: {} ({}x{} px)",
-                chunk_index, num_chunks, webp_name, chunk_w, chunk_h
+                chunk_index, num_chunks, png_name, chunk_w, chunk_h
             );
         }
     }

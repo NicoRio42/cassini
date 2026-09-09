@@ -1,7 +1,6 @@
-use image::{codecs::webp::WebPEncoder, ExtendedColorType};
 use skia_safe::{
-    images, surfaces, AlphaType, Color, ColorType, Data, Image, ImageInfo, Paint, PaintCap,
-    PaintStyle, Path, PathEffect, PathFillType, Surface,
+    surfaces, Color, Data, EncodedImageFormat, Image, Paint, PaintCap, PaintStyle, Path,
+    PathEffect, PathFillType, Surface,
 };
 use std::fs::File;
 use std::io::Write;
@@ -147,38 +146,14 @@ impl Canvas {
     }
 
     #[inline]
-    pub fn lossless_webp_data(&mut self) -> Result<Vec<u8>> {
+    pub fn data(&mut self) -> Result<Data> {
         let image = self.surface.image_snapshot();
-        let width = image.width();
-        let height = image.height();
-        let image_info = ImageInfo::new(
-            (width, height),
-            ColorType::RGBA8888,
-            AlphaType::Unpremul,
-            None,
-        );
-        let row_bytes = image_info.min_row_bytes();
-        let mut pixels = vec![0; image_info.compute_byte_size(row_bytes)];
-
-        if !self
-            .canvas()
-            .read_pixels(&image_info, &mut pixels, row_bytes, (0, 0))
-        {
-            return Err(CassiniError::InvalidInput {
-                message: "could not read canvas pixels for lossless WebP encoding".to_owned(),
-            });
-        }
-
-        let mut encoded = Vec::new();
-        WebPEncoder::new_lossless(&mut encoded)
-            .encode(
-                &pixels,
-                width as u32,
-                height as u32,
-                ExtendedColorType::Rgba8,
-            )
-            .context("could not encode canvas as lossless WebP")?;
-        Ok(encoded)
+        let mut context = self.surface.direct_context();
+        image
+            .encode(context.as_mut(), EncodedImageFormat::PNG, None)
+            .ok_or_else(|| CassiniError::InvalidInput {
+                message: "could not encode canvas as PNG".to_owned(),
+            })
     }
 
     #[inline]
@@ -187,58 +162,31 @@ impl Canvas {
     }
 
     #[inline]
+    #[cfg(test)]
     fn canvas(&mut self) -> &skia_safe::Canvas {
         self.surface.canvas()
     }
 
     #[inline]
-    pub fn save_as_lossless_webp(&mut self, filename: &FsPath) -> Result<()> {
-        let d = self.lossless_webp_data()?;
+    pub fn save_as(&mut self, filename: &FsPath) -> Result<()> {
+        let data = self.data()?;
         let mut file =
             File::create(filename).context(format!("could not create `{}`", filename.display()))?;
-        file.write_all(&d)
+        file.write_all(data.as_bytes())
             .context(format!("could not write `{}`", filename.display()))?;
         Ok(())
     }
 
     #[inline]
     pub fn load_from(filename: &FsPath) -> Result<Canvas> {
-        let is_webp = filename
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("webp"));
-
-        let image = if is_webp {
-            let rgba = image::open(filename)
-                .context(format!("could not decode `{}`", filename.display()))?
-                .into_rgba8();
-            let (width, height) = rgba.dimensions();
-            let image_info = ImageInfo::new(
-                (width as i32, height as i32),
-                ColorType::RGBA8888,
-                AlphaType::Unpremul,
-                None,
-            );
-            images::raster_from_data(
-                &image_info,
-                Data::new_copy(rgba.as_raw()),
-                image_info.min_row_bytes(),
-            )
-            .ok_or_else(|| CassiniError::InvalidArtifact {
-                path: filename.to_path_buf(),
-                message: "could not create a canvas image from decoded WebP pixels".to_owned(),
-            })?
-        } else {
-            let data =
-                Data::from_filename(filename).ok_or_else(|| CassiniError::InvalidArtifact {
-                    path: filename.to_path_buf(),
-                    message: "could not read image data".to_owned(),
-                })?;
-            Image::from_encoded(data).ok_or_else(|| CassiniError::InvalidArtifact {
-                path: filename.to_path_buf(),
-                message: "could not decode image".to_owned(),
-            })?
-        };
+        let data = Data::from_filename(filename).ok_or_else(|| CassiniError::InvalidArtifact {
+            path: filename.to_path_buf(),
+            message: "could not read image data".to_owned(),
+        })?;
+        let image = Image::from_encoded(data).ok_or_else(|| CassiniError::InvalidArtifact {
+            path: filename.to_path_buf(),
+            message: "could not decode image".to_owned(),
+        })?;
         let mut c = Canvas::new(image.width(), image.height())?;
         c.draw_image(image);
         Ok(c)
@@ -286,7 +234,7 @@ mod tests {
         }
         let draw_elapsed = started.elapsed();
         let save_count = canvas.canvas().save_count();
-        let pixels = canvas.lossless_webp_data().unwrap();
+        let pixels = canvas.data().unwrap().as_bytes().to_vec();
         let cleanup_started = Instant::now();
         drop(canvas);
         let elapsed = draw_elapsed + cleanup_started.elapsed();
@@ -294,7 +242,7 @@ mod tests {
     }
 
     #[test]
-    fn lossless_webp_round_trips_canvas_pixels() {
+    fn png_round_trips_canvas_pixels() {
         let mut canvas = Canvas::new(2, 2).unwrap();
         canvas.set_color((12, 34, 56));
         canvas.draw_filled_polygon(&[
@@ -305,13 +253,13 @@ mod tests {
             (-1.0, -1.0),
         ]);
 
-        let encoded = canvas.lossless_webp_data().unwrap();
-        assert_eq!(&encoded[0..4], b"RIFF");
-        assert_eq!(&encoded[8..12], b"WEBP");
+        let encoded = canvas.data().unwrap();
+        assert_eq!(&encoded.as_bytes()[0..8], b"\x89PNG\r\n\x1a\n");
 
-        let decoded = image::load_from_memory_with_format(&encoded, image::ImageFormat::WebP)
-            .unwrap()
-            .into_rgba8();
+        let decoded =
+            image::load_from_memory_with_format(encoded.as_bytes(), image::ImageFormat::Png)
+                .unwrap()
+                .into_rgba8();
         assert!(decoded.pixels().all(|pixel| pixel.0 == [12, 34, 56, 255]));
     }
 
@@ -376,7 +324,7 @@ mod tests {
         let optimized_mean = optimized_timings.iter().sum::<f64>() / repetitions as f64;
         let improvement = 100.0 * (legacy_mean - optimized_mean) / legacy_mean;
         println!(
-            "canvas benchmark: {geometry_count} geometries, {repetitions} repetitions, legacy_mean={legacy_mean:.6}s, optimized_mean={optimized_mean:.6}s, improvement={improvement:.2}%, legacy_save_count={legacy_save_count}, optimized_save_count={optimized_save_count}, webp_bytes={}",
+            "canvas benchmark: {geometry_count} geometries, {repetitions} repetitions, legacy_mean={legacy_mean:.6}s, optimized_mean={optimized_mean:.6}s, improvement={improvement:.2}%, legacy_save_count={legacy_save_count}, optimized_save_count={optimized_save_count}, png_bytes={}",
             expected_output.unwrap().len()
         );
     }

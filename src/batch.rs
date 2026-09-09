@@ -6,7 +6,7 @@ use crate::{
     merge::merge_maps,
     render::{
         cleanup_render_step_files,
-        generate_map_from_dem_vegetation_density_tiff_images_and_vector_file,
+        generate_png_from_dem_vegetation_density_tiff_images_and_vector_file,
     },
     tile::{Tile, TileWithNeighbors},
     vegetation::UndergrowthMode,
@@ -137,7 +137,7 @@ pub fn batch(
                 );
 
                 if let Err(error) =
-                    generate_map_from_dem_vegetation_density_tiff_images_and_vector_file(
+                    generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
                         tile.tile.clone(),
                         tile.neighbors.clone(),
                         skip_vector,

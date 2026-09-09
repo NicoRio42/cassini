@@ -344,7 +344,7 @@ pub fn render_map_with_osm_vector_shapes(
         }
     }
 
-    map_renderer.save_as_lossless_webp(tile.render_dir_path.join("full-map.webp"))?;
+    map_renderer.save_as(tile.render_dir_path.join("full-map.png"))?;
     let duration = start.elapsed();
 
     info!(

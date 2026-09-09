@@ -72,7 +72,7 @@ polygons with holes. Each repetition alternates the order of two strategies:
 - The previous behavior, emulated by saving the Skia canvas after every draw.
 - The optimized behavior, which draws without changing the canvas save stack.
 
-The benchmark requires the encoded WebP output from both strategies to be
+The benchmark requires the encoded PNG output from both strategies to be
 byte-identical. It reports their mean release-build drawing times and final
 save counts. Run it with:
 
