@@ -3,7 +3,7 @@ use imageproc::drawing::draw_line_segment_mut;
 use log::info;
 use shapefile::dbase::{FieldIOError, FieldWriter, WritableRecord};
 use shapefile::record::polyline::GenericPolyline;
-use shapefile::{Point, Reader, Writer};
+use shapefile::{Point, Polyline, Reader, Writer};
 use std::fs::{create_dir_all, File};
 use std::io::{BufReader, Write};
 use std::time::Instant;
@@ -29,7 +29,7 @@ impl WritableRecord for FormLineRecord {
 
 use crate::config::Config;
 use crate::constants::{BUFFER, INCH, PURPLE};
-use crate::map_features::LineSymbol;
+use crate::map_features::{LineSymbol, MapFeature};
 use crate::{
     constants::{BROWN, TRANSPARENT},
     error::{Result, ResultContext},
@@ -43,7 +43,7 @@ pub fn pullautin_cull_formlines_render_contours(
     config: &Config,
     avg_alt: &Vec<Vec<f64>>,
     smoothed_contours: Vec<(Vec<f64>, Vec<f64>, f64)>,
-) -> Result<()> {
+) -> Result<Vec<MapFeature>> {
     info!(
         "Tile min_x={} min_y={} max_x={} max_y={}. Culling formlines and rendering contours",
         tile.min_x, tile.min_y, tile.max_x, tile.max_y
@@ -205,6 +205,8 @@ pub fn pullautin_cull_formlines_render_contours(
         formlines_path.display()
     ))?;
 
+    let mut features: Vec<MapFeature> = vec![];
+
     for smoothed_contour in smoothed_contours {
         let color =
             if is_contour_depression(&smoothed_contour, xstart, ystart, avg_alt, dem_cell_size) {
@@ -214,6 +216,7 @@ pub fn pullautin_cull_formlines_render_contours(
             };
 
         let (x_array, y_array, elevation) = smoothed_contour;
+        let symbol = get_contour_symbol(elevation);
         let mut x = Vec::<f64>::new();
         let mut y = Vec::<f64>::new();
 
@@ -222,7 +225,17 @@ pub fn pullautin_cull_formlines_render_contours(
             y.push((y0 - y_array[i]) * 600.0 / 254.0 / scalefactor);
         }
 
-        let curvew = match get_contour_symbol(elevation) {
+        // Only the culled parts of form lines are mapped, they are pushed below
+        if symbol != LineSymbol::FormLine103 && x_array.len() >= 2 {
+            let points: Vec<Point> = x_array
+                .iter()
+                .zip(&y_array)
+                .map(|(x, y)| Point::new(*x, *y))
+                .collect();
+            features.push(MapFeature::Line(symbol, Polyline::new(points)));
+        }
+
+        let curvew = match symbol {
             LineSymbol::IndexContour102 => 3.5,
             LineSymbol::FormLine103 => 1.5,
             _ => 2.0,
@@ -479,26 +492,26 @@ pub fn pullautin_cull_formlines_render_contours(
                     }
                 }
             } else if formlinestart {
-                write_formline_shape_to_shapefile(
+                features.extend(write_formline_shape_to_shapefile(
                     &current_formline,
                     id,
                     elevation,
                     &mut writer,
                     &formlines_path,
-                )?;
+                )?);
                 id += 1;
                 formlinestart = false;
             }
         }
 
         if formlinestart {
-            write_formline_shape_to_shapefile(
+            features.extend(write_formline_shape_to_shapefile(
                 &current_formline,
                 id,
                 elevation,
                 &mut writer,
                 &formlines_path,
-            )?;
+            )?);
             id += 1;
         }
     }
@@ -514,7 +527,7 @@ pub fn pullautin_cull_formlines_render_contours(
         tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
     );
 
-    Ok(())
+    Ok(features)
 }
 
 const INDEX_CONTOUR_INTERVAL: f64 = 25.;
@@ -542,9 +555,9 @@ fn write_formline_shape_to_shapefile(
     elevation: f64,
     writer: &mut shapefile::Writer<std::io::BufWriter<File>>,
     output_path: &std::path::Path,
-) -> Result<()> {
+) -> Result<Option<MapFeature>> {
     if current_formline.len() < 2 {
-        return Ok(());
+        return Ok(None);
     }
 
     let mut points: Vec<Point> = vec![];
@@ -567,7 +580,10 @@ fn write_formline_shape_to_shapefile(
             "could not write formline to `{}`",
             output_path.display()
         ))?;
-    Ok(())
+    Ok(Some(MapFeature::Line(
+        LineSymbol::FormLine103,
+        smoothed_polyline,
+    )))
 }
 
 fn is_contour_depression(

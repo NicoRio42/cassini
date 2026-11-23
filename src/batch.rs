@@ -6,10 +6,9 @@ use crate::{
     merge::merge_maps,
     render::{
         cleanup_render_step_files,
-        generate_png_from_dem_vegetation_density_tiff_images_and_vector_file,
+        generate_png_from_dem_vegetation_density_tiff_images_and_vector_file, RenderOptions,
     },
     tile::{Tile, TileWithNeighbors},
-    vegetation::UndergrowthMode,
 };
 use las::raw::Header;
 use log::info;
@@ -26,9 +25,7 @@ pub fn batch(
     output_dir: &str,
     number_of_threads: usize,
     skip_lidar: bool,
-    skip_vector: bool,
-    skip_520: bool,
-    undergrowth_mode: &UndergrowthMode,
+    options: RenderOptions,
     config: Config,
 ) -> Result<()> {
     if number_of_threads == 0 {
@@ -94,7 +91,7 @@ pub fn batch(
         }
     }
 
-    if !skip_vector {
+    if !options.skip_vector {
         for tile in tiles.iter() {
             let osm_path = tile.tile.render_dir_path.join(format!(
                 "{:0>7}_{:0>7}.osm",
@@ -125,7 +122,7 @@ pub fn batch(
         let first_tile = chunk.first().map(|tile| TileId::from(&tile.tile));
         let chunk = Arc::new(chunk);
 
-        let cloned_undergrowth_mode = undergrowth_mode.clone();
+        let cloned_options = options.clone();
         let cloned_config = config.clone();
 
         let spawned_thread = spawn(move || {
@@ -140,11 +137,7 @@ pub fn batch(
                     generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
                         tile.tile.clone(),
                         tile.neighbors.clone(),
-                        skip_vector,
-                        skip_520,
-                        &cloned_undergrowth_mode,
-                        None,
-                        None,
+                        &cloned_options,
                         &cloned_config,
                     )
                 {
@@ -362,7 +355,9 @@ fn get_neighbor_tile_from_hash_map(
 #[cfg(test)]
 mod tests {
     use super::batch;
-    use crate::{config::Config, error::CassiniError, vegetation::UndergrowthMode};
+    use crate::{
+        config::Config, error::CassiniError, render::RenderOptions, vegetation::UndergrowthMode,
+    };
 
     #[test]
     fn rejects_zero_threads_before_reading_input() {
@@ -371,9 +366,13 @@ mod tests {
             "unused",
             0,
             false,
-            false,
-            false,
-            &UndergrowthMode::None,
+            RenderOptions {
+                skip_vector: false,
+                skip_520: false,
+                undergrowth_mode: UndergrowthMode::None,
+                shapefiles_dir: None,
+                ocad_template: None,
+            },
             Config::default(),
         )
         .unwrap_err();

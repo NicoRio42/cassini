@@ -8,7 +8,10 @@
 
 use crate::error::{CassiniError, Result, ResultContext};
 use log::warn;
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 /// OpenOrienteering Mapper's ISOM 2017-2 1:10 000 symbol set saved as OCD 12.
 const DEFAULT_TEMPLATE: &[u8] = include_bytes!("../assets/ocad/isom-2017-2-10000.ocd");
@@ -31,8 +34,24 @@ const SYMBOL_ENTRY_SIZE: usize = 4;
 const OBJECT_ENTRY_SIZE: usize = 40;
 const OBJECT_HEADER_SIZE: usize = 56;
 
+const SYMBOL_TYPE: usize = 8;
 const SYMBOL_NUM_COLORS: usize = 26;
 const SYMBOL_COLORS: usize = 28;
+
+const SYMBOL_TYPE_LINE: u8 = 2;
+const SYMBOL_TYPE_AREA: u8 = 3;
+
+// Fields after the 796-byte base symbol
+const AREA_BORDER_SYMBOL: usize = 796;
+const AREA_FILL_COLOR: usize = 800;
+const AREA_HATCH_MODE: usize = 802;
+const AREA_HATCH_COLOR: usize = 804;
+const AREA_FILL_ON: usize = 814;
+const AREA_BORDER_ON: usize = 815;
+const LINE_COLOR: usize = 796;
+const LINE_WIDTH: usize = 798;
+const AREA_SYMBOL_MIN_SIZE: usize = 832;
+const LINE_SYMBOL_MIN_SIZE: usize = 872;
 
 const GEOREFERENCING_STRING_TYPE: i32 = 1039;
 /// OCAD grid "France" (7) and zone "Lambert-93" (9), combined as grid * 1000 + zone.
@@ -96,7 +115,6 @@ impl Georeferencing {
 
 struct ParameterString {
     string_type: i32,
-    object_index: i32,
     /// Raw bytes, including the terminating NUL.
     data: Vec<u8>,
 }
@@ -105,6 +123,46 @@ struct TemplateSymbol {
     number: i32,
     data: Vec<u8>,
     dominant_color: i16,
+    has_border: bool,
+}
+
+impl TemplateSymbol {
+    fn parse(reader: &ByteReader, pos: usize) -> Result<Self> {
+        let size = reader.u32(pos)? as usize;
+        let data = reader.slice(pos, size)?.to_vec();
+        let symbol = ByteReader {
+            bytes: &data,
+            source: reader.source,
+        };
+
+        let symbol_type = data.get(SYMBOL_TYPE).copied();
+        let is_area = symbol_type == Some(SYMBOL_TYPE_AREA) && size >= AREA_SYMBOL_MIN_SIZE;
+        let is_line = symbol_type == Some(SYMBOL_TYPE_LINE) && size >= LINE_SYMBOL_MIN_SIZE;
+
+        // The main colour, as OpenOrienteering Mapper's export guesses it: the
+        // fill or hatch of areas, the main line of lines, else the first
+        // colour the symbol uses
+        let main_color = if is_area && data[AREA_FILL_ON] != 0 {
+            Some(symbol.u16(AREA_FILL_COLOR)?)
+        } else if is_area && symbol.u16(AREA_HATCH_MODE)? != 0 {
+            Some(symbol.u16(AREA_HATCH_COLOR)?)
+        } else if is_line && symbol.u16(LINE_WIDTH)? > 0 {
+            Some(symbol.u16(LINE_COLOR)?)
+        } else if symbol.u16(SYMBOL_NUM_COLORS)? > 0 {
+            Some(symbol.u16(SYMBOL_COLORS)?)
+        } else {
+            None
+        };
+
+        Ok(Self {
+            number: symbol.i32(4)?,
+            dominant_color: main_color.map_or(-1, |color| color as i16),
+            has_border: is_area
+                && data[AREA_BORDER_ON] != 0
+                && symbol.u32(AREA_BORDER_SYMBOL)? != 0,
+            data,
+        })
+    }
 }
 
 /// The colours, symbols and parameter strings of an OCD 12 template file.
@@ -112,6 +170,8 @@ pub struct OcdTemplate {
     header: Vec<u8>,
     strings: Vec<ParameterString>,
     symbols: Vec<TemplateSymbol>,
+    /// Index in `symbols` of each symbol number.
+    symbol_indexes: HashMap<i32, usize>,
     georeferencing_string: String,
     scale: f64,
 }
@@ -149,31 +209,28 @@ impl OcdTemplate {
             if pos == 0 {
                 continue;
             }
+            let object_index = reader.i32(entry + 12)?;
+            // Strings of the template's objects, which are not copied
+            if object_index != 0 {
+                continue;
+            }
             let len = reader.u32(entry + 4)? as usize;
             strings.push(ParameterString {
                 string_type: reader.i32(entry + 8)?,
-                object_index: reader.i32(entry + 12)?,
                 data: reader.slice(pos, len)?.to_vec(),
             });
         }
 
         let mut symbols = vec![];
+        let mut symbol_indexes = HashMap::new();
         for entry in reader.index_entries(HEADER_FIRST_SYMBOL_BLOCK, SYMBOL_ENTRY_SIZE)? {
             let pos = reader.u32(entry)? as usize;
             if pos == 0 {
                 continue;
             }
-            let size = reader.u32(pos)? as usize;
-            let num_colors = reader.u16(pos + SYMBOL_NUM_COLORS)?;
-            symbols.push(TemplateSymbol {
-                number: reader.i32(pos + 4)?,
-                data: reader.slice(pos, size)?.to_vec(),
-                dominant_color: if num_colors > 0 {
-                    reader.u16(pos + SYMBOL_COLORS)? as i16
-                } else {
-                    -1
-                },
-            });
+            let symbol = TemplateSymbol::parse(&reader, pos)?;
+            symbol_indexes.entry(symbol.number).or_insert(symbols.len());
+            symbols.push(symbol);
         }
 
         let mut object_count = 0;
@@ -204,9 +261,21 @@ impl OcdTemplate {
             header: reader.slice(0, HEADER_SIZE)?.to_vec(),
             strings,
             symbols,
+            symbol_indexes,
             georeferencing_string,
             scale,
         })
+    }
+
+    fn symbol(&self, number: i32) -> Option<&TemplateSymbol> {
+        self.symbol_indexes
+            .get(&number)
+            .map(|index| &self.symbols[*index])
+    }
+
+    /// Whether `number` is an area symbol drawn with a border line.
+    pub fn has_border(&self, number: i32) -> bool {
+        self.symbol(number).is_some_and(|symbol| symbol.has_border)
     }
 
     pub fn georeferencing(&self, offset_x: i64, offset_y: i64) -> Georeferencing {
@@ -221,7 +290,7 @@ impl OcdTemplate {
     pub fn check_symbols(&self, numbers: &[i32]) -> Result<()> {
         let missing: Vec<String> = numbers
             .iter()
-            .filter(|number| !self.symbols.iter().any(|symbol| symbol.number == **number))
+            .filter(|number| self.symbol(**number).is_none())
             .map(|number| format_symbol_number(*number))
             .collect();
 
@@ -269,7 +338,6 @@ impl OcdTemplate {
             put_u32(&mut out, entry, pos);
             put_u32(&mut out, entry + 4, data.len() as u32);
             put_i32(&mut out, entry + 8, string.string_type);
-            put_i32(&mut out, entry + 12, string.object_index);
         }
 
         let symbol_index = append_index_blocks(&mut out, SYMBOL_ENTRY_SIZE, self.symbols.len());
@@ -293,9 +361,7 @@ impl OcdTemplate {
 
         for (object, entry) in objects.iter().zip(object_index.entries) {
             let symbol = self
-                .symbols
-                .iter()
-                .find(|symbol| symbol.number == object.symbol)
+                .symbol(object.symbol)
                 .ok_or_else(|| CassiniError::InvalidInput {
                     message: format!(
                         "the OCAD template is missing symbol {}",
@@ -394,7 +460,7 @@ fn put_i16(out: &mut [u8], offset: usize, value: i16) {
     out[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
 }
 
-fn format_symbol_number(number: i32) -> String {
+pub fn format_symbol_number(number: i32) -> String {
     format!("{}.{:03}", number / 1000, number % 1000)
 }
 
@@ -574,6 +640,25 @@ mod tests {
         assert_eq!(template.scale, 10_000.0);
         assert_eq!(template.symbols.len(), 170);
         template.check_symbols(&[101000, 403000, 521002]).unwrap();
+    }
+
+    #[test]
+    fn reads_main_colors_and_borders() {
+        let template = OcdTemplate::load(None).unwrap();
+        let color = |number| template.symbol(number).unwrap().dominant_color;
+
+        // The fill of an area with a black bank line border, not the border
+        assert_eq!(color(301000), color(301001));
+        assert_ne!(color(301000), color(301004));
+        // The hatch of an area without fill
+        assert_eq!(color(308000), color(301001));
+        // The main line of a line with side lines
+        assert_eq!(color(509000), color(505000));
+
+        assert!(template.has_border(301000));
+        assert!(template.has_border(521002));
+        assert!(!template.has_border(301001));
+        assert!(!template.has_border(301004));
     }
 
     #[test]

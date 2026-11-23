@@ -247,7 +247,7 @@ cassini batch --threads 6
 
 The `--skip-lidar` option will skip the <GlossaryLink slug="lidar" /> processing stage of the pipeline. It will only work if you allready ran `cassini` once with the same input files, as it will reuse some temp files.
 
-This subcommand also accepts the [common rendering options](#common-rendering-options).
+This subcommand also accepts the [common rendering options](#common-rendering-options) and the [OCAD export options](#ocad-export-options).
 
 ## `cassini config`
 
@@ -335,7 +335,7 @@ The undergrowth rendering mode. The possible values are:
 
 ## OCAD export options
 
-The following options are available for the `process` and `render` subcommands.
+The following options are available for the `process`, `render` and `batch` subcommands.
 
 ### `--ocad`
 
@@ -346,6 +346,10 @@ The following options are available for the `process` and `render` subcommands.
 </p>
 
 Also export the map as an OCAD 12 file, `full-map.ocd`, next to `full-map.png`. The file contains contours (101, 102), form lines (103) and the vector features (roads, paths, water, buildings...) as editable objects, clipped to the tile extent and georeferenced in RGF93 / Lambert-93. Vegetation and cliffs are not exported yet. Load `full-map.png` as a background map to trace them.
+
+Lakes are exported as a 301.001 area with 301.004 bank lines, and buildings as a 521.003 area with 521.004 outlines, so that no bank line or outline is drawn where the tile edge cuts them. Wide road tunnels are exported as 512 (bridge / tunnel), road and footpath tunnels are left out.
+
+With `batch`, each tile gets its own `full-map.ocd` in its directory. The tiles are not merged into a single OCAD file.
 
 ### `--ocad-template`
 

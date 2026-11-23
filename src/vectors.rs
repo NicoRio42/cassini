@@ -1,10 +1,10 @@
 use crate::{
     coastlines::get_polygon_with_holes_from_coastlines,
     config::Config,
-    constants::{COASTLINE_EDGE_BUFFER, INCH},
+    constants::{BUFFER, COASTLINE_EDGE_BUFFER, INCH},
     error::{Result, ResultContext},
     helpers::does_polyline_intersect_tile,
-    map_features::{AreaSymbol, LineSymbol, MapFeature},
+    map_features::{AreaSymbol, Extent, LineSymbol, MapFeature},
     map_renderer::MapRenderer,
     tile::Tile,
 };
@@ -122,6 +122,15 @@ pub fn get_map_features_from_osm_shapes(
     );
 
     let mut features: Vec<MapFeature> = vec![];
+    // Shapefiles may cover much more than the tile, for instance when given
+    // with `--shapefiles`
+    let extent = Extent {
+        min_x: tile.min_x as f64,
+        min_y: tile.min_y as f64,
+        max_x: tile.max_x as f64,
+        max_y: tile.max_y as f64,
+    }
+    .expanded(BUFFER as f64);
 
     let multipolygons_path = shapes_path.join("multipolygons.shp");
     let multipolygons = read_as::<_, Polygon, Record>(&multipolygons_path).context(format!(
@@ -193,6 +202,8 @@ pub fn get_map_features_from_osm_shapes(
             }
         }
     }
+
+    features.retain(|feature| feature.overlaps(&extent));
 
     let lines_path = shapes_path.join("lines.shp");
     let lines = read_as::<_, Polyline, Record>(&lines_path).context(format!(
@@ -374,6 +385,8 @@ pub fn get_map_features_from_osm_shapes(
             continue;
         }
     }
+
+    features.retain(|feature| feature.overlaps(&extent));
 
     let are_some_islands_inside_tile = islands.iter().any(|island| {
         does_polyline_intersect_tile(
