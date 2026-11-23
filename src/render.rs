@@ -1,11 +1,14 @@
 use crate::config::Config;
 use crate::constants::INCH;
-use crate::contours::generate_contours_with_pullautin_algorithme;
+use crate::contours::{generate_contours_with_pullautin_algorithme, get_contour_map_features};
 use crate::error::{CassiniError, Result, ResultContext, Stage, TileId};
 use crate::helpers::{remove_dir_content, remove_if_exists};
+use crate::map_features::MapFeature;
+use crate::ocad_export::write_ocd_file;
+use crate::ocd::OcdTemplate;
 use crate::process::{checked_output, ensure_file};
 use crate::tile::TileWithNeighbors;
-use crate::vectors::render_map_with_osm_vector_shapes;
+use crate::vectors::{get_map_features_from_osm_shapes, render_map_with_osm_vector_shapes};
 use crate::world_file::create_world_file;
 use crate::{
     cliffs::render_cliffs,
@@ -25,6 +28,7 @@ pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
     skip_520: bool,
     undergrowth_mode: &UndergrowthMode,
     shapefiles_dir: Option<PathBuf>,
+    ocad_template: Option<&OcdTemplate>,
     config: &Config,
 ) -> Result<()> {
     let width = tile.max_x - tile.min_x;
@@ -40,10 +44,13 @@ pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
 
     // Optional layers must belong to this run, not a previous render in the same directory.
     let undergrowth_path = tile.render_dir_path.join("undergrowth.png");
-    remove_if_exists(&undergrowth_path).context(format!(
-        "could not remove stale optional layer `{}`",
-        undergrowth_path.display()
-    ))?;
+    let ocd_path = tile.render_dir_path.join("full-map.ocd");
+    for optional_path in [&undergrowth_path, &ocd_path] {
+        remove_if_exists(optional_path).context(format!(
+            "could not remove stale optional layer `{}`",
+            optional_path.display()
+        ))?;
+    }
 
     render_vegetation(
         &tile,
@@ -145,6 +152,11 @@ pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
         None
     };
 
+    let osm_features: Vec<MapFeature> = match shapes_path {
+        Some(shapes_path) => get_map_features_from_osm_shapes(&tile, &shapes_path, skip_520)?,
+        None => vec![],
+    };
+
     render_map_with_osm_vector_shapes(
         &tile,
         image_width,
@@ -154,8 +166,7 @@ pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
         &undergrowth_path,
         &contours_path,
         &cliffs_path,
-        skip_520,
-        shapes_path,
+        &osm_features,
     )?;
 
     let resolution = INCH / (config.dpi_resolution);
@@ -176,10 +187,16 @@ pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
         tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
     );
 
+    if let Some(ocad_template) = ocad_template {
+        let mut features = get_contour_map_features(&tile)?;
+        features.extend(osm_features);
+        write_ocd_file(&tile, ocad_template, &features)?;
+    }
+
     Ok(())
 }
 
-const RENDER_STEP_FILES: [&str; 16] = [
+const RENDER_STEP_FILES: [&str; 17] = [
     "cliffs.png",
     "contours",
     "contours.png",
@@ -187,6 +204,7 @@ const RENDER_STEP_FILES: [&str; 16] = [
     "dem_2m_with_buffer.tif",
     "dem_with_buffer.tif",
     "formlines",
+    "full-map.ocd",
     "full-map.pgw",
     "full-map.png",
     "high_vegetation_with_buffer.tif",

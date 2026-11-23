@@ -144,6 +144,7 @@ pub fn batch(
                         skip_520,
                         &cloned_undergrowth_mode,
                         None,
+                        None,
                         &cloned_config,
                     )
                 {

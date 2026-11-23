@@ -61,7 +61,7 @@ The output directory for the processed LiDAR file.
 
 Optional path to a directory containing shapefiles to use instead of downloading from OpenStreetMap.
 
-This subcommand also accepts the [common rendering options](#common-rendering-options).
+This subcommand also accepts the [common rendering options](#common-rendering-options) and the [OCAD export options](#ocad-export-options).
 
 ## `cassini lidar`
 
@@ -189,7 +189,7 @@ A list of directories containing the output of the <GlossaryLink slug="lidar" />
 
 Optional path to a directory containing shapefiles to use instead of downloading from OpenStreetMap.
 
-This subcommand also accepts the [common rendering options](#common-rendering-options).
+This subcommand also accepts the [common rendering options](#common-rendering-options) and the [OCAD export options](#ocad-export-options).
 
 ## `cassini batch`
 
@@ -332,6 +332,30 @@ The undergrowth rendering mode. The possible values are:
 - `merge`: Undergrowth is merged with the vegetation rendering (default mode).
 - `406`: Undergrowth is rendered as the [406 vegetation: slow running](https://omapwiki.orienteering.sport/symbols/406-vegetation-slow-running/) symbol.
 - `409`: Undergrowth is rendered as the [409 vegetation: walk, good visibility](https://omapwiki.orienteering.sport/symbols/409-vegetation-walk-good-visibility/) symbol.
+
+## OCAD export options
+
+The following options are available for the `process` and `render` subcommands.
+
+### `--ocad`
+
+<p>
+
+**Type:** `boolean`<br />
+
+</p>
+
+Also export the map as an OCAD 12 file, `full-map.ocd`, next to `full-map.png`. The file contains contours (101, 102), form lines (103) and the vector features (roads, paths, water, buildings...) as editable objects, clipped to the tile extent and georeferenced in RGF93 / Lambert-93. Vegetation and cliffs are not exported yet. Load `full-map.png` as a background map to trace them.
+
+### `--ocad-template`
+
+<p>
+
+**Type:** `string`<br />
+
+</p>
+
+Optional path to an OCAD 12 file whose colors and symbols are copied into the exported file, instead of the built-in ISOM 2017-2 symbol set (1:10 000). The map scale is also taken from this file. Its objects are not copied. Cassini checks that the template defines every symbol it exports, and lists the missing ones otherwise. Requires `--ocad`.
 
 ## Common options
 

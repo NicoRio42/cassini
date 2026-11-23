@@ -29,6 +29,7 @@ impl WritableRecord for FormLineRecord {
 
 use crate::config::Config;
 use crate::constants::{BUFFER, INCH, PURPLE};
+use crate::map_features::LineSymbol;
 use crate::{
     constants::{BROWN, TRANSPARENT},
     error::{Result, ResultContext},
@@ -58,9 +59,6 @@ pub fn pullautin_cull_formlines_render_contours(
     let mut img = RgbaImage::from_pixel(image_width, image_height, TRANSPARENT);
     let formlinesteepness: f64 = 0.37;
     let buffer_in_pixels = BUFFER as f32 * (config.dpi_resolution / INCH) as f32;
-    let indexcontours: f64 = 25.;
-    let contour_interval: f64 = 5.0;
-    let halfinterval = contour_interval / 2.0 * scalefactor;
 
     let dem_cell_size: f64 = 2.0;
     let xstart: f64 = (tile.min_x - BUFFER as i64) as f64;
@@ -224,15 +222,11 @@ pub fn pullautin_cull_formlines_render_contours(
             y.push((y0 - y_array[i]) * 600.0 / 254.0 / scalefactor);
         }
 
-        let mut curvew = 2.0;
-
-        if elevation.round() as isize % indexcontours as isize == 0 {
-            curvew = 3.5;
-        } else if elevation.round() as isize % contour_interval as isize != 0
-            && (elevation * 2.).round() as isize % (halfinterval * 2.).round() as isize == 0
-        {
-            curvew = 1.5;
-        }
+        let curvew = match get_contour_symbol(elevation) {
+            LineSymbol::IndexContour102 => 3.5,
+            LineSymbol::FormLine103 => 1.5,
+            _ => 2.0,
+        };
 
         let mut smallringtest = false;
         let mut help = vec![false; x.len()];
@@ -521,6 +515,25 @@ pub fn pullautin_cull_formlines_render_contours(
     );
 
     Ok(())
+}
+
+const INDEX_CONTOUR_INTERVAL: f64 = 25.;
+const CONTOUR_INTERVAL: f64 = 5.0;
+
+/// Returns the ISOM symbol of a smoothed contour at `elevation`. Half-interval
+/// contours are form line candidates: only their culled parts are drawn.
+pub fn get_contour_symbol(elevation: f64) -> LineSymbol {
+    let rounded_elevation = elevation.round() as isize;
+
+    if rounded_elevation % INDEX_CONTOUR_INTERVAL as isize == 0 {
+        LineSymbol::IndexContour102
+    } else if rounded_elevation % CONTOUR_INTERVAL as isize != 0
+        && (elevation * 2.).round() as isize % CONTOUR_INTERVAL as isize == 0
+    {
+        LineSymbol::FormLine103
+    } else {
+        LineSymbol::Contour101
+    }
 }
 
 fn write_formline_shape_to_shapefile(
