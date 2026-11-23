@@ -5,8 +5,16 @@ use std::{
 };
 
 pub fn remove_dir_content<P: AsRef<Path>>(path: P) -> io::Result<()> {
+    remove_dir_content_except(path, &[])
+}
+
+pub fn remove_dir_content_except<P: AsRef<Path>>(path: P, kept_names: &[&str]) -> io::Result<()> {
     for entry in read_dir(path)? {
         let entry = entry?;
+        if kept_names.iter().any(|name| entry.file_name() == *name) {
+            continue;
+        }
+
         let path = entry.path();
 
         if path.is_dir() {

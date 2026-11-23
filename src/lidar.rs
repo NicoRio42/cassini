@@ -8,7 +8,7 @@ use std::time::Instant;
 
 use crate::{
     error::{Result, ResultContext, Stage, TileId},
-    helpers::remove_dir_content,
+    helpers::remove_dir_content_except,
     process::{checked_output_with_input, ensure_file},
 };
 
@@ -43,8 +43,10 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
     );
 
     // Cleaning up output directory to fix https://github.com/NicoRio42/cassini/issues/7
+    // The OSM file only depends on the tile extent and is slow to download, so it is kept.
     if output_dir_path.exists() {
-        remove_dir_content(output_dir_path).context(format!(
+        let osm_file_name = format!("{:0>7}_{:0>7}.osm", min_x, max_y);
+        remove_dir_content_except(output_dir_path, &[&osm_file_name]).context(format!(
             "could not clean LiDAR output directory `{}`",
             output_dir_path.display()
         ))?;
