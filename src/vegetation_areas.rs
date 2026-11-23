@@ -11,14 +11,13 @@
 
 use crate::{
     config::Config,
-    constants::VEGETATION_BLOCK_SIZE,
+    constants::{BUFFER, VEGETATION_BLOCK_SIZE},
     error::{Result, ResultContext},
     map_features::{AreaSymbol, Extent, MapFeature},
     tile::Tile,
     vegetation::{
-        gaussian_kernel, minimum_3_by_3, separable_gaussian_filter, vegetation_interior,
-        RasterInterior, UndergrowthMode, VegetationRasters, LOW_DENSITY_BLUR_RADIUS,
-        MEDIUM_DENSITY_BLUR_RADIUS,
+        vegetation_interior, NoDataHandling, RasterInterior, UndergrowthMode, VegetationRasters,
+        LOW_DENSITY_BLUR_RADIUS, MEDIUM_DENSITY_BLUR_RADIUS,
     },
 };
 use contour::ContourBuilder;
@@ -35,12 +34,15 @@ use std::time::Instant;
 // Areas are counted in cells and lengths in cells below
 const _: () = assert!(VEGETATION_BLOCK_SIZE == 1);
 
-/// Value of the vegetation raster cells without LiDAR data.
-const NO_DATA: u8 = 255;
 /// Cells vectorized around the tile, so that areas reach the tile edge and
-/// areas crossing it are measured beyond it. Must not exceed `BUFFER` minus
-/// the blur radius.
+/// areas crossing it are measured beyond it.
 const MARGIN: usize = 50;
+// The blurs and the 3 x 3 minimum of the margin read the buffer around it
+const _: () = assert!(
+    MARGIN + MEDIUM_DENSITY_BLUR_RADIUS <= BUFFER
+        && MARGIN + LOW_DENSITY_BLUR_RADIUS <= BUFFER
+        && MARGIN < BUFFER
+);
 /// Radius of the white discs the PNG renderer draws around high vegetation.
 const OPEN_LAND_DISTANCE: f32 = 2.0;
 /// Caps the distance to high vegetation, which is infinite without any.
@@ -140,13 +142,9 @@ pub fn get_vegetation_features(
     };
 
     let mut green_or_denser = vec![];
-    for field in &mut fields.green {
-        fields.grid.extend_into_margin(field, &fields.valid);
+    for field in &fields.green {
         green_or_denser.push(tracer.trace(field)?);
     }
-    fields
-        .grid
-        .extend_into_margin(&mut fields.open_land, &fields.valid);
     let open_land = tracer.trace(&fields.open_land)?;
 
     let mut features = FeatureSink {
@@ -179,9 +177,9 @@ pub fn get_vegetation_features(
         SLIVER_AREA,
     );
 
-    if let Some(undergrowth) = &mut fields.undergrowth_409 {
-        fields.grid.extend_into_margin(undergrowth, &fields.valid);
-        // ISOM does not combine 409 with the green screens
+    if let Some(undergrowth) = &fields.undergrowth_409 {
+        // ISOM does not combine 409 with the green screens. It may overlap
+        // 403, as undergrowth.png overlays the yellow in the PNG rendering
         features.push(
             AreaSymbol::VegetationWalkGoodVisibility409,
             difference(&tracer.trace(undergrowth)?, &green_or_denser[0]),
@@ -249,7 +247,8 @@ impl FeatureSink {
     }
 
     fn touches_edge(&self, ring: &[[f64; 2]]) -> bool {
-        const TOLERANCE: f64 = 1e-6;
+        // The boolean operations snap the coordinates to an integer grid
+        const TOLERANCE: f64 = 1e-3;
         ring.iter().any(|[x, y]| {
             (x - self.extent.min_x).abs() < TOLERANCE
                 || (x - self.extent.max_x).abs() < TOLERANCE
@@ -305,6 +304,9 @@ impl Tracer {
                 if ring.len() > 1 && ring.first() == ring.last() {
                     ring.pop();
                 }
+                // Each ring is simplified on its own, so neighbouring rings
+                // may cross by up to the tolerance. The pieces this leaves
+                // after the boolean operations are dropped as slivers.
                 simplify_ring(&ring, self.simplify_tolerance)
             })
             .filter(|ring| ring.len() >= 3)
@@ -466,39 +468,35 @@ impl Grid {
         }
     }
 
-    /// Gives the cells without data in the margin the mean of their
-    /// neighbours, so that areas are traced beyond the tile edge and not
-    /// closed just inside it when a neighbouring tile is missing.
-    fn extend_into_margin(self, field: &mut [f32], valid: &[bool]) {
-        let mut known = valid.to_vec();
+    /// The cell each cell takes its value from: itself when it has data,
+    /// else, in the margin, the nearest cell of the tile when that one has
+    /// data. That extends the areas crossing the tile edge beyond it when a
+    /// neighbouring tile is missing, so that they are generalised as crossing
+    /// it, and traced beyond it instead of closed just inside it.
+    fn extrusion_sources(self, valid: &[bool]) -> Vec<Option<usize>> {
+        (0..self.len())
+            .map(|cell| {
+                if valid[cell] {
+                    return Some(cell);
+                }
+                if !self.is_in_margin(cell) {
+                    return None;
+                }
 
-        // Two rings are enough, the margin is clipped off
-        for _ in 0..2 {
-            let extended: Vec<(usize, f32)> = (0..self.len())
-                .filter(|cell| !known[*cell] && self.is_in_margin(*cell))
-                .filter_map(|cell| {
-                    let (sum, count) = self
-                        .neighbors(cell)
-                        .filter(|neighbor| known[*neighbor])
-                        .fold((0.0, 0), |(sum, count), neighbor| {
-                            (sum + field[neighbor], count + 1)
-                        });
-                    (count > 0).then(|| (cell, sum / count as f32))
-                })
-                .collect();
-
-            for (cell, value) in extended {
-                field[cell] = value;
-                known[cell] = true;
-            }
-        }
+                let (x, y) = (cell % self.width, cell / self.width);
+                let source = y.clamp(MARGIN, self.height - MARGIN - 1) * self.width
+                    + x.clamp(MARGIN, self.width - MARGIN - 1);
+                valid[source].then_some(source)
+            })
+            .collect()
     }
 }
 
 /// Fields over the grid, positive inside their symbol's area.
 struct VegetationFields {
     grid: Grid,
-    /// Whether each cell has LiDAR data.
+    /// Whether each cell has a value: it has LiDAR data, or it is in the
+    /// margin and extended from a tile cell with data.
     valid: Vec<bool>,
     /// The green density minus each green threshold: positive in 406 or
     /// denser, in 408 or denser, and in 410.
@@ -519,7 +517,7 @@ impl VegetationFields {
         config: &Config,
         undergrowth_mode: &UndergrowthMode,
     ) -> Result<Self> {
-        let interior = vegetation_interior(tile, [&rasters.high, &rasters.medium, &rasters.low])?;
+        let interior = vegetation_interior(tile, rasters)?;
         let window = RasterInterior {
             x: interior.x - MARGIN,
             y: interior.y - MARGIN,
@@ -530,107 +528,46 @@ impl VegetationFields {
             width: window.width,
             height: window.height,
         };
-        let raster_width = rasters.medium.width as usize;
 
-        let raster_valid: Vec<u8> = rasters
-            .high
-            .pixels
-            .iter()
-            .zip(&rasters.medium.pixels)
-            .zip(&rasters.low.pixels)
-            .map(|((high, medium), low)| {
-                u8::from(*high != NO_DATA && *medium != NO_DATA && *low != NO_DATA)
-            })
-            .collect();
-        let without_no_data = |pixels: &[u8]| -> Vec<u8> {
-            pixels
-                .iter()
-                .zip(&raster_valid)
-                .map(|(pixel, valid)| pixel * valid)
-                .collect()
-        };
-        let medium = without_no_data(&rasters.medium.pixels);
-        let low = without_no_data(&rasters.low.pixels);
+        let densities =
+            rasters.densities(window, config, undergrowth_mode, NoDataHandling::Excluded);
+        let squared_distances_to_high = grid.squared_distances(densities.high.iter().copied());
 
-        // Normalized convolution: the blur of the values over the blur of
-        // the data mask
-        let blur = |pixels: &[u8], secondary: Option<&[u8]>, radius: usize| -> Vec<f32> {
-            let kernel = gaussian_kernel(radius);
-            let sums = separable_gaussian_filter(pixels, secondary, raster_width, window, &kernel);
-            let weights =
-                separable_gaussian_filter(&raster_valid, None, raster_width, window, &kernel);
-            sums.iter()
-                .zip(weights)
-                .map(|(sum, weight)| if weight > 0.0 { sum / weight } else { 0.0 })
-                .collect()
-        };
-
-        let merge_low = matches!(undergrowth_mode, UndergrowthMode::Merge).then_some(&low[..]);
-        let green_density = blur(&medium, merge_low, MEDIUM_DENSITY_BLUR_RADIUS);
-        let low_density = matches!(
-            undergrowth_mode,
-            UndergrowthMode::Symbol406 | UndergrowthMode::Symbol409
-        )
-        .then(|| blur(&low, None, LOW_DENSITY_BLUR_RADIUS));
-
-        let source_index = |cell: usize| {
-            (window.y + cell / grid.width) * raster_width + window.x + cell % grid.width
-        };
-        let valid: Vec<bool> = (0..grid.len())
-            .map(|cell| raster_valid[source_index(cell)] != 0)
-            .collect();
-
-        // No data is the largest value, so the minimum ignores it
-        let is_high = |cell: usize| {
-            let source = source_index(cell);
-            valid[cell]
-                && minimum_3_by_3(
-                    &rasters.high.pixels,
-                    raster_width,
-                    source % raster_width,
-                    source / raster_width,
-                ) > config.yellow_threshold as u8
-        };
-        let squared_distances_to_high = grid.squared_distances((0..grid.len()).map(is_high));
-
+        let sources = grid.extrusion_sources(&densities.valid);
         let field = |value: &dyn Fn(usize) -> f32| -> Vec<f32> {
-            (0..grid.len())
-                .map(|cell| {
-                    if valid[cell] {
-                        value(cell)
-                    } else {
-                        NO_DATA_FIELD
-                    }
-                })
+            sources
+                .iter()
+                .map(|source| source.map_or(NO_DATA_FIELD, value))
                 .collect()
         };
+        let green_field = |threshold: f32| field(&|cell| densities.green[cell] - threshold);
 
-        let undergrowth = |cell: usize| {
-            low_density.as_ref().unwrap()[cell] - config.low_vegetation_density_threshold
-        };
-        let light_green = |cell: usize| {
-            let green = green_density[cell] - config.green_threshold_1;
-            match undergrowth_mode {
-                // Undergrowth is drawn with the 406 screen
-                UndergrowthMode::Symbol406 => green.max(undergrowth(cell)),
-                _ => green,
+        let undergrowth = densities
+            .low
+            .as_ref()
+            .map(|low| field(&|cell| low[cell] - config.low_vegetation_density_threshold));
+        let mut light_green = green_field(config.green_threshold_1);
+        if let (UndergrowthMode::Symbol406, Some(undergrowth)) = (undergrowth_mode, &undergrowth) {
+            // Undergrowth is drawn with the 406 screen
+            for (green, undergrowth) in light_green.iter_mut().zip(undergrowth) {
+                *green = green.max(*undergrowth);
             }
-        };
+        }
 
         Ok(Self {
             grid,
+            valid: sources.iter().map(Option::is_some).collect(),
             green: [
-                field(&light_green),
-                field(&|cell| green_density[cell] - config.green_threshold_2),
-                field(&|cell| green_density[cell] - config.green_threshold_3),
+                light_green,
+                green_field(config.green_threshold_2),
+                green_field(config.green_threshold_3),
             ],
             open_land: field(&|cell| {
                 (squared_distances_to_high[cell].sqrt() as f32 - OPEN_LAND_DISTANCE)
                     .min(MAX_OPEN_LAND_FIELD)
             }),
-            undergrowth_409: matches!(undergrowth_mode, UndergrowthMode::Symbol409)
-                .then(|| field(&undergrowth)),
-            valid,
+            undergrowth_409: undergrowth
+                .filter(|_| matches!(undergrowth_mode, UndergrowthMode::Symbol409)),
         })
     }
 
@@ -858,7 +795,7 @@ mod tests {
     #[test]
     fn removes_thin_parts_and_keeps_wide_ones() {
         // A 10 x 10 square with a 2 cells wide, 6 cells long spur
-        let mut values = field(|x, y| square(2, 2, 10)(x, y) || (x >= 12 && y >= 6 && y < 8));
+        let mut values = field(|x, y| square(2, 2, 10)(x, y) || (x >= 12 && (6..8).contains(&y)));
 
         remove_thin_parts(&mut values, None, None, 4.0, GRID);
 
@@ -1023,25 +960,56 @@ mod tests {
         assert_eq!(widths, vec![5.0, 20.0]);
     }
 
-    #[test]
-    fn extends_fields_into_the_margin_without_data() {
+    /// A grid of a 4 x 4 tile and its margin, without data in the margin.
+    fn grid_without_neighbors() -> (Grid, Vec<bool>) {
         let grid = Grid {
-            width: 2 * MARGIN + 2,
-            height: 2 * MARGIN + 2,
+            width: 2 * MARGIN + 4,
+            height: 2 * MARGIN + 4,
         };
-        let valid: Vec<bool> = (0..grid.len())
+        let valid = (0..grid.len())
             .map(|cell| !grid.is_in_margin(cell))
             .collect();
-        let mut values: Vec<f32> = valid
+        (grid, valid)
+    }
+
+    #[test]
+    fn extends_the_tile_into_the_margin_without_data() {
+        let (grid, mut valid) = grid_without_neighbors();
+        let tile_cell = |x: usize, y: usize| (MARGIN + y) * grid.width + MARGIN + x;
+        // A tile edge cell without data
+        valid[tile_cell(3, 1)] = false;
+
+        let sources = grid.extrusion_sources(&valid);
+
+        assert_eq!(sources[tile_cell(1, 1)], Some(tile_cell(1, 1)));
+        assert_eq!(sources[tile_cell(3, 1)], None);
+        // West of the tile, north-west of it, and beyond the edge cell
+        // without data
+        assert_eq!(sources[(MARGIN + 2) * grid.width], Some(tile_cell(0, 2)));
+        assert_eq!(sources[0], Some(tile_cell(0, 0)));
+        assert_eq!(sources[(MARGIN + 1) * grid.width + grid.width - 1], None);
+    }
+
+    #[test]
+    fn keeps_small_islands_crossing_the_tile_edge_without_neighbor() {
+        let (grid, valid) = grid_without_neighbors();
+        let sources = grid.extrusion_sources(&valid);
+        // A 2 x 2 island on the tile's west edge
+        let inside = |cell: usize| {
+            let (x, y) = (cell % grid.width, cell / grid.width);
+            (MARGIN..MARGIN + 2).contains(&x) && (MARGIN..MARGIN + 2).contains(&y)
+        };
+        let mut values: Vec<f32> = sources
             .iter()
-            .map(|valid| if *valid { 2.0 } else { NO_DATA_FIELD })
+            .map(|source| match source {
+                Some(source) if inside(*source) => 1.0,
+                Some(_) => -1.0,
+                None => NO_DATA_FIELD,
+            })
             .collect();
 
-        grid.extend_into_margin(&mut values, &valid);
+        remove_small_islands(&mut values, None, None, 10, grid);
 
-        let row = MARGIN * grid.width;
-        assert_eq!(values[row + MARGIN - 1], 2.0);
-        assert_eq!(values[row + MARGIN - 2], 2.0);
-        assert_eq!(values[row + MARGIN - 3], NO_DATA_FIELD);
+        assert!(values[MARGIN * grid.width + MARGIN] > 0.0);
     }
 }

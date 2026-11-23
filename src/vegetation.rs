@@ -37,9 +37,125 @@ pub enum UndergrowthMode {
 
 /// The buffered 1 m vegetation density rasters of a tile.
 pub struct VegetationRasters {
-    pub high: TifImage,
-    pub medium: TifImage,
-    pub low: TifImage,
+    high: TifImage,
+    medium: TifImage,
+    low: TifImage,
+}
+
+/// Value of the vegetation raster cells without LiDAR data.
+const NO_DATA: u8 = 255;
+
+/// How the density blurs count the cells without LiDAR data.
+#[derive(Clone, Copy)]
+pub(crate) enum NoDataHandling {
+    /// As their raw value, the largest one, so as dense vegetation.
+    AsDense,
+    /// Left out, with a normalized convolution: the blur of the values over
+    /// the blur of the data mask.
+    Excluded,
+}
+
+/// The vegetation densities of a window of the buffered rasters, row-major.
+pub(crate) struct VegetationDensities {
+    /// Whether each cell has LiDAR data in the three rasters.
+    pub valid: Vec<bool>,
+    /// Whether each cell is high vegetation, which clears open land around it.
+    pub high: Vec<bool>,
+    /// The blurred medium vegetation density, plus the low one in merge
+    /// mode, compared to the green thresholds.
+    pub green: Vec<f32>,
+    /// The blurred low vegetation density, in 406 and 409 modes.
+    pub low: Option<Vec<f32>>,
+}
+
+impl VegetationRasters {
+    /// Computes the densities the vegetation is classified from, for both the
+    /// PNG renderer and the OCAD export.
+    pub(crate) fn densities(
+        &self,
+        window: RasterInterior,
+        config: &Config,
+        undergrowth_mode: &UndergrowthMode,
+        no_data: NoDataHandling,
+    ) -> VegetationDensities {
+        let raster_width = self.high.width as usize;
+        let raster_valid: Vec<u8> = self
+            .high
+            .pixels
+            .iter()
+            .zip(&self.medium.pixels)
+            .zip(&self.low.pixels)
+            .map(|((high, medium), low)| {
+                u8::from(*high != NO_DATA && *medium != NO_DATA && *low != NO_DATA)
+            })
+            .collect();
+
+        let counted = |pixels: &[u8]| -> Vec<u8> {
+            match no_data {
+                NoDataHandling::AsDense => pixels.to_vec(),
+                NoDataHandling::Excluded => pixels
+                    .iter()
+                    .zip(&raster_valid)
+                    .map(|(pixel, valid)| pixel * valid)
+                    .collect(),
+            }
+        };
+        let medium = counted(&self.medium.pixels);
+        let low = counted(&self.low.pixels);
+
+        let blur = |pixels: &[u8], secondary: Option<&[u8]>, radius: usize| -> Vec<f32> {
+            let kernel = gaussian_kernel(radius);
+            let sums = separable_gaussian_filter(pixels, secondary, raster_width, window, &kernel);
+            match no_data {
+                NoDataHandling::AsDense => sums,
+                NoDataHandling::Excluded => {
+                    let weights = separable_gaussian_filter(
+                        &raster_valid,
+                        None,
+                        raster_width,
+                        window,
+                        &kernel,
+                    );
+                    sums.iter()
+                        .zip(weights)
+                        .map(|(sum, weight)| if weight > 0.0 { sum / weight } else { 0.0 })
+                        .collect()
+                }
+            }
+        };
+
+        let merge_low = matches!(undergrowth_mode, UndergrowthMode::Merge).then_some(&low[..]);
+        let green = blur(&medium, merge_low, MEDIUM_DENSITY_BLUR_RADIUS);
+        let low_density = matches!(
+            undergrowth_mode,
+            UndergrowthMode::Symbol406 | UndergrowthMode::Symbol409
+        )
+        .then(|| blur(&low, None, LOW_DENSITY_BLUR_RADIUS));
+
+        let sources = (0..window.height)
+            .flat_map(|y| (0..window.width).map(move |x| (window.x + x, window.y + y)));
+        let valid: Vec<bool> = sources
+            .clone()
+            .map(|(x, y)| raster_valid[y * raster_width + x] != 0)
+            .collect();
+        // No data is the largest value, so the minimum ignores it next to
+        // cells with data
+        let high = sources
+            .zip(&valid)
+            .map(|((x, y), valid)| {
+                (*valid || matches!(no_data, NoDataHandling::AsDense))
+                    && minimum_3_by_3(&self.high.pixels, raster_width, x, y)
+                        > config.yellow_threshold as u8
+            })
+            .collect();
+
+        VegetationDensities {
+            valid,
+            high,
+            green,
+            low: low_density,
+        }
+    }
 }
 
 /// Renders `vegetation.png` (and `undergrowth.png` in 409 mode) and returns
@@ -88,35 +204,25 @@ pub fn render_vegetation(
         None,
     )?;
 
-    let high_vegetation =
-        get_image_data_from_tif(&tile.render_dir_path.join("high_vegetation_with_buffer.tif"))?;
-
-    let medium_vegetation = get_image_data_from_tif(
-        &tile
-            .render_dir_path
-            .join("medium_vegetation_with_buffer.tif"),
-    )?;
-
-    let low_vegetation =
-        get_image_data_from_tif(&tile.render_dir_path.join("low_vegetation_with_buffer.tif"))?;
+    let rasters = VegetationRasters {
+        high: get_image_data_from_tif(
+            &tile.render_dir_path.join("high_vegetation_with_buffer.tif"),
+        )?,
+        medium: get_image_data_from_tif(
+            &tile
+                .render_dir_path
+                .join("medium_vegetation_with_buffer.tif"),
+        )?,
+        low: get_image_data_from_tif(&tile.render_dir_path.join("low_vegetation_with_buffer.tif"))?,
+    };
 
     let mut base_vegetation_img = RgbaImage::from_pixel(image_width, image_height, YELLOW);
     let mut green_vegetation_img = RgbaImage::from_pixel(image_width, image_height, TRANSPARENT);
     let mut undergrowth_vegetation_img =
         RgbaImage::from_pixel(image_width, image_height, TRANSPARENT);
 
-    let interior = vegetation_interior(
-        tile,
-        [&high_vegetation, &medium_vegetation, &low_vegetation],
-    )?;
-    let classification = classify_vegetation(
-        &high_vegetation,
-        &medium_vegetation,
-        &low_vegetation,
-        interior,
-        config,
-        undergrowth_mode,
-    );
+    let interior = vegetation_interior(tile, &rasters)?;
+    let classification = classify_vegetation(&rasters, interior, config, undergrowth_mode);
 
     // High vegetation and undergrowth use a single color per layer, so they can
     // be rasterized in cache-friendly row-major order without changing overlap
@@ -210,11 +316,7 @@ pub fn render_vegetation(
         tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
     );
 
-    Ok(VegetationRasters {
-        high: high_vegetation,
-        medium: medium_vegetation,
-        low: low_vegetation,
-    })
+    Ok(rasters)
 }
 
 #[derive(Clone, Copy)]
@@ -233,7 +335,11 @@ struct VegetationClassification {
     undergrowth: Vec<u8>,
 }
 
-pub(crate) fn vegetation_interior(tile: &Tile, images: [&TifImage; 3]) -> Result<RasterInterior> {
+pub(crate) fn vegetation_interior(
+    tile: &Tile,
+    rasters: &VegetationRasters,
+) -> Result<RasterInterior> {
+    let images = [&rasters.high, &rasters.medium, &rasters.low];
     let width = tile
         .max_x
         .checked_sub(tile.min_x)
@@ -294,79 +400,44 @@ pub(crate) fn vegetation_interior(tile: &Tile, images: [&TifImage; 3]) -> Result
 }
 
 fn classify_vegetation(
-    high: &TifImage,
-    medium: &TifImage,
-    low: &TifImage,
+    rasters: &VegetationRasters,
     interior: RasterInterior,
     config: &Config,
     undergrowth_mode: &UndergrowthMode,
 ) -> VegetationClassification {
-    let medium_kernel = gaussian_kernel(MEDIUM_DENSITY_BLUR_RADIUS);
-    let merge_low = matches!(undergrowth_mode, UndergrowthMode::Merge).then_some(&low.pixels[..]);
-    let medium_density = separable_gaussian_filter(
-        &medium.pixels,
-        merge_low,
-        medium.width as usize,
-        interior,
-        &medium_kernel,
-    );
-    let low_density = matches!(
-        undergrowth_mode,
-        UndergrowthMode::Symbol406 | UndergrowthMode::Symbol409
-    )
-    .then(|| {
-        separable_gaussian_filter(
-            &low.pixels,
-            None,
-            low.width as usize,
-            interior,
-            &gaussian_kernel(LOW_DENSITY_BLUR_RADIUS),
-        )
-    });
+    let densities = rasters.densities(interior, config, undergrowth_mode, NoDataHandling::AsDense);
 
-    let output_len = interior.width * interior.height;
-    let mut classification = VegetationClassification {
+    VegetationClassification {
         width: interior.width,
         height: interior.height,
-        high: vec![0; output_len],
-        green: vec![0; output_len],
-        undergrowth: vec![0; output_len],
-    };
-    let input_width = high.width as usize;
-
-    for output_y in 0..interior.height {
-        let source_y = interior.y + output_y;
-        for output_x in 0..interior.width {
-            let source_x = interior.x + output_x;
-            let output_index = output_y * interior.width + output_x;
-            classification.high[output_index] = u8::from(
-                minimum_3_by_3(&high.pixels, input_width, source_x, source_y)
-                    > config.yellow_threshold as u8,
-            );
-
-            let density = medium_density[output_index];
-            classification.green[output_index] = if density > config.green_threshold_3 {
-                3
-            } else if density > config.green_threshold_2 {
-                2
-            } else if density > config.green_threshold_1 {
-                1
-            } else {
-                0
-            };
-
-            if let Some(low_density) = &low_density {
-                classification.undergrowth[output_index] =
-                    u8::from(low_density[output_index] > config.low_vegetation_density_threshold);
-            }
-        }
+        high: densities.high.iter().map(|high| u8::from(*high)).collect(),
+        green: densities
+            .green
+            .iter()
+            .map(|density| {
+                if *density > config.green_threshold_3 {
+                    3
+                } else if *density > config.green_threshold_2 {
+                    2
+                } else if *density > config.green_threshold_1 {
+                    1
+                } else {
+                    0
+                }
+            })
+            .collect(),
+        undergrowth: match &densities.low {
+            Some(low) => low
+                .iter()
+                .map(|density| u8::from(*density > config.low_vegetation_density_threshold))
+                .collect(),
+            None => vec![0; interior.width * interior.height],
+        },
     }
-
-    classification
 }
 
 #[inline]
-pub(crate) fn minimum_3_by_3(pixels: &[u8], width: usize, x: usize, y: usize) -> u8 {
+fn minimum_3_by_3(pixels: &[u8], width: usize, x: usize, y: usize) -> u8 {
     let mut minimum = u8::MAX;
     for row in (y - 1)..=(y + 1) {
         for &pixel in &pixels[(row * width + x - 1)..=(row * width + x + 1)] {
@@ -376,7 +447,7 @@ pub(crate) fn minimum_3_by_3(pixels: &[u8], width: usize, x: usize, y: usize) ->
     minimum
 }
 
-pub(crate) fn gaussian_kernel(radius: usize) -> Vec<f32> {
+fn gaussian_kernel(radius: usize) -> Vec<f32> {
     let size = 2 * radius + 1;
     let sigma = radius as f32 / 2.0_f32; // avoid sigma = 0
     let two_sigma_sq = 2.0 * sigma * sigma;
@@ -397,7 +468,7 @@ pub(crate) fn gaussian_kernel(radius: usize) -> Vec<f32> {
     kernel
 }
 
-pub(crate) fn separable_gaussian_filter(
+fn separable_gaussian_filter(
     primary: &[u8],
     secondary: Option<&[u8]>,
     input_width: usize,
@@ -445,10 +516,10 @@ pub(crate) fn separable_gaussian_filter(
     output
 }
 
-pub struct TifImage {
-    pub pixels: Vec<u8>,
-    pub width: u32,
-    pub height: u32,
+struct TifImage {
+    pixels: Vec<u8>,
+    width: u32,
+    height: u32,
 }
 
 fn get_image_data_from_tif(path: &Path) -> Result<TifImage> {
@@ -709,10 +780,15 @@ mod tests {
         };
         let config = Config::default();
         for value in 0..=5 {
-            let image = TifImage {
+            let image = || TifImage {
                 pixels: vec![value; width * height],
                 width: width as u32,
                 height: height as u32,
+            };
+            let rasters = VegetationRasters {
+                high: image(),
+                medium: image(),
+                low: image(),
             };
             for mode in [
                 UndergrowthMode::None,
@@ -720,8 +796,7 @@ mod tests {
                 UndergrowthMode::Symbol406,
                 UndergrowthMode::Symbol409,
             ] {
-                let optimized =
-                    classify_vegetation(&image, &image, &image, interior, &config, &mode);
+                let optimized = classify_vegetation(&rasters, interior, &config, &mode);
                 let expected_high = u8::from(value > 1);
                 let density = if matches!(mode, UndergrowthMode::Merge) {
                     value * 2
@@ -761,18 +836,23 @@ mod tests {
 
     fn benchmark_strategy(
         optimized: bool,
-        high: &TifImage,
-        medium: &TifImage,
-        low: &TifImage,
+        rasters: &VegetationRasters,
         interior: RasterInterior,
         config: &Config,
         mode: &UndergrowthMode,
     ) -> (f64, VegetationClassification) {
         let started = Instant::now();
         let result = if optimized {
-            classify_vegetation(high, medium, low, interior, config, mode)
+            classify_vegetation(rasters, interior, config, mode)
         } else {
-            legacy_classify(high, medium, low, interior, config, mode)
+            legacy_classify(
+                &rasters.high,
+                &rasters.medium,
+                &rasters.low,
+                interior,
+                config,
+                mode,
+            )
         };
         let elapsed = started.elapsed().as_secs_f64();
         black_box(&result);
@@ -791,9 +871,11 @@ mod tests {
             .and_then(|value| value.parse().ok())
             .unwrap_or(5);
         let input_size = size + 2 * BUFFER;
-        let high = synthetic_image(input_size, input_size, 11);
-        let medium = synthetic_image(input_size, input_size, 22);
-        let low = synthetic_image(input_size, input_size, 33);
+        let rasters = VegetationRasters {
+            high: synthetic_image(input_size, input_size, 11),
+            medium: synthetic_image(input_size, input_size, 22),
+            low: synthetic_image(input_size, input_size, 33),
+        };
         let interior = RasterInterior {
             x: BUFFER,
             y: BUFFER,
@@ -808,9 +890,8 @@ mod tests {
             for repetition in 0..repetitions {
                 let mut expected = None;
                 for optimized in [repetition % 2 != 0, repetition % 2 == 0] {
-                    let (elapsed, result) = benchmark_strategy(
-                        optimized, &high, &medium, &low, interior, &config, &mode,
-                    );
+                    let (elapsed, result) =
+                        benchmark_strategy(optimized, &rasters, interior, &config, &mode);
                     if let Some(expected) = &expected {
                         assert_same_classification(&result, expected);
                     } else {
