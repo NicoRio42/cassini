@@ -8,6 +8,7 @@ use crate::ocd::OcdTemplate;
 use crate::process::{checked_output, ensure_file};
 use crate::tile::TileWithNeighbors;
 use crate::vectors::{get_map_features_from_osm_shapes, render_map_with_osm_vector_shapes};
+use crate::vegetation_areas::get_vegetation_features;
 use crate::world_file::create_world_file;
 use crate::{
     cliffs::render_cliffs,
@@ -30,8 +31,16 @@ pub struct RenderOptions {
     pub undergrowth_mode: UndergrowthMode,
     /// Shapefiles to use instead of the tile's OpenStreetMap data.
     pub shapefiles_dir: Option<PathBuf>,
-    /// Also export the map to OCAD with this template.
-    pub ocad_template: Option<Arc<OcdTemplate>>,
+    /// Also export the map to OCAD.
+    pub ocad: Option<OcadOptions>,
+}
+
+#[derive(Clone)]
+pub struct OcadOptions {
+    pub template: Arc<OcdTemplate>,
+    /// Douglas–Peucker tolerance in metres for the vegetation areas, 0 to
+    /// keep every traced vertex.
+    pub simplify_tolerance: f64,
 }
 
 pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
@@ -61,7 +70,7 @@ pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
         ))?;
     }
 
-    render_vegetation(
+    let vegetation_rasters = render_vegetation(
         &tile,
         &neighbor_tiles,
         image_width,
@@ -69,6 +78,17 @@ pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
         config,
         &options.undergrowth_mode,
     )?;
+    let vegetation_features = match &options.ocad {
+        Some(ocad) => get_vegetation_features(
+            &tile,
+            &vegetation_rasters,
+            config,
+            &options.undergrowth_mode,
+            ocad.simplify_tolerance,
+        )?,
+        None => vec![],
+    };
+    drop(vegetation_rasters);
 
     create_dem_with_buffer_and_slopes_tiff(&tile, &neighbor_tiles)?;
     let contour_features =
@@ -199,10 +219,11 @@ pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
         tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
     );
 
-    if let Some(ocad_template) = &options.ocad_template {
-        let mut features = contour_features;
+    if let Some(ocad) = &options.ocad {
+        let mut features = vegetation_features;
+        features.extend(contour_features);
         features.extend(osm_features);
-        write_ocd_file(&tile, ocad_template, &features)?;
+        write_ocd_file(&tile, &ocad.template, &features)?;
     }
 
     Ok(())

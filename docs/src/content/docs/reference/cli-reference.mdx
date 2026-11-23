@@ -345,7 +345,9 @@ The following options are available for the `process`, `render` and `batch` subc
 
 </p>
 
-Also export the map as an OCAD 12 file, `full-map.ocd`, next to `full-map.png`. The file contains contours (101, 102), form lines (103) and the vector features (roads, paths, water, buildings...) as editable objects, clipped to the tile extent and georeferenced in RGF93 / Lambert-93. Vegetation and cliffs are not exported yet. Load `full-map.png` as a background map to trace them.
+Also export the map as an OCAD 12 file, `full-map.ocd`, next to `full-map.png`. The file contains contours (101, 102), form lines (103), vegetation areas and the vector features (roads, paths, water, buildings...) as editable objects, clipped to the tile extent and georeferenced in RGF93 / Lambert-93. Cliffs are not exported yet. Load `full-map.png` as a background map to trace them.
+
+Vegetation is exported as 403 (rough open land), 406, 408 and 410 (vegetation: slow running, walk, fight) areas, plus 409 (vegetation: walk, good visibility) in the `409` [undergrowth mode](#--undergrowth). The areas follow the same thresholds as the PNG rendering, and are generalised with the ISOM 2017-2 minimum areas and widths: areas, holes and parts narrower than the minimum are merged into their surroundings. Neighbouring areas do not overlap and share the same boundary. 403 and 409 are left out under the green areas. As a result, the exported map is less green than `full-map.png`, whose small patches are below the ISOM minimums.
 
 Lakes are exported as a 301.001 area with 301.004 bank lines, and buildings as a 521.003 area with 521.004 outlines, so that no bank line or outline is drawn where the tile edge cuts them. Wide road tunnels are exported as 512 (bridge / tunnel), road and footpath tunnels are left out.
 
@@ -360,6 +362,17 @@ With `batch`, each tile gets its own `full-map.ocd` in its directory. The tiles 
 </p>
 
 Optional path to an OCAD 12 file whose colors and symbols are copied into the exported file, instead of the built-in ISOM 2017-2 symbol set (1:10 000). The map scale is also taken from this file. Its objects are not copied. Cassini checks that the template defines every symbol it exports, and lists the missing ones otherwise. Requires `--ocad`.
+
+### `--ocad-simplify`
+
+<p>
+
+**Type:** `number`<br />
+**Default value:** `0.5`
+
+</p>
+
+Tolerance in meters for simplifying the boundaries of the exported vegetation areas (Douglas–Peucker). A larger tolerance gives fewer vertices, which makes the areas easier to edit in OCAD, at the cost of fidelity. `0` keeps every traced vertex, about one per meter of boundary. Requires `--ocad`.
 
 ## Common options
 

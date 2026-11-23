@@ -58,6 +58,11 @@ fn get_area_symbol_numbers(symbol: AreaSymbol) -> AreaSymbolNumbers {
         AreaSymbol::AreaThatShallNotBeEntered520 => (520000, None),
         // Cassini draws buildings grey with a black outline
         AreaSymbol::Building521 => (521003, Some(521004)),
+        AreaSymbol::RoughOpenLand403 => (403000, None),
+        AreaSymbol::VegetationSlowRunning406 => (406000, None),
+        AreaSymbol::VegetationWalk408 => (408000, None),
+        AreaSymbol::VegetationWalkGoodVisibility409 => (409000, None),
+        AreaSymbol::VegetationFight410 => (410000, None),
     };
 
     AreaSymbolNumbers { fill, border }
@@ -324,7 +329,10 @@ mod tests {
     fn exports_the_symbols_of_every_variant() {
         let numbers = get_exported_symbols();
 
-        for number in [101000, 301001, 301004, 502002, 512000, 521003, 521004] {
+        for number in [
+            101000, 301001, 301004, 403000, 406000, 408000, 409000, 410000, 502002, 512000, 521003,
+            521004,
+        ] {
             assert!(numbers.contains(&number), "{number} is not exported");
         }
         // Lakes and buildings are exported without their bordered symbols

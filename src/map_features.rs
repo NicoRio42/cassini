@@ -70,17 +70,29 @@ pub enum AreaSymbol {
     Marsh308,
     AreaThatShallNotBeEntered520,
     Building521,
+    // Vegetation areas are only exported to OCAD, the PNG renderer draws
+    // the vegetation rasters instead
+    RoughOpenLand403,
+    VegetationSlowRunning406,
+    VegetationWalk408,
+    VegetationWalkGoodVisibility409,
+    VegetationFight410,
 }
 
 impl AreaSymbol {
     /// Every area symbol. Add new variants here too, the OCAD export checks
     /// its template against the symbols of this list.
-    pub const ALL: [AreaSymbol; 5] = [
+    pub const ALL: [AreaSymbol; 10] = [
         AreaSymbol::UncrossableBodyOfWater301,
         AreaSymbol::UncrossableBodyOfWaterArea301_1,
         AreaSymbol::Marsh308,
         AreaSymbol::AreaThatShallNotBeEntered520,
         AreaSymbol::Building521,
+        AreaSymbol::RoughOpenLand403,
+        AreaSymbol::VegetationSlowRunning406,
+        AreaSymbol::VegetationWalk408,
+        AreaSymbol::VegetationWalkGoodVisibility409,
+        AreaSymbol::VegetationFight410,
     ];
 }
 

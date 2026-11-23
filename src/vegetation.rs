@@ -21,6 +21,10 @@ use std::{
 };
 use tiff::decoder::{Decoder, DecodingResult};
 
+/// Blur radii, in 1 m cells, of the medium and low vegetation densities.
+pub(crate) const MEDIUM_DENSITY_BLUR_RADIUS: usize = 2;
+pub(crate) const LOW_DENSITY_BLUR_RADIUS: usize = 4;
+
 #[derive(clap::ValueEnum, Clone, Debug)]
 pub enum UndergrowthMode {
     None,
@@ -31,6 +35,15 @@ pub enum UndergrowthMode {
     Symbol409,
 }
 
+/// The buffered 1 m vegetation density rasters of a tile.
+pub struct VegetationRasters {
+    pub high: TifImage,
+    pub medium: TifImage,
+    pub low: TifImage,
+}
+
+/// Renders `vegetation.png` (and `undergrowth.png` in 409 mode) and returns
+/// the buffered rasters it read, for the OCAD export to vectorize.
 pub fn render_vegetation(
     tile: &Tile,
     neighbor_tiles: &[PathBuf],
@@ -38,7 +51,7 @@ pub fn render_vegetation(
     image_height: u32,
     config: &Config,
     undergrowth_mode: &UndergrowthMode,
-) -> Result<()> {
+) -> Result<VegetationRasters> {
     info!(
         "Tile min_x={} min_y={} max_x={} max_y={}. Rendering vegetation",
         tile.min_x, tile.min_y, tile.max_x, tile.max_y
@@ -197,15 +210,19 @@ pub fn render_vegetation(
         tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
     );
 
-    Ok(())
+    Ok(VegetationRasters {
+        high: high_vegetation,
+        medium: medium_vegetation,
+        low: low_vegetation,
+    })
 }
 
 #[derive(Clone, Copy)]
-struct RasterInterior {
-    x: usize,
-    y: usize,
-    width: usize,
-    height: usize,
+pub(crate) struct RasterInterior {
+    pub x: usize,
+    pub y: usize,
+    pub width: usize,
+    pub height: usize,
 }
 
 struct VegetationClassification {
@@ -216,7 +233,7 @@ struct VegetationClassification {
     undergrowth: Vec<u8>,
 }
 
-fn vegetation_interior(tile: &Tile, images: [&TifImage; 3]) -> Result<RasterInterior> {
+pub(crate) fn vegetation_interior(tile: &Tile, images: [&TifImage; 3]) -> Result<RasterInterior> {
     let width = tile
         .max_x
         .checked_sub(tile.min_x)
@@ -284,7 +301,7 @@ fn classify_vegetation(
     config: &Config,
     undergrowth_mode: &UndergrowthMode,
 ) -> VegetationClassification {
-    let medium_kernel = gaussian_kernel(2);
+    let medium_kernel = gaussian_kernel(MEDIUM_DENSITY_BLUR_RADIUS);
     let merge_low = matches!(undergrowth_mode, UndergrowthMode::Merge).then_some(&low.pixels[..]);
     let medium_density = separable_gaussian_filter(
         &medium.pixels,
@@ -303,7 +320,7 @@ fn classify_vegetation(
             None,
             low.width as usize,
             interior,
-            &gaussian_kernel(4),
+            &gaussian_kernel(LOW_DENSITY_BLUR_RADIUS),
         )
     });
 
@@ -349,7 +366,7 @@ fn classify_vegetation(
 }
 
 #[inline]
-fn minimum_3_by_3(pixels: &[u8], width: usize, x: usize, y: usize) -> u8 {
+pub(crate) fn minimum_3_by_3(pixels: &[u8], width: usize, x: usize, y: usize) -> u8 {
     let mut minimum = u8::MAX;
     for row in (y - 1)..=(y + 1) {
         for &pixel in &pixels[(row * width + x - 1)..=(row * width + x + 1)] {
@@ -359,7 +376,7 @@ fn minimum_3_by_3(pixels: &[u8], width: usize, x: usize, y: usize) -> u8 {
     minimum
 }
 
-fn gaussian_kernel(radius: usize) -> Vec<f32> {
+pub(crate) fn gaussian_kernel(radius: usize) -> Vec<f32> {
     let size = 2 * radius + 1;
     let sigma = radius as f32 / 2.0_f32; // avoid sigma = 0
     let two_sigma_sq = 2.0 * sigma * sigma;
@@ -380,7 +397,7 @@ fn gaussian_kernel(radius: usize) -> Vec<f32> {
     kernel
 }
 
-fn separable_gaussian_filter(
+pub(crate) fn separable_gaussian_filter(
     primary: &[u8],
     secondary: Option<&[u8]>,
     input_width: usize,
@@ -428,10 +445,10 @@ fn separable_gaussian_filter(
     output
 }
 
-struct TifImage {
-    pixels: Vec<u8>,
-    width: u32,
-    height: u32,
+pub struct TifImage {
+    pub pixels: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
 }
 
 fn get_image_data_from_tif(path: &Path) -> Result<TifImage> {
