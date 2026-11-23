@@ -95,6 +95,12 @@ pub fn render_map_with_osm_vector_shapes(
                     map_renderer.area_that_shall_not_be_entered_520(polygon)
                 }
                 AreaSymbol::Building521 => map_renderer.building_521(polygon),
+                // Vegetation is rasterized into vegetation.png by the vegetation renderer
+                AreaSymbol::RoughOpenLand403
+                | AreaSymbol::VegetationSlowRunning406
+                | AreaSymbol::VegetationWalk408
+                | AreaSymbol::VegetationWalkGoodVisibility409
+                | AreaSymbol::VegetationFight410 => map_renderer,
             },
         };
     }

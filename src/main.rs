@@ -23,6 +23,7 @@ mod render;
 mod tile;
 mod vectors;
 mod vegetation;
+mod vegetation_areas;
 mod world_file;
 
 use batch::batch;
@@ -35,7 +36,10 @@ use lidar::generate_dem_and_vegetation_density_tiff_images_from_laz_file;
 use log::info;
 use ocad_export::check_template;
 use ocd::OcdTemplate;
-use render::{generate_png_from_dem_vegetation_density_tiff_images_and_vector_file, RenderOptions};
+use render::{
+    generate_png_from_dem_vegetation_density_tiff_images_and_vector_file, OcadOptions,
+    RenderOptions,
+};
 use std::{
     fs::{create_dir_all, File},
     num::NonZeroUsize,
@@ -239,6 +243,24 @@ struct OcadArgs {
         help = "Path to an OCAD 12 file whose symbols to use for the OCAD export, instead of the built-in ISOM 2017-2 symbol set"
     )]
     ocad_template: Option<PathBuf>,
+
+    #[arg(
+        long,
+        requires = "ocad",
+        default_value_t = DEFAULT_OCAD_SIMPLIFY_TOLERANCE,
+        value_parser = parse_simplify_tolerance,
+        help = "Tolerance in meters for simplifying the vegetation areas of the OCAD export, 0 to keep every traced vertex"
+    )]
+    ocad_simplify: f64,
+}
+
+const DEFAULT_OCAD_SIMPLIFY_TOLERANCE: f64 = 0.5; // Update the docs when modifying
+
+fn parse_simplify_tolerance(value: &str) -> std::result::Result<f64, String> {
+    match value.parse::<f64>() {
+        Ok(tolerance) if tolerance.is_finite() && tolerance >= 0.0 => Ok(tolerance),
+        _ => Err("must be a finite, non-negative number of meters".to_owned()),
+    }
 }
 
 fn process_single_tile(
@@ -330,14 +352,17 @@ fn process_single_tile_render_step(
 
 /// Loads the OCAD template when the export is requested, before any
 /// processing, so that a template lacking symbols fails fast.
-fn load_ocad_template(args: &OcadArgs) -> Result<Option<Arc<OcdTemplate>>> {
+fn load_ocad_options(args: &OcadArgs) -> Result<Option<OcadOptions>> {
     if !args.ocad {
         return Ok(None);
     }
 
     let template = OcdTemplate::load(args.ocad_template.as_deref())?;
     check_template(&template)?;
-    Ok(Some(Arc::new(template)))
+    Ok(Some(OcadOptions {
+        template: Arc::new(template),
+        simplify_tolerance: args.ocad_simplify,
+    }))
 }
 
 fn download_osm_file_if_needed(tile: &Tile) -> Result<()> {
@@ -426,7 +451,7 @@ fn run() -> Result<()> {
                     skip_520,
                     undergrowth_mode: undergrowth,
                     shapefiles_dir: shapefiles.map(PathBuf::from),
-                    ocad_template: load_ocad_template(&ocad)?,
+                    ocad: load_ocad_options(&ocad)?,
                 };
 
                 let output_dir = maybe_output_dir.unwrap_or("tile".to_owned());
@@ -474,7 +499,7 @@ fn run() -> Result<()> {
                     skip_520,
                     undergrowth_mode: undergrowth,
                     shapefiles_dir: shapefiles.map(PathBuf::from),
-                    ocad_template: load_ocad_template(&ocad)?,
+                    ocad: load_ocad_options(&ocad)?,
                 };
 
                 let output_dir = maybe_output_dir.unwrap_or("tile".to_owned());
@@ -526,7 +551,7 @@ fn run() -> Result<()> {
                     skip_520,
                     undergrowth_mode: undergrowth,
                     shapefiles_dir: None,
-                    ocad_template: load_ocad_template(&ocad)?,
+                    ocad: load_ocad_options(&ocad)?,
                 };
 
                 let input_dir = maybe_input_dir.unwrap_or("in".to_owned());
@@ -585,7 +610,7 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{Args, Commands};
+    use super::{Args, Commands, DEFAULT_OCAD_SIMPLIFY_TOLERANCE};
     use clap::Parser;
     use std::path::PathBuf;
 
@@ -637,6 +662,34 @@ mod tests {
             ])
             .is_err());
         }
+    }
+
+    fn parsed_ocad_simplify(options: &[&str]) -> Result<f64, clap::Error> {
+        let args = Args::try_parse_from(["cassini", "render", "input"].iter().chain(options))?;
+
+        match args.command.unwrap() {
+            Commands::Render { ocad, .. } => Ok(ocad.ocad_simplify),
+            _ => panic!("unexpected command"),
+        }
+    }
+
+    #[test]
+    fn ocad_simplify_option_defaults_and_validates() {
+        assert_eq!(
+            parsed_ocad_simplify(&["--ocad"]).unwrap(),
+            DEFAULT_OCAD_SIMPLIFY_TOLERANCE
+        );
+        assert_eq!(
+            parsed_ocad_simplify(&["--ocad", "--ocad-simplify", "1.5"]).unwrap(),
+            1.5
+        );
+        assert_eq!(
+            parsed_ocad_simplify(&["--ocad", "--ocad-simplify", "0"]).unwrap(),
+            0.0
+        );
+        assert!(parsed_ocad_simplify(&["--ocad-simplify", "1"]).is_err());
+        assert!(parsed_ocad_simplify(&["--ocad", "--ocad-simplify=-1"]).is_err());
+        assert!(parsed_ocad_simplify(&["--ocad", "--ocad-simplify", "NaN"]).is_err());
     }
 
     #[test]

@@ -371,7 +371,7 @@ mod tests {
                 skip_520: false,
                 undergrowth_mode: UndergrowthMode::None,
                 shapefiles_dir: None,
-                ocad_template: None,
+                ocad: None,
             },
             Config::default(),
         )
