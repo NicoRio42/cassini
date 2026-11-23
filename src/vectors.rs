@@ -2,6 +2,7 @@ use crate::{
     coastlines::get_polygon_with_holes_from_coastlines,
     config::Config,
     constants::{COASTLINE_EDGE_BUFFER, INCH},
+    error::{Result, ResultContext},
     helpers::does_polyline_intersect_tile,
     map_renderer::MapRenderer,
     tile::Tile,
@@ -11,20 +12,24 @@ use shapefile::{
     dbase::{FieldValue, Record},
     read_as, Polygon, Polyline,
 };
-use std::{collections::HashMap, path::PathBuf, time::Instant};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    time::Instant,
+};
 
 pub fn render_map_with_osm_vector_shapes(
     tile: &Tile,
     image_width: u32,
     image_height: u32,
     config: &Config,
-    vegetation_path: &PathBuf,
-    undergrowth_path: &PathBuf,
-    contours_path: &PathBuf,
-    cliffs_path: &PathBuf,
+    vegetation_path: &Path,
+    undergrowth_path: &Path,
+    contours_path: &Path,
+    cliffs_path: &Path,
     skip_520: bool,
     shapes_path: Option<PathBuf>,
-) {
+) -> Result<()> {
     let start = Instant::now();
     let scale_factor = config.dpi_resolution / INCH;
 
@@ -39,7 +44,7 @@ pub fn render_map_with_osm_vector_shapes(
         undergrowth_path,
         contours_path,
         cliffs_path,
-    );
+    )?;
 
     if let Some(shapes_path) = shapes_path {
         info!(
@@ -48,8 +53,10 @@ pub fn render_map_with_osm_vector_shapes(
         );
 
         let multipolygons_path = shapes_path.join("multipolygons.shp");
-        let multipolygons = read_as::<_, Polygon, Record>(&multipolygons_path)
-            .expect("Could not open multipolygons shapefile");
+        let multipolygons = read_as::<_, Polygon, Record>(&multipolygons_path).context(format!(
+            "could not read multipolygon shapefile `{}`",
+            multipolygons_path.display()
+        ))?;
 
         let mut islands: Vec<Vec<(f32, f32)>> = vec![];
 
@@ -111,7 +118,10 @@ pub fn render_map_with_osm_vector_shapes(
         }
 
         let lines_path = shapes_path.join("lines.shp");
-        let lines = read_as::<_, Polyline, Record>(lines_path).expect("Could not open lines shapefile");
+        let lines = read_as::<_, Polyline, Record>(&lines_path).context(format!(
+            "could not read line shapefile `{}`",
+            lines_path.display()
+        ))?;
 
         let mut coastlines: Vec<Vec<(f32, f32)>> = vec![];
 
@@ -122,9 +132,16 @@ pub fn render_map_with_osm_vector_shapes(
                 None => "",
             };
 
+            let other_tags = get_and_parse_other_tags(&record);
+            let line_is_tunnel = is_tunnel(&record, &other_tags);
+
             // 502 wide road
             if highway == "motorway" || highway == "motorway_link" {
-                map_renderer = map_renderer.double_track_wide_road_502(&line);
+                map_renderer = if line_is_tunnel {
+                    map_renderer.tunnel_double_track_wide_road_502(&line)
+                } else {
+                    map_renderer.double_track_wide_road_502(&line)
+                };
                 continue;
             }
 
@@ -133,7 +150,11 @@ pub fn render_map_with_osm_vector_shapes(
                 || highway == "primary"
                 || highway == "primary_link"
             {
-                map_renderer = map_renderer.xxl_wide_road_502(&line);
+                map_renderer = if line_is_tunnel {
+                    map_renderer.tunnel_xxl_wide_road_502(&line)
+                } else {
+                    map_renderer.xxl_wide_road_502(&line)
+                };
                 continue;
             }
 
@@ -142,7 +163,11 @@ pub fn render_map_with_osm_vector_shapes(
                 || highway == "tertiary"
                 || highway == "tertiary_link"
             {
-                map_renderer = map_renderer.xl_wide_road_502(&line);
+                map_renderer = if line_is_tunnel {
+                    map_renderer.tunnel_xl_wide_road_502(&line)
+                } else {
+                    map_renderer.xl_wide_road_502(&line)
+                };
                 continue;
             }
 
@@ -156,13 +181,21 @@ pub fn render_map_with_osm_vector_shapes(
                 || highway == "road"
                 || highway == "busway"
             {
-                map_renderer = map_renderer.wide_road_502(&line);
+                map_renderer = if line_is_tunnel {
+                    map_renderer.tunnel_wide_road_502(&line)
+                } else {
+                    map_renderer.wide_road_502(&line)
+                };
                 continue;
             }
 
             // 503 road
             if highway == "track" || highway == "cycleway" {
-                map_renderer = map_renderer.road_503(&line);
+                map_renderer = if line_is_tunnel {
+                    map_renderer.tunnel_road_503(&line)
+                } else {
+                    map_renderer.road_503(&line)
+                };
                 continue;
             }
 
@@ -173,7 +206,11 @@ pub fn render_map_with_osm_vector_shapes(
                 || highway == "path"
                 || highway == "footpath"
             {
-                map_renderer = map_renderer.footpath_505(&line);
+                map_renderer = if line_is_tunnel {
+                    map_renderer.tunnel_footpath_505(&line)
+                } else {
+                    map_renderer.footpath_505(&line)
+                };
                 continue;
             }
 
@@ -183,7 +220,8 @@ pub fn render_map_with_osm_vector_shapes(
                 None => "",
             };
 
-            let should_draw_water_course = waterway == "stream" || waterway == "drain" || waterway == "ditch";
+            let should_draw_water_course =
+                waterway == "stream" || waterway == "drain" || waterway == "ditch";
 
             // 304 crossable watercourse
             if should_draw_water_course {
@@ -219,8 +257,6 @@ pub fn render_map_with_osm_vector_shapes(
                 map_renderer = map_renderer.railway_509(&line);
                 continue;
             }
-
-            let other_tags = get_and_parse_other_tags(&record);
 
             let power = match other_tags.get("power") {
                 Some(p) => p,
@@ -294,25 +330,47 @@ pub fn render_map_with_osm_vector_shapes(
         if are_some_islands_inside_tile || are_some_coastlines_inside_tile {
             let (coastlines_polygons, coastlines_edges) = get_polygon_with_holes_from_coastlines(
                 coastlines, islands, tile.min_x, tile.min_y, tile.max_x, tile.max_y,
-            );
+            )?;
 
             for coastline_polygon in coastlines_polygons {
-                map_renderer = map_renderer.uncrossable_body_of_water_area_301_1(&coastline_polygon);
+                map_renderer =
+                    map_renderer.uncrossable_body_of_water_area_301_1(&coastline_polygon);
             }
 
             for coastlines_edge in coastlines_edges {
-                map_renderer = map_renderer.uncrossable_body_of_water_bank_line_301_4(&coastlines_edge);
+                map_renderer =
+                    map_renderer.uncrossable_body_of_water_bank_line_301_4(&coastlines_edge);
             }
         }
     }
 
-    map_renderer.save_as(tile.render_dir_path.join("full-map.png"));
+    map_renderer.save_as(tile.render_dir_path.join("full-map.png"))?;
     let duration = start.elapsed();
 
     info!(
         "Tile min_x={} min_y={} max_x={} max_y={}. Vectors rendered in {:.1?}",
         tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
     );
+
+    Ok(())
+}
+
+fn is_tunnel(record: &Record, other_tags: &HashMap<String, String>) -> bool {
+    let tunnel = match record.get("tunnel") {
+        Some(FieldValue::Character(Some(x))) => x.as_str(),
+        Some(_) => "",
+        None => "",
+    };
+    let tunnel = if tunnel == "" {
+        match other_tags.get("tunnel") {
+            Some(x) => x.as_str(),
+            None => "",
+        }
+    } else {
+        tunnel
+    };
+
+    return tunnel != "" && tunnel != "no" && tunnel != "false" && tunnel != "0";
 }
 
 fn get_and_parse_other_tags(record: &Record) -> HashMap<String, String> {

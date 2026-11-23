@@ -45,3 +45,9 @@ On Ubuntu, install these libs:
 ```sh
 sudo apt install libfontconfig1-dev libfreetype6-dev
 ```
+
+## Install with cargo on local machine
+
+```sh
+cargo install --path . --force
+```

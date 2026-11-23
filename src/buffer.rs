@@ -1,69 +1,58 @@
-use log::error;
-
-use crate::tile::Tile;
-use std::{
-    path::PathBuf,
-    process::{Command, ExitStatus},
+use crate::{
+    error::{Result, ResultContext, Stage, TileId},
+    process::{checked_output, ensure_file},
+    tile::Tile,
 };
+use std::{path::PathBuf, process::Command};
 
 pub fn create_tif_with_buffer(
     tile: &Tile,
-    neighbor_tiles: &Vec<PathBuf>,
+    neighbor_tiles: &[PathBuf],
     buffer: i64,
     tif_filename_without_extension: &str,
     resolution: f32,
-) {
-    let vrt_with_buffer_path = tile
-        .render_dir_path
-        .join(format!("{}-with-buffer.vrt", tif_filename_without_extension));
+    output_type: Option<&str>,
+) -> Result<()> {
+    let vrt_with_buffer_path = tile.render_dir_path.join(format!(
+        "{}_with_buffer.vrt",
+        tif_filename_without_extension
+    ));
 
-    let raster_with_buffer_path = tile
-        .render_dir_path
-        .join(format!("{}-with-buffer.tif", tif_filename_without_extension));
+    let raster_with_buffer_path = tile.render_dir_path.join(format!(
+        "{}_with_buffer.tif",
+        tif_filename_without_extension
+    ));
 
     let tile_raster_path = tile
         .lidar_dir_path
         .join(format!("{}.tif", tif_filename_without_extension));
 
-    let mut rasters_paths: Vec<String> = vec![tile_raster_path
-        .to_str()
-        .expect("Failed to convert path to string")
-        .to_string()];
+    let tile_id = Some(TileId::from(tile));
 
-    for neighbor_tile in neighbor_tiles {
-        let path = neighbor_tile.join(format!("{}.tif", tif_filename_without_extension));
+    let translate_input_path = if neighbor_tiles.is_empty() {
+        tile_raster_path
+    } else {
+        let mut rasters_paths = vec![tile_raster_path];
+        rasters_paths.extend(neighbor_tiles.iter().map(|neighbor_tile| {
+            neighbor_tile.join(format!("{}.tif", tif_filename_without_extension))
+        }));
 
-        if let Some(path_str) = path.to_str() {
-            rasters_paths.push(path_str.to_string());
-        } else {
-            error!(
-                "Tile min_x={} min_y={} max_x={} max_y={}. Failed to convert path to string for {:?}",
-                tile.min_x, tile.min_y, tile.max_x, tile.max_y, neighbor_tile
-            );
-        }
-    }
+        // A VRT is only needed to mosaic the tile with its neighbors.
+        checked_output(
+            Command::new("gdalbuildvrt")
+                .arg(&vrt_with_buffer_path)
+                .args(&rasters_paths)
+                .arg("-q"),
+            Stage::Buffer,
+            tile_id,
+        )?;
+        ensure_file(&vrt_with_buffer_path)?;
+        vrt_with_buffer_path.clone()
+    };
 
-    // First creating a GDAL Virtual Dataset
-    let gdalbuildvrt_output = Command::new("gdalbuildvrt")
-        .arg(&vrt_with_buffer_path.to_str().unwrap())
-        .args(&rasters_paths)
-        .arg("--quiet")
-        .output()
-        .expect("failed to execute gdalbuildvrt command");
-
-    if !ExitStatus::success(&gdalbuildvrt_output.status) {
-        error!(
-            "Tile min_x={} min_y={} max_x={} max_y={}. Gdalbuildvrt command failed {:?}",
-            tile.min_x,
-            tile.min_y,
-            tile.max_x,
-            tile.max_y,
-            String::from_utf8(gdalbuildvrt_output.stderr).unwrap()
-        );
-    }
-
-    // Then outpouting croped tif with buffer
-    let gdal_translate_output = Command::new("gdal_translate")
+    // Output the cropped TIFF with a buffer.
+    let mut translate_command = Command::new("gdal_translate");
+    translate_command
         .args([
             "-projwin",
             &(tile.min_x - buffer).to_string(),
@@ -72,24 +61,25 @@ pub fn create_tif_with_buffer(
             &(tile.min_y - buffer).to_string(),
         ])
         .args(["-of", "GTiff"])
-        .args(["-tr", &resolution.to_string(), &resolution.to_string()])
-        .arg(&vrt_with_buffer_path.to_str().unwrap())
-        .arg(&raster_with_buffer_path.to_str().unwrap())
-        .arg("--quiet")
-        .output()
-        .expect("failed to execute gdal_translate command");
+        .args(["-tr", &resolution.to_string(), &resolution.to_string()]);
 
-    if !ExitStatus::success(&gdal_translate_output.status) {
-        error!(
-            "Tile min_x={} min_y={} max_x={} max_y={}. Gdal_translate command failed {:?}",
-            tile.min_x,
-            tile.min_y,
-            tile.max_x,
-            tile.max_y,
-            String::from_utf8(gdal_translate_output.stderr).unwrap()
-        );
+    if let Some(output_type) = output_type {
+        translate_command.args(["-ot", output_type]);
     }
 
-    // Finally removing the vrt file
-    std::fs::remove_file(&vrt_with_buffer_path).expect("Could not remove vrt file");
+    translate_command
+        .arg(&translate_input_path)
+        .arg(&raster_with_buffer_path)
+        .arg("-q");
+
+    checked_output(&mut translate_command, Stage::Buffer, tile_id)?;
+    ensure_file(&raster_with_buffer_path)?;
+
+    if !neighbor_tiles.is_empty() {
+        std::fs::remove_file(&vrt_with_buffer_path).context(format!(
+            "could not remove temporary VRT `{}`",
+            vrt_with_buffer_path.display()
+        ))?;
+    }
+    Ok(())
 }

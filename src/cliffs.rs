@@ -6,11 +6,19 @@ use tiff::decoder::{Decoder, DecodingResult};
 
 use crate::{
     config::Config,
-    constants::{BLACK, BUFFER, CLIFF_THICKNESS_1, CLIFF_THICKNESS_2, DEM_BLOCK_SIZE, INCH, TRANSPARENT},
+    constants::{
+        BLACK, BUFFER, CLIFF_THICKNESS_1, CLIFF_THICKNESS_2, DEM_BLOCK_SIZE, INCH, TRANSPARENT,
+    },
+    error::{CassiniError, Result, ResultContext},
     tile::Tile,
 };
 
-pub fn render_cliffs(tile: &Tile, image_width: u32, image_height: u32, config: &Config) {
+pub fn render_cliffs(
+    tile: &Tile,
+    image_width: u32,
+    image_height: u32,
+    config: &Config,
+) -> Result<()> {
     info!(
         "Tile min_x={} min_y={} max_x={} max_y={}. Rendering cliffs",
         tile.min_x, tile.min_y, tile.max_x, tile.max_y
@@ -21,28 +29,45 @@ pub fn render_cliffs(tile: &Tile, image_width: u32, image_height: u32, config: &
     let dem_block_size_pixel = DEM_BLOCK_SIZE * config.dpi_resolution / INCH;
 
     let slopes_path = tile.render_dir_path.join("slopes.tif");
-    let slopes_tif_file = File::open(slopes_path).expect("Cannot find slopes tif image!");
+    let slopes_tif_file =
+        File::open(&slopes_path).context(format!("could not open `{}`", slopes_path.display()))?;
 
-    let mut slopes_img_decoder = Decoder::new(slopes_tif_file).expect("Cannot create decoder");
+    let mut slopes_img_decoder = Decoder::new(slopes_tif_file).context(format!(
+        "could not create decoder for `{}`",
+        slopes_path.display()
+    ))?;
     slopes_img_decoder = slopes_img_decoder.with_limits(tiff::decoder::Limits::unlimited());
 
-    let (slopes_width, _) = slopes_img_decoder.dimensions().unwrap();
+    let (slopes_width, _) = slopes_img_decoder.dimensions().context(format!(
+        "could not read dimensions from `{}`",
+        slopes_path.display()
+    ))?;
     let mut cliffs_layer_canvas = RgbaImage::from_pixel(image_width, image_height, TRANSPARENT);
 
-    let DecodingResult::F32(image_data) = slopes_img_decoder.read_image().unwrap() else {
-        panic!("Cannot read band data")
+    let decoded = slopes_img_decoder
+        .read_image()
+        .context(format!("could not decode `{}`", slopes_path.display()))?;
+    let DecodingResult::F32(image_data) = decoded else {
+        return Err(CassiniError::InvalidArtifact {
+            path: slopes_path,
+            message: "expected a 32-bit floating-point TIFF band".to_owned(),
+        });
     };
 
     for index in 0..image_data.len() {
         let x = index % slopes_width as usize;
         let y = index / slopes_width as usize;
 
-        let x_pixel =
-            ((x as i64 - (BUFFER as f32 / DEM_BLOCK_SIZE) as i64) as f32 * dem_block_size_pixel) as i32;
-        let y_pixel =
-            ((y as i64 - (BUFFER as f32 / DEM_BLOCK_SIZE) as i64) as f32 * dem_block_size_pixel) as i32;
+        let x_pixel = ((x as i64 - (BUFFER as f32 / DEM_BLOCK_SIZE) as i64) as f32
+            * dem_block_size_pixel) as i32;
+        let y_pixel = ((y as i64 - (BUFFER as f32 / DEM_BLOCK_SIZE) as i64) as f32
+            * dem_block_size_pixel) as i32;
 
-        if x_pixel < 0 || x_pixel > image_width as i32 || y_pixel < 0 || y_pixel > image_height as i32 {
+        if x_pixel < 0
+            || x_pixel > image_width as i32
+            || y_pixel < 0
+            || y_pixel > image_height as i32
+        {
             continue;
         }
 
@@ -73,8 +98,8 @@ pub fn render_cliffs(tile: &Tile, image_width: u32, image_height: u32, config: &
     let cliffs_path = tile.render_dir_path.join("cliffs.png");
 
     cliffs_layer_canvas
-        .save(cliffs_path)
-        .expect("could not save cliffs png");
+        .save(&cliffs_path)
+        .context(format!("could not save `{}`", cliffs_path.display()))?;
 
     let duration = start.elapsed();
 
@@ -82,4 +107,6 @@ pub fn render_cliffs(tile: &Tile, image_width: u32, image_height: u32, config: &
         "Tile min_x={} min_y={} max_x={} max_y={}. Cliffs rendering done in {:.1?}",
         tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
     );
+
+    Ok(())
 }

@@ -271,6 +271,7 @@ version = "0.16.0"
 dependencies = [
  "clap",
  "env_logger",
+ "httpdate",
  "image",
  "imageproc",
  "las",
@@ -280,6 +281,7 @@ dependencies = [
  "serde_json",
  "shapefile",
  "skia-safe",
+ "thiserror",
  "tiff",
 ]
 

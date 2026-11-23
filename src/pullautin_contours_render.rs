@@ -9,12 +9,15 @@ use std::io::{BufReader, Write};
 use std::time::Instant;
 
 struct FormLineRecord {
-    id: i32,
+    id: f64,
     elev: f64,
 }
 
 impl WritableRecord for FormLineRecord {
-    fn write_using<'a, W>(&self, field_writer: &mut FieldWriter<'a, W>) -> Result<(), FieldIOError>
+    fn write_using<'a, W>(
+        &self,
+        field_writer: &mut FieldWriter<'a, W>,
+    ) -> std::result::Result<(), FieldIOError>
     where
         W: Write,
     {
@@ -28,6 +31,7 @@ use crate::config::Config;
 use crate::constants::{BUFFER, INCH, PURPLE};
 use crate::{
     constants::{BROWN, TRANSPARENT},
+    error::{Result, ResultContext},
     tile::Tile,
 };
 
@@ -38,7 +42,7 @@ pub fn pullautin_cull_formlines_render_contours(
     config: &Config,
     avg_alt: &Vec<Vec<f64>>,
     smoothed_contours: Vec<(Vec<f64>, Vec<f64>, f64)>,
-) {
+) -> Result<()> {
     info!(
         "Tile min_x={} min_y={} max_x={} max_y={}. Culling formlines and rendering contours",
         tile.min_x, tile.min_y, tile.max_x, tile.max_y
@@ -86,8 +90,8 @@ pub fn pullautin_cull_formlines_render_contours(
 
             let mut temp = (xyz_i_m4_j - xyz_i_j).abs() / 4.0;
             let temp2 = (xyz_i_j - xyz_i_4_j).abs() / 4.0;
-            let det2 =
-                (xyz_i_j - 0.5 * (xyz_i_m4_j + xyz_i_4_j)).abs() - 0.05 * (xyz_i_m4_j - xyz_i_4_j).abs();
+            let det2 = (xyz_i_j - 0.5 * (xyz_i_m4_j + xyz_i_4_j)).abs()
+                - 0.05 * (xyz_i_m4_j - xyz_i_4_j).abs();
             let mut porr = (((avg_alt[i - 6][j] - avg_alt[i + 6][j]) / 12.0).abs()
                 - ((avg_alt[i - 3][j] - avg_alt[i + 3][j]) / 6.0).abs())
             .abs();
@@ -104,8 +108,8 @@ pub fn pullautin_cull_formlines_render_contours(
 
             let mut temp = (xyz_i_j_m4 - xyz_i_j).abs() / 4.0;
             let temp2 = (xyz_i_j - xyz_i_j_m4).abs() / 4.0;
-            let det2 =
-                (xyz_i_j - 0.5 * (xyz_i_j_m4 + xyz_i_j_4)).abs() - 0.05 * (xyz_i_j_m4 - xyz_i_j_4).abs();
+            let det2 = (xyz_i_j - 0.5 * (xyz_i_j_m4 + xyz_i_j_4)).abs()
+                - 0.05 * (xyz_i_j_m4 - xyz_i_j_4).abs();
             let porr2 = (((avg_alt[i][j - 6] - avg_alt[i][j + 6]) / 12.0).abs()
                 - ((avg_alt[i][j - 3] - avg_alt[i][j + 3]) / 6.0).abs())
             .abs();
@@ -178,24 +182,38 @@ pub fn pullautin_cull_formlines_render_contours(
     }
 
     let mut id: i32 = 0;
-    let contours_polylines_path = tile.render_dir_path.join("contours-raw").join("contours-raw.shp");
+    let contours_polylines_path = tile
+        .render_dir_path
+        .join("contours-raw")
+        .join("contours-raw.shp");
 
     let contours_polylines_reader: shapefile::Reader<BufReader<File>, BufReader<File>> =
-        Reader::from_path(&contours_polylines_path).unwrap();
+        Reader::from_path(&contours_polylines_path).context(format!(
+            "could not open contour shapefile `{}`",
+            contours_polylines_path.display()
+        ))?;
 
     let table_info = contours_polylines_reader.into_table_info();
 
     let formlines_dir = tile.render_dir_path.join("formlines");
-    create_dir_all(&formlines_dir).expect("Could not create formlines dir");
+    create_dir_all(&formlines_dir).context(format!(
+        "could not create formline directory `{}`",
+        formlines_dir.display()
+    ))?;
 
-    let mut writer = Writer::from_path_with_info(formlines_dir.join("formlines.shp"), table_info).unwrap();
+    let formlines_path = formlines_dir.join("formlines.shp");
+    let mut writer = Writer::from_path_with_info(&formlines_path, table_info).context(format!(
+        "could not create formline shapefile `{}`",
+        formlines_path.display()
+    ))?;
 
     for smoothed_contour in smoothed_contours {
-        let color = if is_contour_depression(&smoothed_contour, xstart, ystart, avg_alt, dem_cell_size) {
-            PURPLE
-        } else {
-            BROWN
-        };
+        let color =
+            if is_contour_depression(&smoothed_contour, xstart, ystart, avg_alt, dem_cell_size) {
+                PURPLE
+            } else {
+                BROWN
+            };
 
         let (x_array, y_array, elevation) = smoothed_contour;
         let mut x = Vec::<f64>::new();
@@ -224,8 +242,10 @@ pub fn pullautin_cull_formlines_render_contours(
             for i in 0..x.len() {
                 help[i] = false;
                 help2[i] = true;
-                let xx = (((x[i] / 600.0 * 254.0 * scalefactor + x0) - xstart) / dem_cell_size).floor();
-                let yy = (((-y[i] / 600.0 * 254.0 * scalefactor + y0) - ystart) / dem_cell_size).floor();
+                let xx =
+                    (((x[i] / 600.0 * 254.0 * scalefactor + x0) - xstart) / dem_cell_size).floor();
+                let yy =
+                    (((-y[i] / 600.0 * 254.0 * scalefactor + y0) - ystart) / dem_cell_size).floor();
 
                 if curvew != 1.5
                     || &steepness[xx as usize][yy as usize] < &formlinesteepness
@@ -247,12 +267,17 @@ pub fn pullautin_cull_formlines_render_contours(
                     help2[i] = false;
                 }
             }
-            for i in 0..6 {
-                help2[i] = help2[6]
+
+            // Added
+            if x.len() > 6 {
+                for i in 0..6 {
+                    help2[i] = help2[6]
+                }
+                for i in (x.len() - 6)..x.len() {
+                    help2[i] = help2[x.len() - 7]
+                }
             }
-            for i in (x.len() - 6)..x.len() {
-                help2[i] = help2[x.len() - 7]
-            }
+
             let mut on = 0.0;
             for i in 0..x.len() {
                 if help2[i] {
@@ -374,7 +399,9 @@ pub fn pullautin_cull_formlines_render_contours(
                             }
                         }
                         if !toonearend
-                            && ((x[i - 5] - x[i + 5]).powi(2) + (y[i - 5] - y[i + 5]).powi(2)).sqrt() * 1.138
+                            && ((x[i - 5] - x[i + 5]).powi(2) + (y[i - 5] - y[i + 5]).powi(2))
+                                .sqrt()
+                                * 1.138
                                 > sum
                         {
                             linedist = 0.0;
@@ -399,7 +426,8 @@ pub fn pullautin_cull_formlines_render_contours(
                                             - buffer_in_pixels,
                                         image_height as f32
                                             + buffer_in_pixels
-                                            + ((-y[i - 1] * gap + (step + gap) * y[i]) / step + m) as f32,
+                                            + ((-y[i - 1] * gap + (step + gap) * y[i]) / step + m)
+                                                as f32,
                                     );
 
                                     let end = (
@@ -457,21 +485,33 @@ pub fn pullautin_cull_formlines_render_contours(
                     }
                 }
             } else if formlinestart {
-                write_formline_shape_to_shapefile(&current_formline, id, elevation, &mut writer);
+                write_formline_shape_to_shapefile(
+                    &current_formline,
+                    id,
+                    elevation,
+                    &mut writer,
+                    &formlines_path,
+                )?;
                 id += 1;
                 formlinestart = false;
             }
         }
 
         if formlinestart {
-            write_formline_shape_to_shapefile(&current_formline, id, elevation, &mut writer);
+            write_formline_shape_to_shapefile(
+                &current_formline,
+                id,
+                elevation,
+                &mut writer,
+                &formlines_path,
+            )?;
             id += 1;
         }
     }
 
     // TODO: img.save takes 8 seconds, maybe mutualize with other images saving
     img.save(tile.render_dir_path.join("contours.png"))
-        .expect("could not save output png");
+        .context("could not save rendered contours")?;
 
     let duration = start.elapsed();
 
@@ -479,6 +519,8 @@ pub fn pullautin_cull_formlines_render_contours(
         "Tile min_x={} min_y={} max_x={} max_y={}. Formlines and contours generated in {:.1?}",
         tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
     );
+
+    Ok(())
 }
 
 fn write_formline_shape_to_shapefile(
@@ -486,9 +528,10 @@ fn write_formline_shape_to_shapefile(
     id: i32,
     elevation: f64,
     writer: &mut shapefile::Writer<std::io::BufWriter<File>>,
-) {
+    output_path: &std::path::Path,
+) -> Result<()> {
     if current_formline.len() < 2 {
-        return;
+        return Ok(());
     }
 
     let mut points: Vec<Point> = vec![];
@@ -497,10 +540,21 @@ fn write_formline_shape_to_shapefile(
         points.push(Point { x: *x, y: *y });
     }
 
-    let record = FormLineRecord { id, elev: elevation };
+    let record = FormLineRecord {
+        // dBase Numeric fields are serialized from f64, even when they have
+        // zero decimal places and represent an integer identifier.
+        id: f64::from(id),
+        elev: elevation,
+    };
 
     let smoothed_polyline = GenericPolyline::new(points);
-    let _ = writer.write_shape_and_record(&smoothed_polyline, &record);
+    writer
+        .write_shape_and_record(&smoothed_polyline, &record)
+        .context(format!(
+            "could not write formline to `{}`",
+            output_path.display()
+        ))?;
+    Ok(())
 }
 
 fn is_contour_depression(
@@ -520,59 +574,18 @@ fn is_contour_depression(
         return false;
     }
 
-    let mut contour_min_x = f64::MAX;
-    let mut contour_max_x = f64::MIN;
-    let mut contour_min_y = f64::MAX;
-    let mut contour_max_y = f64::MIN;
-
-    for i in 0..x_array.len() {
-        let x = x_array[i];
-        let y = y_array[i];
-
-        if x < contour_min_x {
-            contour_min_x = x;
-        }
-        if x > contour_max_x {
-            contour_max_x = x;
-        }
-        if y < contour_min_y {
-            contour_min_y = y;
-        }
-        if y > contour_max_y {
-            contour_max_y = y;
-        }
-    }
-
-    // Sample a point inside the closed contour using a grid search that maximizes
-    // distance to edges (approximation of the largest inscribed circle).
-    let mut best_point: Option<(f64, f64)> = None;
-    let mut best_dist = -1.0_f64;
-
-    let mut x = contour_min_x;
-    while x <= contour_max_x {
-        let mut y = contour_min_y;
-
-        while y <= contour_max_y {
-            if point_in_polygon(x, y, x_array, y_array) {
-                let dist = min_distance_to_edges(x, y, x_array, y_array);
-
-                if dist > best_dist {
-                    best_dist = dist;
-                    best_point = Some((x, y));
-                }
-            }
-
-            y += dem_cell_size;
-        }
-        x += dem_cell_size;
-    }
-
-    let Some((px, py)) = best_point else {
+    let Some((px, py)) = find_interior_point(x_array, y_array) else {
         return false;
     };
 
-    let inside_elevation =
-        get_point_elevation_from_dem_bilinear_interpolation(px, py, xstart, ystart, dem_cell_size, avg_alt);
+    let inside_elevation = get_point_elevation_from_dem_bilinear_interpolation(
+        px,
+        py,
+        xstart,
+        ystart,
+        dem_cell_size,
+        avg_alt,
+    );
 
     if inside_elevation.is_nan() {
         return false;
@@ -581,7 +594,93 @@ fn is_contour_depression(
     inside_elevation < *elevation
 }
 
-fn point_in_polygon(x: f64, y: f64, x_array: &Vec<f64>, y_array: &Vec<f64>) -> bool {
+/// Finds a point well inside a contour using a fixed number of horizontal and
+/// vertical scan lines. This makes the work depend on contour complexity rather
+/// than contour area. The previous 2 m grid search tested every grid point
+/// against every edge, which could take effectively forever on large contours.
+fn find_interior_point(x_array: &[f64], y_array: &[f64]) -> Option<(f64, f64)> {
+    const SCAN_LINE_COUNT: usize = 9;
+
+    if x_array.len() < 4 || x_array.len() != y_array.len() {
+        return None;
+    }
+
+    let contour_min_x = x_array.iter().copied().fold(f64::INFINITY, f64::min);
+    let contour_max_x = x_array.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let contour_min_y = y_array.iter().copied().fold(f64::INFINITY, f64::min);
+    let contour_max_y = y_array.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+
+    if !contour_min_x.is_finite()
+        || !contour_max_x.is_finite()
+        || !contour_min_y.is_finite()
+        || !contour_max_y.is_finite()
+    {
+        return None;
+    }
+
+    let mut candidates = Vec::with_capacity(SCAN_LINE_COUNT * 2);
+
+    for index in 1..=SCAN_LINE_COUNT {
+        let fraction = index as f64 / (SCAN_LINE_COUNT + 1) as f64;
+        let scan_y = contour_min_y + fraction * (contour_max_y - contour_min_y);
+
+        if let Some((start_x, end_x)) = widest_scan_line_interval(scan_y, x_array, y_array) {
+            candidates.push(((start_x + end_x) / 2.0, scan_y));
+        }
+
+        let scan_x = contour_min_x + fraction * (contour_max_x - contour_min_x);
+
+        if let Some((start_y, end_y)) = widest_scan_line_interval(scan_x, y_array, x_array) {
+            candidates.push((scan_x, (start_y + end_y) / 2.0));
+        }
+    }
+
+    candidates
+        .into_iter()
+        .filter(|(x, y)| point_in_polygon(*x, *y, x_array, y_array))
+        .max_by(|(x1, y1), (x2, y2)| {
+            min_distance_to_edges(*x1, *y1, x_array, y_array)
+                .total_cmp(&min_distance_to_edges(*x2, *y2, x_array, y_array))
+        })
+}
+
+/// Returns the widest interior interval along a scan line. `scan_coordinates`
+/// are perpendicular to the scan line and `interval_coordinates` run along it.
+fn widest_scan_line_interval(
+    scan_position: f64,
+    interval_coordinates: &[f64],
+    scan_coordinates: &[f64],
+) -> Option<(f64, f64)> {
+    let mut intersections = Vec::new();
+    let mut previous = interval_coordinates.len() - 1;
+
+    for current in 0..interval_coordinates.len() {
+        let current_scan = scan_coordinates[current];
+        let previous_scan = scan_coordinates[previous];
+
+        if (current_scan > scan_position) != (previous_scan > scan_position) {
+            let current_interval = interval_coordinates[current];
+            let previous_interval = interval_coordinates[previous];
+            let intersection = previous_interval
+                + (scan_position - previous_scan) * (current_interval - previous_interval)
+                    / (current_scan - previous_scan);
+
+            if intersection.is_finite() {
+                intersections.push(intersection);
+            }
+        }
+
+        previous = current;
+    }
+
+    intersections.sort_by(f64::total_cmp);
+    intersections
+        .chunks_exact(2)
+        .map(|pair| (pair[0], pair[1]))
+        .max_by(|(start1, end1), (start2, end2)| (end1 - start1).total_cmp(&(end2 - start2)))
+}
+
+fn point_in_polygon(x: f64, y: f64, x_array: &[f64], y_array: &[f64]) -> bool {
     let mut inside = false;
     let mut j = x_array.len() - 1;
 
@@ -591,7 +690,8 @@ fn point_in_polygon(x: f64, y: f64, x_array: &Vec<f64>, y_array: &Vec<f64>) -> b
         let xj = x_array[j];
         let yj = y_array[j];
 
-        let intersect = ((yi > y) != (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi + f64::EPSILON) + xi);
+        let intersect =
+            ((yi > y) != (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi + f64::EPSILON) + xi);
 
         if intersect {
             inside = !inside;
@@ -602,7 +702,7 @@ fn point_in_polygon(x: f64, y: f64, x_array: &Vec<f64>, y_array: &Vec<f64>) -> b
     inside
 }
 
-fn min_distance_to_edges(x: f64, y: f64, x_array: &Vec<f64>, y_array: &Vec<f64>) -> f64 {
+fn min_distance_to_edges(x: f64, y: f64, x_array: &[f64], y_array: &[f64]) -> f64 {
     let mut min_dist = f64::MAX;
 
     for i in 1..x_array.len() {
@@ -675,4 +775,46 @@ fn get_point_elevation_from_dem_bilinear_interpolation(
     let v0 = v00 * (1.0 - fx) + v10 * fx;
     let v1 = v01 * (1.0 - fx) + v11 * fx;
     v0 * (1.0 - fy) + v1 * fy
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{find_interior_point, point_in_polygon, FormLineRecord};
+    use shapefile::dbase::{FieldName, TableWriterBuilder};
+    use std::io::Cursor;
+
+    #[test]
+    fn finds_interior_point_for_large_contour_without_scanning_its_area() {
+        let x = vec![0.0, 1_000_000.0, 1_000_000.0, 0.0, 0.0];
+        let y = vec![0.0, 0.0, 1_000_000.0, 1_000_000.0, 0.0];
+
+        let point = find_interior_point(&x, &y).unwrap();
+
+        assert_eq!(point, (500_000.0, 500_000.0));
+    }
+
+    #[test]
+    fn finds_interior_point_for_concave_contour() {
+        let x = vec![0.0, 10.0, 10.0, 6.0, 6.0, 4.0, 4.0, 0.0, 0.0];
+        let y = vec![0.0, 0.0, 10.0, 10.0, 4.0, 4.0, 10.0, 10.0, 0.0];
+
+        let (point_x, point_y) = find_interior_point(&x, &y).unwrap();
+
+        assert!(point_in_polygon(point_x, point_y, &x, &y));
+    }
+
+    #[test]
+    fn writes_formline_record_to_numeric_contour_schema() {
+        let mut writer = TableWriterBuilder::new()
+            .add_numeric_field(FieldName::try_from("ID").unwrap(), 8, 0)
+            .add_numeric_field(FieldName::try_from("elev").unwrap(), 12, 3)
+            .build_with_dest(Cursor::new(Vec::<u8>::new()));
+
+        writer
+            .write_record(&FormLineRecord {
+                id: 0.0,
+                elev: 123.5,
+            })
+            .unwrap();
+    }
 }
