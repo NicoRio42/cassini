@@ -11,8 +11,11 @@ mod download;
 mod error;
 mod helpers;
 mod lidar;
+mod map_features;
 mod map_renderer;
 mod merge;
+mod ocad_export;
+mod ocd;
 mod process;
 mod pullautin_contours_render;
 mod pullautin_smooth_contours;
@@ -30,12 +33,15 @@ use error::{CassiniError, Result, ResultContext};
 use las::raw::Header;
 use lidar::generate_dem_and_vegetation_density_tiff_images_from_laz_file;
 use log::info;
-use render::generate_png_from_dem_vegetation_density_tiff_images_and_vector_file;
+use ocad_export::check_template;
+use ocd::OcdTemplate;
+use render::{generate_png_from_dem_vegetation_density_tiff_images_and_vector_file, RenderOptions};
 use std::{
     fs::{create_dir_all, File},
     num::NonZeroUsize,
     path::{Path, PathBuf},
     process::ExitCode,
+    sync::Arc,
     time::Instant,
 };
 use tile::{get_extent_from_lidar_dir_path, Tile};
@@ -90,6 +96,9 @@ enum Commands {
             default_value = "merge"
         )]
         undergrowth: UndergrowthMode,
+
+        #[command(flatten)]
+        ocad: OcadArgs,
     },
 
     /// Run only the LiDAR processing step for a single tile
@@ -156,6 +165,9 @@ enum Commands {
             default_value = "merge"
         )]
         undergrowth: UndergrowthMode,
+
+        #[command(flatten)]
+        ocad: OcadArgs,
     },
 
     /// Process multiple LiDAR files at once
@@ -207,19 +219,32 @@ enum Commands {
             default_value = "merge"
         )]
         undergrowth: UndergrowthMode,
+
+        #[command(flatten)]
+        ocad: OcadArgs,
     },
 
     /// Output a default config.json file.
     Config,
 }
 
+#[derive(clap::Args, Debug)]
+struct OcadArgs {
+    #[arg(long, help = "Also export the map as an OCAD 12 file (full-map.ocd)")]
+    ocad: bool,
+
+    #[arg(
+        long,
+        requires = "ocad",
+        help = "Path to an OCAD 12 file whose symbols to use for the OCAD export, instead of the built-in ISOM 2017-2 symbol set"
+    )]
+    ocad_template: Option<PathBuf>,
+}
+
 fn process_single_tile(
     file_path: &Path,
     output_dir_path: &Path,
-    skip_vector: bool,
-    skip_520: bool,
-    undergrowth_mode: &UndergrowthMode,
-    shapefiles_dir: Option<PathBuf>,
+    options: RenderOptions,
 ) -> Result<()> {
     let config = get_config(None)?;
 
@@ -243,17 +268,14 @@ fn process_single_tile(
         max_y: header.max_y.round() as i64,
     };
 
-    if shapefiles_dir.is_none() && !skip_vector {
+    if options.shapefiles_dir.is_none() && !options.skip_vector {
         download_osm_file_if_needed(&tile)?;
     }
 
     generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
         tile,
         vec![],
-        skip_vector,
-        skip_520,
-        undergrowth_mode,
-        shapefiles_dir,
+        &options,
         &config,
     )
 }
@@ -274,10 +296,7 @@ fn process_single_tile_render_step(
     input_dir_path: &Path,
     output_dir_path: &Path,
     neighbor_tiles: Vec<PathBuf>,
-    skip_vector: bool,
-    skip_520: bool,
-    undergrowth_mode: &UndergrowthMode,
-    shapefiles_dir: Option<PathBuf>,
+    options: RenderOptions,
     config_path: Option<&Path>,
 ) -> Result<()> {
     let config = get_config(config_path)?;
@@ -297,19 +316,28 @@ fn process_single_tile_render_step(
         max_y,
     };
 
-    if shapefiles_dir.is_none() && !skip_vector {
+    if options.shapefiles_dir.is_none() && !options.skip_vector {
         download_osm_file_if_needed(&tile)?;
     }
 
     generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
         tile,
         neighbor_tiles,
-        skip_vector,
-        skip_520,
-        undergrowth_mode,
-        shapefiles_dir,
+        &options,
         &config,
     )
+}
+
+/// Loads the OCAD template when the export is requested, before any
+/// processing, so that a template lacking symbols fails fast.
+fn load_ocad_template(args: &OcadArgs) -> Result<Option<Arc<OcdTemplate>>> {
+    if !args.ocad {
+        return Ok(None);
+    }
+
+    let template = OcdTemplate::load(args.ocad_template.as_deref())?;
+    check_template(&template)?;
+    Ok(Some(Arc::new(template)))
 }
 
 fn download_osm_file_if_needed(tile: &Tile) -> Result<()> {
@@ -334,9 +362,7 @@ fn batch_process_tiles(
     output_dir: &str,
     number_of_threads: usize,
     skip_lidar: bool,
-    skip_vector: bool,
-    skip_520: bool,
-    undergrowth_mode: &UndergrowthMode,
+    options: RenderOptions,
     config_path: Option<&Path>,
 ) -> Result<()> {
     let config = get_config(config_path)?;
@@ -345,9 +371,7 @@ fn batch_process_tiles(
         output_dir,
         number_of_threads,
         skip_lidar,
-        skip_vector,
-        skip_520,
-        undergrowth_mode,
+        options,
         config,
     )
 }
@@ -392,22 +416,23 @@ fn run() -> Result<()> {
                 skip_520,
                 shapefiles,
                 undergrowth,
+                ocad,
             } => {
                 info!("Tile processing");
                 let start = Instant::now();
 
+                let options = RenderOptions {
+                    skip_vector,
+                    skip_520,
+                    undergrowth_mode: undergrowth,
+                    shapefiles_dir: shapefiles.map(PathBuf::from),
+                    ocad_template: load_ocad_template(&ocad)?,
+                };
+
                 let output_dir = maybe_output_dir.unwrap_or("tile".to_owned());
                 let laz_path = Path::new(&file_path).to_path_buf();
                 let dir_path = Path::new(&output_dir).to_path_buf();
-                let shapefiles_dir = shapefiles.map(PathBuf::from);
-                process_single_tile(
-                    &laz_path,
-                    &dir_path,
-                    skip_vector,
-                    skip_520,
-                    &undergrowth,
-                    shapefiles_dir,
-                )?;
+                process_single_tile(&laz_path, &dir_path, options)?;
 
                 let duration = start.elapsed();
                 info!("Tile generated in {:.1?}", duration);
@@ -439,9 +464,18 @@ fn run() -> Result<()> {
                 skip_520,
                 shapefiles,
                 undergrowth,
+                ocad,
             } => {
                 info!("Map rendering");
                 let start = Instant::now();
+
+                let options = RenderOptions {
+                    skip_vector,
+                    skip_520,
+                    undergrowth_mode: undergrowth,
+                    shapefiles_dir: shapefiles.map(PathBuf::from),
+                    ocad_template: load_ocad_template(&ocad)?,
+                };
 
                 let output_dir = maybe_output_dir.unwrap_or("tile".to_owned());
                 let input_dir_path = Path::new(&input_dir).to_path_buf();
@@ -461,15 +495,11 @@ fn run() -> Result<()> {
                     neighbor_tiles.push(neighbor_path);
                 }
 
-                let shapefiles_dir = shapefiles.map(PathBuf::from);
                 process_single_tile_render_step(
                     &input_dir_path,
                     &output_dir_path,
                     neighbor_tiles,
-                    skip_vector,
-                    skip_520,
-                    &undergrowth,
-                    shapefiles_dir,
+                    options,
                     config.as_deref(),
                 )?;
 
@@ -486,9 +516,18 @@ fn run() -> Result<()> {
                 skip_vector,
                 skip_520,
                 undergrowth,
+                ocad,
             } => {
                 info!("Batch processing");
                 let start = Instant::now();
+
+                let options = RenderOptions {
+                    skip_vector,
+                    skip_520,
+                    undergrowth_mode: undergrowth,
+                    shapefiles_dir: None,
+                    ocad_template: load_ocad_template(&ocad)?,
+                };
 
                 let input_dir = maybe_input_dir.unwrap_or("in".to_owned());
                 let output_dir = maybe_output_dir.unwrap_or("out".to_owned());
@@ -499,9 +538,7 @@ fn run() -> Result<()> {
                     &output_dir,
                     threads,
                     skip_lidar,
-                    skip_vector,
-                    skip_520,
-                    &undergrowth,
+                    options,
                     config.as_deref(),
                 )?;
 
@@ -575,6 +612,30 @@ mod tests {
                 parsed_config(command, "-C"),
                 Some(PathBuf::from("custom.json"))
             );
+        }
+    }
+
+    #[test]
+    fn ocad_template_option_requires_ocad() {
+        for command in ["process", "render", "batch"] {
+            assert!(Args::try_parse_from(["cassini", command, "input", "--ocad"]).is_ok());
+            assert!(Args::try_parse_from([
+                "cassini",
+                command,
+                "input",
+                "--ocad",
+                "--ocad-template",
+                "symbols.ocd"
+            ])
+            .is_ok());
+            assert!(Args::try_parse_from([
+                "cassini",
+                command,
+                "input",
+                "--ocad-template",
+                "symbols.ocd"
+            ])
+            .is_err());
         }
     }
 
