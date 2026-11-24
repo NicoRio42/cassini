@@ -1,0 +1,51 @@
+---
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+const releases = "https://github.com/NicoRio42/cassini/releases/latest/download";
+const shellCommand = `curl --proto '=https' --tlsv1.2 -LsSf ${releases}/cassini-installer.sh | sh`;
+const powershellCommand = `powershell -ExecutionPolicy Bypass -c "irm ${releases}/cassini-installer.ps1 | iex"`;
+---
+
+{/* The tab of the visitor's OS is preselected by the script in Head.astro. */}
+<section class="install" aria-label="Install Cassini">
+  <Tabs syncKey="os">
+    <TabItem label="Windows" icon="seti:windows">
+      <Code code={powershellCommand} lang="powershell" frame="none" />
+    </TabItem>
+
+    <TabItem label="macOS" icon="apple">
+      <Code code={shellCommand} lang="sh" frame="none" />
+    </TabItem>
+
+    <TabItem label="Linux" icon="linux">
+      <Code code={shellCommand} lang="sh" frame="none" />
+    </TabItem>
+  </Tabs>
+
+  <p>
+    Or <a href="/guides/installation-and-setup/">download the executable</a> for
+    your system.
+  </p>
+</section>
+
+<style>
+  .install {
+    width: 100%;
+    min-width: 0;
+    text-align: start;
+  }
+
+  .install :global([role="tabpanel"]) {
+    margin-top: 0.75rem;
+  }
+
+  p {
+    margin-top: 0.5rem;
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-gray-2);
+  }
+
+  a {
+    color: var(--sl-color-text-accent);
+  }
+</style>

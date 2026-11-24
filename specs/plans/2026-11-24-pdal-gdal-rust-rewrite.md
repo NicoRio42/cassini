@@ -40,7 +40,7 @@ We are replacing these with plain Rust rather than embedding GDAL through the `g
 | 4 | LiDAR pipeline (PDAL replacement) | 1 | Done |
 | 5 | OSM import (ogr2ogr replacement) | 2 | Done |
 | 6 | Cleanup, docs and end-to-end verification without external tools | 3, 4, 5 | Done |
-| 7 | Packaging and release builds for the three platforms | 6 | Not started |
+| 7 | Packaging and release builds for the three platforms | 6 | Implemented; tagged pre-release not run yet |
 | 8 | Vegetation layers from height above ground | 6 | Not started |
 
 ## Shared context
@@ -511,3 +511,29 @@ _Each session appends findings here: decisions, tolerances, measured parity, tim
 - **Docs:** the installation guide now covers downloading a release binary (with the macOS quarantine workaround, since binaries aren't signed yet) and building from source. Docker and Conda are gone from it. `what-and-why.mdx`, `index.mdx`, the CLI reference help block (now the real `cassini -h` output) and the README were updated. The `pdal`, `gdal`, `miniconda` and `docker` glossary entries are deleted; `what-and-why.mdx` links PDAL and GDAL directly where it gives the history. `npm run build` in `docs/` passes.
 - **Dockerfile:** the user chose to keep publishing the image on a slim base: `ubuntu:22.04` with `ca-certificates` (for the HTTPS Overpass download) and the binary. It uses Ubuntu 22.04 because the release binary is built on the `ubuntu-22.04` runner with a static glibc, which still loads the system's NSS modules for DNS. The image was **not built or run** here: neither `ubuntu:22.04` nor the `crt-static` binary was available locally. Check it in step 7, and change the base image if the release runner changes. `linux-release.yml` still builds and pushes it.
 - **Left as is:** `benchmarks/` (scripts for the old GDAL/PDAL pipeline, kept as the record of the performance report's measurements) and `examples/compare_shapefiles.rs` (compares against `ogr2ogr` output). Neither is shipped.
+
+### Step 7 (branch `rust-pipeline/step-7-packaging`, cut from `remove-pdal-gdal` after the step 6 merge)
+
+- **reqwest `=0.10.10` → 0.13.5**, `default-features = false`, features `blocking`, `rustls` (aws-lc-rs and `rustls-platform-verifier`: the OS trust store on macOS and Windows, the system CA files on Linux) and `system-proxy`. [download.rs](../../src/download.rs) compiled unchanged. OpenSSL and native-tls are gone from `Cargo.lock`. Checked with a real Overpass download under `PATH=/nonexistent`.
+- **skia-safe stays at 0.75.** skia-binaries 0.75.0 has prebuilt Skia for all four targets, but not for the static MSVC runtime. So dist's `msvc-crt-static` is off, and the Windows binary needs `VCRUNTIME140.dll`, as the old builds did. The installation guide says how to install the redistributable.
+- **Why the old release workflows broke:** `macos-13` is retired (the x86_64 job waits 24 h, then gets cancelled) and `macos-14` is rejected ("not supported"). 0.16.0 and 0.17.0 have no x86_64 macOS asset, and 0.17.0 has no macOS asset at all.
+- **dist 0.34.0** (user's choice) replaces the four workflows. Config is in [dist-workspace.toml](../../dist-workspace.toml); `dist generate` writes `release.yml`. Process and maintenance are in [RELEASING.md](../../RELEASING.md).
+  - **The `Cargo.toml` version triggers releases** (user's request). dist runs with `dispatch-releases = true`: `release.yml` runs when started with a tag (`workflow_dispatch`), and creates that tag and the GitHub Release itself. Pushing a tag doesn't release.
+    - [release-on-version-bump.yml](../../.github/workflows/release-on-version-bump.yml) runs on pushes to `main` that touch `Cargo.toml`. It reads the version with `cargo metadata`, and if `git ls-remote` finds no tag for it, runs `gh workflow run release.yml -f tag=<version>`.
+    - Starting a workflow is allowed with `GITHUB_TOKEN`, so no personal token is needed. A tag pushed with `GITHUB_TOKEN` would not have triggered `release.yml`.
+    - dist's own `release-branch` mode doesn't fit: it releases on every push, with a timestamp tag. Assets are renamed `cassini-<target>.tar.xz` (Windows `.zip`), with a top-level `cassini-<target>/` folder, plus `.sha256` files, `sha256.sum`, `cassini-installer.sh` / `.ps1` and the source tarball.
+  - Runners: `ubuntu-22.04`, `macos-15`, `macos-15-intel` (the last Intel image), `windows-2022`.
+  - dist has no `--locked` option, so a `github-build-setup` step ([build-setup.yml](../../.github/build-setup.yml)) runs `cargo fetch --locked` first. It fails if the lockfile is stale, and the build then uses that lockfile unchanged.
+  - Custom job: [publish-docker.yml](../../.github/workflows/publish-docker.yml) (`publish-jobs`, skipped for prereleases) builds the image from the release's Linux archive and pushes `:<tag>` and `:latest`. The Dockerfile now copies `cassini` from a build context holding the binary.
+  - Installers put the binary in `$XDG_BIN_HOME`, else `~/.local/bin`, not `~/.cargo/bin`. No Homebrew tap: it needs a tap repo and a token; RELEASING.md says how.
+- **Linux: dynamic glibc** (user's choice), built on `ubuntu-22.04`, so it needs glibc 2.35 or later. `+crt-static` is dropped: a static glibc still dlopens the system's NSS modules for the Overpass DNS lookup, which is unsupported across glibc versions.
+- **No CI smoke test, by the user's choice.** This session wrote a smoke test (`lidar` + `render --ocad` with `PATH=/nonexistent` on a 100 m fixture tile, 2.3 MB LAZ plus its `.osm`), a `ci.yml` running it with `cargo test` on the four runners, and a dist `global-artifacts-jobs` running it on each release archive. The user removed all three, with the fixtures. So the plan's "CI smoke test" acceptance item is dropped, and release binaries are checked by hand. [examples/crop_laz.rs](../../examples/crop_laz.rs), which cut the fixture, stays: it copies the raw point records and CRS VLRs of a rectangle of a LAS/LAZ file, without the COPC records.
+- **Skia's link needs fontconfig and freetype:** skia-bindings passes `-lfontconfig -lfreetype`, so a bare `ubuntu:22.04` fails to link without `libfontconfig1-dev libfreetype6-dev`. Neither ends up in the binary: `--as-needed` drops them, and `ldd` lists only libc, libm, libgcc_s and libstdc++. The old workflow relied on the runner image having them. `build-setup.yml` now installs them.
+- **Verified locally:**
+  - `cargo test --release --locked`.
+  - `lidar` + `render --ocad` with an empty `PATH` on a 100 m tile, with the `cargo build --release` binary and with the dist-built Linux archive (`dist build --artifacts=local`; profile `dist` = release + thin LTO).
+  - The same run with a `--profile dist --locked` build inside `ubuntu:22.04` (glibc 2.35, rustc 1.100).
+  - The Docker image built from that binary runs `lidar` and `render`, including the HTTPS Overpass download (rustls with the image's `ca-certificates`).
+  - The docs build. `dist plan` lists the four archives and both installers, and finds `release.yml` up to date.
+- **Not verified here:** the GitHub runs (the release workflow, the `$/.github/workflows/...` reusable-workflow references dist generates, which dist's own release.yml also uses), the Windows and macOS binaries, and the Docker Hub push. Merging a pre-release version (e.g. `0.18.0-rc.1`) to `main` checks the builds and the release, but not Docker (skipped for prereleases); the binaries then have to be tried by hand.
+- **Docs:** the installation guide leads with the install scripts and links the new asset names. Those links only resolve once a dist release is published as latest, so release soon after merging.

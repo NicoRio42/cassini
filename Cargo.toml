@@ -1,6 +1,6 @@
 [package]
 name = "cassini"
-version = "0.16.0"
+version = "0.18.0"
 edition = "2021"
 description = "A software that generates highly accurate topographic maps from LiDAR and Shapefile data."
 readme = "README.md"
@@ -18,9 +18,10 @@ shapefile = "0.6.0"
 skia-safe = "0.75.0"
 tiff = "0.11.3"
 las = { version = "0.11", features = ["laz-parallel"] }
-reqwest = { version = "=0.10.10", features = [
-    "native-tls-vendored",
+reqwest = { version = "0.13.5", default-features = false, features = [
     "blocking",
+    "rustls",
+    "system-proxy",
 ] }
 httpdate = "0.3.2"
 log = "0.4.25"
@@ -32,3 +33,8 @@ quick-xml = "0.42"
 
 [dev-dependencies]
 tempfile = "3.11"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

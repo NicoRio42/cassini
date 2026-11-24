@@ -1,0 +1,41 @@
+# Starts a release when the version in Cargo.toml changes on main: if there
+# is no tag for that version yet, it runs release.yml with the version as the
+# tag to create (a version with a suffix, like 0.18.0-rc.1, makes a
+# prerelease). Starting the workflow is allowed with GITHUB_TOKEN; a tag
+# pushed with it would not start release.yml.
+name: Release on version bump
+
+on:
+  push:
+    branches: [main]
+    paths: [Cargo.toml]
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: release-on-version-bump
+
+jobs:
+  start-release:
+    runs-on: ubuntu-22.04
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Read the version
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "cassini") | .version')
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "Cargo.toml version: $version"
+      - name: Start release.yml if the version has no tag yet
+        run: |
+          if git ls-remote --exit-code --tags "https://github.com/$GITHUB_REPOSITORY.git" "refs/tags/$VERSION" > /dev/null; then
+            echo "Tag $VERSION already exists: nothing to release."
+            exit 0
+          fi
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" -f tag="$VERSION"
+          echo "Started the release of $VERSION."

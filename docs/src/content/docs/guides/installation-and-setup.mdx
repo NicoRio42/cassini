@@ -10,19 +10,53 @@ This document will guide you to install Cassini on your machine.
 
 Cassini is a single executable file with no dependencies: there is nothing else to install to process <GlossaryLink slug="lidar" /> files and generate maps.
 
+## Installing with a script
+
+The simplest way to install Cassini is to run its install script in a terminal. It downloads the latest release for your machine, puts the `cassini` executable in `~/.local/bin` and adds that directory to your `PATH` if needed.
+
+<Tabs syncKey="os">
+  <TabItem label="Windows" icon="seti:windows">
+
+In PowerShell:
+
+```powershell frame="none"
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/NicoRio42/cassini/releases/latest/download/cassini-installer.ps1 | iex"
+```
+
+  </TabItem>
+
+  <TabItem label="macOS" icon="apple">
+
+```sh frame="none"
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/NicoRio42/cassini/releases/latest/download/cassini-installer.sh | sh
+```
+
+  </TabItem>
+
+  <TabItem label="Linux" icon="linux">
+
+```sh frame="none"
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/NicoRio42/cassini/releases/latest/download/cassini-installer.sh | sh
+```
+
+  </TabItem>
+</Tabs>
+
+Open a new terminal afterwards, so that it picks up the new `PATH`. To update Cassini, run the script again.
+
 ## Downloading Cassini executable
 
-Download the archive corresponding to your Operating System:
+You can also download the archive corresponding to your Operating System:
 
 - <Icon
     name="seti:windows"
     class="inline-icon"
-  /> [Windows](https://github.com/NicoRio42/cassini/releases/latest/download/cassini-x86_64-win.tar.gz)
-- <Icon name="linux" class="inline-icon" /> [Linux](https://github.com/NicoRio42/cassini/releases/latest/download/cassini-x86_64-linux.tar.gz)
-- <Icon name="apple" class="inline-icon" /> [macOS x86_64 (Intel)](https://github.com/NicoRio42/cassini/releases/latest/download/cassini-x86_64-macos.tar.gz)
-- <Icon name="apple" class="inline-icon" /> [macOS arm64 (Apple silicon)](https://github.com/NicoRio42/cassini/releases/latest/download/cassini-arm64-macos.tar.gz)
+  /> [Windows](https://github.com/NicoRio42/cassini/releases/latest/download/cassini-x86_64-pc-windows-msvc.zip)
+- <Icon name="linux" class="inline-icon" /> [Linux](https://github.com/NicoRio42/cassini/releases/latest/download/cassini-x86_64-unknown-linux-gnu.tar.xz) (glibc 2.35 or later: Ubuntu 22.04, Debian 12, Fedora 36, RHEL 9 or later)
+- <Icon name="apple" class="inline-icon" /> [macOS x86_64 (Intel)](https://github.com/NicoRio42/cassini/releases/latest/download/cassini-x86_64-apple-darwin.tar.xz)
+- <Icon name="apple" class="inline-icon" /> [macOS arm64 (Apple silicon)](https://github.com/NicoRio42/cassini/releases/latest/download/cassini-aarch64-apple-darwin.tar.xz)
 
-Decompress it and copy the `cassini` executable where you want to use it on your machine.
+Decompress it and copy the `cassini` executable where you want to use it on your machine. On macOS and Linux, the archive holds a `cassini-<platform>` folder that contains it.
 
 <Tabs syncKey="os">
   <TabItem label="Windows" icon="seti:windows">
@@ -30,18 +64,23 @@ Decompress it and copy the `cassini` executable where you want to use it on your
 > Windows 10 and later can decompress the archive from the command prompt:
 >
 > ```sh frame="none"
-> tar -xzf cassini-x86_64-win.tar.gz
+> tar -xf cassini-x86_64-pc-windows-msvc.zip
 > ```
+>
+> Cassini needs the Microsoft Visual C++ runtime, which most Windows machines already have. If Windows reports that `VCRUNTIME140.dll` is missing, install the [Visual C++ Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist).
+>
+> The executable is not signed yet, so Windows SmartScreen may warn about it the first time you run it.
 
   </TabItem>
   
   <TabItem label="macOS" icon="apple">
 
 > ```sh frame="none"
-> tar -xzf cassini-arm64-macos.tar.gz
+> tar -xf cassini-aarch64-apple-darwin.tar.xz
+> cd cassini-aarch64-apple-darwin
 > ```
 >
-> The executable is not signed yet. If macOS refuses to open it, remove the quarantine attribute that the browser added to the download:
+> The executable is not signed yet. If macOS refuses to open it, remove the quarantine attribute that the browser added to the download (the install script doesn't need this):
 >
 > ```sh frame="none"
 > xattr -d com.apple.quarantine ./cassini
@@ -52,7 +91,8 @@ Decompress it and copy the `cassini` executable where you want to use it on your
   <TabItem label="Linux" icon="linux">
 
 > ```sh frame="none"
-> tar -xzf cassini-x86_64-linux.tar.gz
+> tar -xf cassini-x86_64-unknown-linux-gnu.tar.xz
+> cd cassini-x86_64-unknown-linux-gnu
 > ```
 
   </TabItem>
@@ -88,9 +128,13 @@ cassini --version
 
 This should print the version of Cassini.
 
+If you installed it with the script, `cassini --version` works from any directory.
+
 If you want to make the `cassini` command globally available on you machine, you can follow [this tutorial](https://zwbetz.com/how-to-add-a-binary-to-your-path-on-macos-linux-windows/).
 
 To update Cassini to the latest version, download the latest archive again and replace the executable.
+
+Each release also lists a SHA-256 checksum for every archive, to check a download.
 
 ## Building from source
 
