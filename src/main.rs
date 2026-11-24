@@ -10,6 +10,9 @@ mod contours;
 mod dem;
 mod download;
 mod error;
+// Not used by the binary yet; the examples also include it.
+#[allow(dead_code)]
+mod grid;
 mod helpers;
 mod lidar;
 mod map_features;
