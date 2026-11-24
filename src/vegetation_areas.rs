@@ -127,17 +127,28 @@ pub fn get_vegetation_features(
     let mut fields = VegetationFields::compute(tile, rasters, config, undergrowth_mode)?;
     fields.generalise();
 
+    let tile_extent = Extent {
+        min_x: tile.min_x as f64,
+        min_y: tile.min_y as f64,
+        max_x: tile.max_x as f64,
+        max_y: tile.max_y as f64,
+    };
+    let window = Extent {
+        min_x: tile_extent.min_x - MARGIN as f64,
+        min_y: tile_extent.min_y - MARGIN as f64,
+        max_x: tile_extent.max_x + MARGIN as f64,
+        max_y: tile_extent.max_y + MARGIN as f64,
+    };
     let tracer = Tracer {
         builder: ContourBuilder::new(fields.grid.width, fields.grid.height, true)
-            .x_origin((tile.min_x - MARGIN as i64) as f64)
-            .y_origin((tile.max_y + MARGIN as i64) as f64)
+            .x_origin(window.min_x)
+            .y_origin(window.max_y)
             .y_step(-1.0),
-        tile_rectangle: vec![
-            [tile.min_x as f64, tile.min_y as f64],
-            [tile.max_x as f64, tile.min_y as f64],
-            [tile.max_x as f64, tile.max_y as f64],
-            [tile.min_x as f64, tile.max_y as f64],
-        ],
+        pinned_lines: PinnedLines::around_tile_edges(
+            &tile_extent,
+            simplify_tolerance.min(MARGIN as f64 / 2.0),
+        ),
+        window,
         simplify_tolerance,
     };
 
@@ -149,12 +160,8 @@ pub fn get_vegetation_features(
 
     let mut features = FeatureSink {
         features: vec![],
-        extent: Extent {
-            min_x: tile.min_x as f64,
-            min_y: tile.min_y as f64,
-            max_x: tile.max_x as f64,
-            max_y: tile.max_y as f64,
-        },
+        window,
+        tile: tile_extent,
     };
     features.push(
         AreaSymbol::RoughOpenLand403,
@@ -212,15 +219,23 @@ fn difference(subject: &Shapes, clip: &Shapes) -> Shapes {
 
 struct FeatureSink {
     features: Vec<MapFeature>,
-    extent: Extent,
+    /// The vectorized window. The shapes reaching its border may continue
+    /// beyond it.
+    window: Extent,
+    /// The tile the shapes are clipped to.
+    tile: Extent,
 }
 
 impl FeatureSink {
-    /// Pushes one area feature per shape, dropping the shapes smaller than
-    /// `min_area` m² away from the tile edge, and the slivers.
+    /// Pushes one area feature per shape clipped to the tile, dropping the
+    /// shapes smaller than `min_area` m² away from the window border, and the
+    /// slivers. The shapes are measured whole, before they are clipped, so
+    /// that neighbouring tiles keep or drop the shapes crossing their common
+    /// edge alike.
     fn push(&mut self, symbol: AreaSymbol, shapes: Shapes, min_area: f64) {
         let to_points =
             |ring: Vec<[f64; 2]>| ring.into_iter().map(|[x, y]| Point::new(x, y)).collect();
+        let tile_rectangle = rectangle(&self.tile);
 
         for shape in shapes {
             // The outer ring comes first
@@ -229,31 +244,37 @@ impl FeatureSink {
                 continue;
             };
             let area = ring_area(&outer);
-            if area < SLIVER_AREA || (area < min_area && !self.touches_edge(&outer)) {
+            if area < SLIVER_AREA || (area < min_area && !self.reaches_window_border(&outer)) {
                 continue;
             }
+            let shape: Vec<Vec<[f64; 2]>> = std::iter::once(outer)
+                .chain(rings.filter(|hole| ring_area(hole) >= SLIVER_AREA))
+                .collect();
 
-            let polygon = Polygon::with_rings(
-                std::iter::once(PolygonRing::Outer(to_points(outer)))
-                    .chain(
-                        rings
-                            .filter(|hole| ring_area(hole) >= SLIVER_AREA)
-                            .map(|hole| PolygonRing::Inner(to_points(hole))),
-                    )
-                    .collect(),
-            );
-            self.features.push(MapFeature::Area(symbol, polygon));
+            for clipped in shape.overlay(&tile_rectangle, OverlayRule::Intersect, FillRule::EvenOdd)
+            {
+                let mut rings = clipped.into_iter();
+                let Some(outer) = rings.next() else {
+                    continue;
+                };
+                let polygon = Polygon::with_rings(
+                    std::iter::once(PolygonRing::Outer(to_points(outer)))
+                        .chain(rings.map(|hole| PolygonRing::Inner(to_points(hole))))
+                        .collect(),
+                );
+                self.features.push(MapFeature::Area(symbol, polygon));
+            }
         }
     }
 
-    fn touches_edge(&self, ring: &[[f64; 2]]) -> bool {
-        // The boolean operations snap the coordinates to an integer grid
-        const TOLERANCE: f64 = 1e-3;
+    fn reaches_window_border(&self, ring: &[[f64; 2]]) -> bool {
+        // The iso-lines close along the grid border, within a cell of it
+        const TOLERANCE: f64 = 1.0;
         ring.iter().any(|[x, y]| {
-            (x - self.extent.min_x).abs() < TOLERANCE
-                || (x - self.extent.max_x).abs() < TOLERANCE
-                || (y - self.extent.min_y).abs() < TOLERANCE
-                || (y - self.extent.max_y).abs() < TOLERANCE
+            x - self.window.min_x < TOLERANCE
+                || self.window.max_x - x < TOLERANCE
+                || y - self.window.min_y < TOLERANCE
+                || self.window.max_y - y < TOLERANCE
         })
     }
 }
@@ -270,16 +291,20 @@ fn ring_area(ring: &[[f64; 2]]) -> f64 {
 
 struct Tracer {
     builder: ContourBuilder,
-    tile_rectangle: Vec<[f64; 2]>,
+    /// The lines simplification keeps the crossings of.
+    pinned_lines: PinnedLines,
+    /// The vectorized window, holding every traced ring.
+    window: Extent,
     simplify_tolerance: f64,
 }
 
 impl Tracer {
-    /// Returns the area where `field` is positive, clipped to the tile.
+    /// Returns the area where `field` is positive over the window.
     ///
-    /// The iso-lines are clipped before they are simplified, keeping the
-    /// vertices on the tile edge, so that they cross the edge where the
-    /// iso-lines of the neighbouring tile do, and batch mode can join them.
+    /// Vertices are added to the iso-lines where they cross the pinned lines,
+    /// and simplification keeps them. A neighbouring tile pins the same lines
+    /// along the common edge, so that the areas clipped to either tile cross
+    /// that edge at the same points, and batch mode can join them.
     fn trace(&self, field: &[f32]) -> Result<Shapes> {
         let values: Vec<f64> = field
             .iter()
@@ -308,48 +333,105 @@ impl Tracer {
                 if ring.len() > 1 && ring.first() == ring.last() {
                     ring.pop();
                 }
-                ring
+                if self.simplify_tolerance <= 0.0 {
+                    return ring;
+                }
+                simplify_ring(
+                    &self.pinned_lines.insert_crossings(&ring),
+                    self.simplify_tolerance,
+                    |point| self.pinned_lines.contains(point),
+                )
             })
             .filter(|ring| ring.len() >= 3)
             .collect();
 
         // Iso-lines of a threshold never cross, so the even-odd rule turns
-        // nested rings into holes and islands in holes.
-        let clipped = rings.overlay(
-            &self.tile_rectangle,
-            OverlayRule::Intersect,
-            FillRule::EvenOdd,
-        );
-        if self.simplify_tolerance <= 0.0 {
-            return Ok(clipped);
-        }
-
-        let is_on_tile_edge = |point: [f64; 2]| is_on_rectangle_edge(point, &self.tile_rectangle);
-        let simplified: Vec<Vec<[f64; 2]>> = clipped
-            .iter()
-            .flatten()
-            .map(|ring| simplify_ring(ring, self.simplify_tolerance, is_on_tile_edge))
-            .filter(|ring| ring.len() >= 3)
-            .collect();
-
-        // Each ring is simplified on its own, so neighbouring rings may cross
-        // by up to the tolerance. The pieces this leaves after the boolean
-        // operations are dropped as slivers.
-        Ok(simplified.overlay(
-            &self.tile_rectangle,
+        // nested rings into holes and islands in holes. Each ring is
+        // simplified on its own, so neighbouring rings may cross by up to the
+        // tolerance. The pieces this leaves after the boolean operations are
+        // dropped as slivers.
+        Ok(rings.overlay(
+            &rectangle(&self.window),
             OverlayRule::Intersect,
             FillRule::EvenOdd,
         ))
     }
 }
 
-/// Whether `point` lies on the edge of the axis-aligned `rectangle`.
-fn is_on_rectangle_edge(point: [f64; 2], rectangle: &[[f64; 2]]) -> bool {
-    // The boolean operations snap the coordinates to an integer grid
-    const TOLERANCE: f64 = 1e-3;
-    rectangle.iter().any(|corner| {
-        (point[0] - corner[0]).abs() < TOLERANCE || (point[1] - corner[1]).abs() < TOLERANCE
-    })
+/// The corners of `extent`.
+fn rectangle(extent: &Extent) -> Vec<[f64; 2]> {
+    vec![
+        [extent.min_x, extent.min_y],
+        [extent.max_x, extent.min_y],
+        [extent.max_x, extent.max_y],
+        [extent.min_x, extent.max_y],
+    ]
+}
+
+/// Axis-aligned lines, as their axis (0 for x = the coordinate, 1 for
+/// y = the coordinate) and coordinate.
+struct PinnedLines(Vec<(usize, f64)>);
+
+impl PinnedLines {
+    /// The lines of the edges of `tile`, and lines `band` on either side of
+    /// each one. A neighbouring tile has the same lines along their common
+    /// edge. Simplification keeps the iso-lines within the cells these lines
+    /// form, so both tiles simplify the iso-lines within `band` of that edge
+    /// alike, whatever they do beyond.
+    fn around_tile_edges(tile: &Extent, band: f64) -> Self {
+        let mut lines = vec![];
+        for (axis, edge) in [
+            (0, tile.min_x),
+            (0, tile.max_x),
+            (1, tile.min_y),
+            (1, tile.max_y),
+        ] {
+            lines.extend([(axis, edge - band), (axis, edge), (axis, edge + band)]);
+        }
+        Self(lines)
+    }
+
+    fn contains(&self, point: [f64; 2]) -> bool {
+        // The boolean operations snap the coordinates to an integer grid
+        const TOLERANCE: f64 = 1e-3;
+        self.0
+            .iter()
+            .any(|(axis, line)| (point[*axis] - line).abs() < TOLERANCE)
+    }
+
+    /// Adds a vertex to `ring`, without closing point, wherever a segment
+    /// crosses one of the lines.
+    fn insert_crossings(&self, ring: &[[f64; 2]]) -> Vec<[f64; 2]> {
+        let mut with_crossings = Vec::with_capacity(ring.len());
+
+        for (index, start) in ring.iter().enumerate() {
+            with_crossings.push(*start);
+
+            // From the lower endpoint, so that the neighbouring tile computes
+            // the same point whichever way its ring runs
+            let end = ring[(index + 1) % ring.len()];
+            let (a, b) = if *start < end {
+                (*start, end)
+            } else {
+                (end, *start)
+            };
+            let mut crossings: Vec<(f64, [f64; 2])> = vec![];
+            for (axis, line) in &self.0 {
+                if (a[*axis] - line) * (b[*axis] - line) < 0.0 {
+                    let t = (line - a[*axis]) / (b[*axis] - a[*axis]);
+                    let mut point = [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])];
+                    point[*axis] = *line;
+                    // By distance from `start`
+                    crossings.push((squared_distance(*start, point), point));
+                }
+            }
+
+            crossings.sort_by(|first, second| first.0.total_cmp(&second.0));
+            with_crossings.extend(crossings.into_iter().map(|(_, point)| point));
+        }
+
+        with_crossings
+    }
 }
 
 /// Douglas–Peucker simplification of a ring without closing point, keeping
@@ -366,9 +448,15 @@ fn simplify_ring(
     // Douglas–Peucker keeps the ends of a chain, so the ring is split in
     // chains at its pinned vertices. It starts at the first one, and is also
     // split at the vertex farthest from it when there are fewer than two.
+    // Without any, it starts at its lowest vertex, so that a neighbouring tile
+    // tracing the same ring from another vertex simplifies it alike.
     let first = (0..ring.len())
         .find(|index| is_pinned(ring[*index]))
-        .unwrap_or(0);
+        .unwrap_or_else(|| {
+            (0..ring.len())
+                .min_by(|a, b| ring[*a].partial_cmp(&ring[*b]).unwrap())
+                .unwrap()
+        });
     let closed: Vec<[f64; 2]> = ring[first..]
         .iter()
         .chain(&ring[..=first])
@@ -939,7 +1027,8 @@ mod tests {
             .collect();
         let tracer = |min_x: f64, max_x: f64| Tracer {
             builder: ContourBuilder::new(grid.width, grid.height, true),
-            tile_rectangle: vec![[min_x, 0.0], [max_x, 0.0], [max_x, 20.0], [min_x, 20.0]],
+            pinned_lines: PinnedLines::around_tile_edges(&extent(min_x, 0.0, max_x, 20.0), 1.0),
+            window: extent(0.0, 0.0, 20.0, 20.0),
             simplify_tolerance: 1.0,
         };
 
@@ -967,7 +1056,115 @@ mod tests {
     }
 
     #[test]
-    fn traces_nested_areas_with_holes_and_clips_them() {
+    fn neighbouring_tiles_meet_along_their_common_edge() {
+        // Tiles cut from the same vegetation, as their buffered rasters are
+        const SIZE: i64 = 100;
+        let raster_size = SIZE as usize + 2 * BUFFER;
+        let tile = |min_x: i64, min_y: i64| Tile {
+            lidar_dir_path: Default::default(),
+            render_dir_path: Default::default(),
+            min_x,
+            min_y,
+            max_x: min_x + SIZE,
+            max_y: min_y + SIZE,
+        };
+        let rasters = |tile: &Tile| {
+            let cells = (0..raster_size * raster_size).map(|cell| {
+                let x = (tile.min_x - BUFFER as i64 + (cell % raster_size) as i64) as f64;
+                let y = (tile.max_y + BUFFER as i64 - 1 - (cell / raster_size) as i64) as f64;
+                (x, y)
+            });
+            let medium = cells
+                .clone()
+                .map(|(x, y)| (5.0 + 5.0 * (x / 13.0).sin() * (y / 17.0).cos()).round() as u8)
+                .collect();
+            let high = cells
+                .clone()
+                .map(|(x, y)| {
+                    if (x / 23.0 + y / 29.0).sin() > 0.3 {
+                        5
+                    } else {
+                        0
+                    }
+                })
+                .collect();
+            let low = cells
+                .map(|(x, y)| (2.0 + 2.0 * (x / 11.0 + y / 7.0).cos()).round() as u8)
+                .collect();
+            VegetationRasters::from_pixels(
+                raster_size as u32,
+                raster_size as u32,
+                high,
+                medium,
+                low,
+            )
+        };
+
+        // The vertices of each symbol's areas on the line `axis` = `SIZE`, to
+        // the centimetre, far finer than an OCAD paper unit
+        let edge_points = |tile: Tile, axis: usize, mode: &UndergrowthMode, tolerance: f64| {
+            let features = get_vegetation_features(
+                &tile,
+                &rasters(&tile),
+                &Config::default(),
+                mode,
+                tolerance,
+            )
+            .unwrap();
+            let mut points: Vec<(String, i64)> = features
+                .iter()
+                .flat_map(|feature| match feature {
+                    MapFeature::Area(symbol, polygon) => polygon
+                        .rings()
+                        .iter()
+                        .flat_map(|ring| ring.points())
+                        .map(|point| [point.x, point.y])
+                        .filter(|point| (point[axis] - SIZE as f64).abs() < 1e-3)
+                        .map(|point| {
+                            (
+                                format!("{symbol:?}"),
+                                (point[1 - axis] * 100.0).round() as i64,
+                            )
+                        })
+                        .collect::<Vec<_>>(),
+                    MapFeature::Line(..) => vec![],
+                })
+                .collect();
+            points.sort();
+            points.dedup();
+            points
+        };
+
+        for mode in [
+            UndergrowthMode::Merge,
+            UndergrowthMode::Symbol406,
+            UndergrowthMode::Symbol409,
+        ] {
+            for tolerance in [0.0, 1.0] {
+                let origin = edge_points(tile(0, 0), 0, &mode, tolerance);
+                let east = edge_points(tile(SIZE, 0), 0, &mode, tolerance);
+                assert!(origin.len() > 4);
+                assert_eq!(origin, east, "{mode:?}, tolerance {tolerance}");
+
+                let origin = edge_points(tile(0, 0), 1, &mode, tolerance);
+                let north = edge_points(tile(0, SIZE), 1, &mode, tolerance);
+                assert!(origin.len() > 4);
+                assert_eq!(origin, north, "{mode:?}, tolerance {tolerance}");
+            }
+        }
+    }
+
+    fn extent(min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> Extent {
+        Extent {
+            min_x,
+            min_y,
+            max_x,
+            max_y,
+        }
+    }
+
+    #[test]
+    fn traces_nested_areas_with_holes() {
         // A ring of 10 x 10 cells around a 4 x 4 hole, holding a 2 x 2 island
         let grid = Grid {
             width: 20,
@@ -978,7 +1175,8 @@ mod tests {
         });
         let tracer = Tracer {
             builder: ContourBuilder::new(grid.width, grid.height, true),
-            tile_rectangle: vec![[0.0, 0.0], [20.0, 0.0], [20.0, 20.0], [0.0, 20.0]],
+            pinned_lines: PinnedLines(vec![]),
+            window: extent(0.0, 0.0, 20.0, 20.0),
             simplify_tolerance: 0.0,
         };
 
@@ -999,17 +1197,17 @@ mod tests {
             .any(|shape| shape.len() == 1 && (shape[0] - 3.5).abs() < 1e-6));
 
         // Clipped to the left half of the ring
-        let clipped = Tracer {
-            tile_rectangle: vec![[0.0, 0.0], [7.0, 0.0], [7.0, 20.0], [0.0, 20.0]],
-            ..tracer
-        }
-        .trace(&values)
-        .unwrap();
-        assert!(clipped
-            .iter()
-            .flatten()
-            .flatten()
-            .all(|point| point[0] <= 7.0));
+        let mut sink = FeatureSink {
+            features: vec![],
+            window: extent(0.0, 0.0, 20.0, 20.0),
+            tile: extent(0.0, 0.0, 7.0, 20.0),
+        };
+        sink.push(AreaSymbol::VegetationSlowRunning406, shapes, SLIVER_AREA);
+        assert_eq!(sink.features.len(), 2);
+        assert!(sink.features.iter().all(|feature| match feature {
+            MapFeature::Area(_, polygon) => polygon.bbox().max.x <= 7.0,
+            MapFeature::Line(..) => false,
+        }));
     }
 
     fn square_shape(min: f64, max: f64) -> Vec<Vec<[f64; 2]>> {
@@ -1019,12 +1217,8 @@ mod tests {
     fn sink() -> FeatureSink {
         FeatureSink {
             features: vec![],
-            extent: Extent {
-                min_x: 0.0,
-                min_y: 0.0,
-                max_x: 100.0,
-                max_y: 100.0,
-            },
+            window: extent(0.0, 0.0, 100.0, 100.0),
+            tile: extent(0.0, 0.0, 100.0, 100.0),
         }
     }
 
@@ -1052,7 +1246,44 @@ mod tests {
     }
 
     #[test]
-    fn drops_small_shapes_away_from_the_tile_edge() {
+    fn measures_shapes_before_clipping_them_to_the_tile() {
+        let mut sink = FeatureSink {
+            features: vec![],
+            window: extent(-50.0, -50.0, 100.0, 100.0),
+            tile: extent(0.0, 0.0, 50.0, 50.0),
+        };
+
+        sink.push(
+            AreaSymbol::RoughOpenLand403,
+            vec![
+                // Large, but mostly beyond the tile edge
+                square_shape(40.0, 60.0),
+                // Small, crossing the tile edge
+                square_shape(45.0, 52.0),
+                // A sliver within the tile of a large shape
+                square_shape(49.9, 70.0),
+            ],
+            100.0,
+        );
+
+        let areas: Vec<f64> = sink
+            .features
+            .iter()
+            .map(|feature| match feature {
+                MapFeature::Area(_, polygon) => {
+                    let bbox = polygon.bbox();
+                    (bbox.max.x - bbox.min.x) * (bbox.max.y - bbox.min.y)
+                }
+                MapFeature::Line(..) => unreachable!(),
+            })
+            .collect();
+        assert_eq!(areas.len(), 2);
+        assert!((areas[0] - 100.0).abs() < 1e-6);
+        assert!((areas[1] - 0.01).abs() < 1e-6);
+    }
+
+    #[test]
+    fn drops_small_shapes_away_from_the_window_border() {
         let mut sink = sink();
 
         sink.push(
@@ -1060,10 +1291,10 @@ mod tests {
             vec![
                 // Too small
                 square_shape(10.0, 15.0),
-                // Clipped by the tile edge
+                // Reaching the window border
                 square_shape(0.0, 5.0),
                 square_shape(50.0, 70.0),
-                // A sliver along the tile edge
+                // A sliver along the window border
                 square_shape(0.0, 0.5),
             ],
             100.0,

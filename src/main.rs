@@ -37,10 +37,7 @@ use lidar::generate_dem_and_vegetation_density_tiff_images_from_laz_file;
 use log::info;
 use ocad_export::{check_template, write_ocd_file};
 use ocd::OcdTemplate;
-use render::{
-    generate_png_from_dem_vegetation_density_tiff_images_and_vector_file, OcadOptions,
-    RenderOptions,
-};
+use render::{render_tile_map, OcadOptions, RenderOptions};
 use std::{
     fs::{create_dir_all, File},
     num::NonZeroUsize,
@@ -298,7 +295,7 @@ fn process_single_tile(
         download_osm_file_if_needed(&tile)?;
     }
 
-    render_tile(tile, vec![], &options, &config)
+    render_and_export_tile(tile, vec![], &options, &config)
 }
 
 fn process_single_tile_lidar_step(
@@ -341,26 +338,21 @@ fn process_single_tile_render_step(
         download_osm_file_if_needed(&tile)?;
     }
 
-    render_tile(tile, neighbor_tiles, &options, &config)
+    render_and_export_tile(tile, neighbor_tiles, &options, &config)
 }
 
 /// Renders a single tile, and exports it to `full-map.ocd` when requested.
-fn render_tile(
+fn render_and_export_tile(
     tile: Tile,
     neighbor_tiles: Vec<PathBuf>,
     options: &RenderOptions,
     config: &Config,
 ) -> Result<()> {
-    let features = generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
-        tile.clone(),
-        neighbor_tiles,
-        options,
-        config,
-    )?;
+    let features = render_tile_map(tile.clone(), neighbor_tiles, options, config)?;
 
-    match &options.ocad {
-        Some(ocad) => write_ocd_file(&tile, &ocad.template, &features),
-        None => Ok(()),
+    match (&options.ocad, features) {
+        (Some(ocad), Some(features)) => write_ocd_file(&tile, &ocad.template, &features),
+        _ => Ok(()),
     }
 }
 

@@ -9,7 +9,10 @@
 use crate::error::{CassiniError, Result, ResultContext};
 use log::warn;
 use std::{
+    borrow::Borrow,
     collections::HashMap,
+    fs::File,
+    io::{BufWriter, ErrorKind, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
 };
 
@@ -60,6 +63,10 @@ const LAMBERT_93_GRID_AND_ZONE: &str = "7009";
 /// Coordinates are 24-bit signed values in 0.01 mm of paper.
 const MAX_COORDINATE: i64 = 0x7f_ffff;
 const OBJECT_STATUS_NORMAL: u8 = 1;
+/// The object index entries hold file positions as signed 32-bit integers.
+const MAX_FILE_SIZE: u64 = i32::MAX as u64;
+/// The limit the OCD 12 format documents for the object index.
+const MAX_OBJECTS: usize = 65_536 * INDEX_BLOCK_ENTRIES;
 
 /// Marks the first point of a hole in an area object (set in the y coordinate).
 pub const FLAG_HOLE: i32 = 0x02;
@@ -312,19 +319,55 @@ impl OcdTemplate {
     }
 
     /// Serializes the template's strings and symbols followed by `objects`.
+    #[cfg(test)]
     pub fn write(&self, georeferencing: &Georeferencing, objects: &[OcdObject]) -> Result<Vec<u8>> {
-        let mut out = self.header.clone();
+        let mut out = std::io::Cursor::new(vec![]);
+        self.write_to(
+            &mut out,
+            Path::new("<memory>"),
+            georeferencing,
+            objects.iter().map(Ok),
+        )?;
+        Ok(out.into_inner())
+    }
+
+    /// Writes the template's strings and symbols followed by `objects` to a
+    /// new file at `path`.
+    pub fn write_file<O: Borrow<OcdObject>>(
+        &self,
+        path: &Path,
+        georeferencing: &Georeferencing,
+        objects: impl IntoIterator<Item = Result<O>>,
+    ) -> Result<()> {
+        let file = File::create(path).context(format!("could not create `{}`", path.display()))?;
+        let mut out = BufWriter::new(file);
+        self.write_to(&mut out, path, georeferencing, objects)?;
+        out.flush()
+            .context(format!("could not write `{}`", path.display()))
+    }
+
+    /// Streams the template's strings and symbols followed by `objects` to
+    /// `out`, so that only one object and one index block are held at a time.
+    /// `path` names `out` in errors.
+    fn write_to<O: Borrow<OcdObject>>(
+        &self,
+        out: &mut (impl Write + Seek),
+        path: &Path,
+        georeferencing: &Georeferencing,
+        objects: impl IntoIterator<Item = Result<O>>,
+    ) -> Result<()> {
+        let mut prefix = self.header.clone();
         for field in [
             HEADER_FILE_NAME_POS,
             HEADER_FILE_NAME_SIZE,
             HEADER_FIRST_MULTI_REP_BLOCK,
         ] {
-            put_u32(&mut out, field, 0);
+            put_u32(&mut prefix, field, 0);
         }
 
-        let string_index = append_index_blocks(&mut out, STRING_ENTRY_SIZE, self.strings.len());
+        let string_index = append_index_blocks(&mut prefix, STRING_ENTRY_SIZE, self.strings.len());
         put_u32(
-            &mut out,
+            &mut prefix,
             HEADER_FIRST_STRING_BLOCK,
             string_index.first_block,
         );
@@ -339,32 +382,53 @@ impl OcdTemplate {
                 string.data.clone()
             };
 
-            let pos = append_block(&mut out, &data);
-            put_u32(&mut out, entry, pos);
-            put_u32(&mut out, entry + 4, data.len() as u32);
-            put_i32(&mut out, entry + 8, string.string_type);
+            let pos = append_block(&mut prefix, &data);
+            put_u32(&mut prefix, entry, pos);
+            put_u32(&mut prefix, entry + 4, data.len() as u32);
+            put_i32(&mut prefix, entry + 8, string.string_type);
         }
 
-        let symbol_index = append_index_blocks(&mut out, SYMBOL_ENTRY_SIZE, self.symbols.len());
+        let symbol_index = append_index_blocks(&mut prefix, SYMBOL_ENTRY_SIZE, self.symbols.len());
         put_u32(
-            &mut out,
+            &mut prefix,
             HEADER_FIRST_SYMBOL_BLOCK,
             symbol_index.first_block,
         );
 
         for (symbol, entry) in self.symbols.iter().zip(symbol_index.entries) {
-            let pos = append_block(&mut out, &symbol.data);
-            put_u32(&mut out, entry, pos);
+            let pos = append_block(&mut prefix, &symbol.data);
+            put_u32(&mut prefix, entry, pos);
         }
 
-        let object_index = append_index_blocks(&mut out, OBJECT_ENTRY_SIZE, objects.len());
-        put_u32(
-            &mut out,
-            HEADER_FIRST_OBJECT_BLOCK,
-            object_index.first_block,
-        );
+        // The object index blocks are interleaved with the objects: each one
+        // is appended when the previous one is full, and written once the
+        // objects it indexes are
+        let first_object_block = prefix.len().next_multiple_of(8) as u32;
+        put_u32(&mut prefix, HEADER_FIRST_OBJECT_BLOCK, first_object_block);
+        let mut writer = BlockWriter { out, path, len: 0 };
+        writer.append(&prefix)?;
 
-        for (object, entry) in objects.iter().zip(object_index.entries) {
+        let empty_block = vec![0u8; 4 + INDEX_BLOCK_ENTRIES * OBJECT_ENTRY_SIZE];
+        let mut block_pos = writer.append(&empty_block)?;
+        let mut block = empty_block.clone();
+
+        for (count, object) in objects.into_iter().enumerate() {
+            let object = object?;
+            let object = object.borrow();
+
+            if count == MAX_OBJECTS {
+                return Err(CassiniError::InvalidInput {
+                    message: format!("an OCAD file holds at most {MAX_OBJECTS} objects"),
+                });
+            }
+            if count > 0 && count % INDEX_BLOCK_ENTRIES == 0 {
+                let next_block_pos = writer.append(&empty_block)?;
+                put_u32(&mut block, 0, next_block_pos);
+                writer.write_at(block_pos, &block)?;
+                block_pos = next_block_pos;
+                block.copy_from_slice(&empty_block);
+            }
+
             let symbol = self
                 .symbol(object.symbol)
                 .ok_or_else(|| CassiniError::InvalidInput {
@@ -375,29 +439,130 @@ impl OcdTemplate {
                 })?;
 
             let data = encode_object(object);
-            let pos = append_block(&mut out, &data);
+            let pos = writer.append(&data)?;
 
             let min_x = object.points.iter().map(|point| point.x).min().unwrap_or(0);
             let min_y = object.points.iter().map(|point| point.y).min().unwrap_or(0);
             let max_x = object.points.iter().map(|point| point.x).max().unwrap_or(0);
             let max_y = object.points.iter().map(|point| point.y).max().unwrap_or(0);
 
-            put_i32(&mut out, entry, min_x << 8);
-            put_i32(&mut out, entry + 4, min_y << 8);
-            put_i32(&mut out, entry + 8, max_x << 8);
-            put_i32(&mut out, entry + 12, max_y << 8);
-            put_u32(&mut out, entry + 16, pos);
+            let entry = 4 + (count % INDEX_BLOCK_ENTRIES) * OBJECT_ENTRY_SIZE;
+            put_i32(&mut block, entry, min_x << 8);
+            put_i32(&mut block, entry + 4, min_y << 8);
+            put_i32(&mut block, entry + 8, max_x << 8);
+            put_i32(&mut block, entry + 12, max_y << 8);
+            put_u32(&mut block, entry + 16, pos);
             // The size is in bytes. The OCAD documentation's `32 + 8 * n`
             // produces files that OCAD reports as damaged.
-            put_u32(&mut out, entry + 20, data.len() as u32);
-            put_i32(&mut out, entry + 24, object.symbol);
-            out[entry + 28] = object.kind as u8;
-            out[entry + 30] = OBJECT_STATUS_NORMAL;
-            put_i16(&mut out, entry + 32, symbol.dominant_color);
+            put_u32(&mut block, entry + 20, data.len() as u32);
+            put_i32(&mut block, entry + 24, object.symbol);
+            block[entry + 28] = object.kind as u8;
+            block[entry + 30] = OBJECT_STATUS_NORMAL;
+            put_i16(&mut block, entry + 32, symbol.dominant_color);
         }
 
-        Ok(out)
+        writer.write_at(block_pos, &block)
     }
+}
+
+/// Appends 8-byte aligned blocks to an OCD file being written.
+struct BlockWriter<'a, W> {
+    out: &'a mut W,
+    path: &'a Path,
+    len: u64,
+}
+
+impl<W: Write + Seek> BlockWriter<'_, W> {
+    /// Appends `data` at the next 8-byte boundary and returns its offset.
+    fn append(&mut self, data: &[u8]) -> Result<u32> {
+        let pos = self.len.next_multiple_of(8);
+        let end = pos + data.len() as u64;
+        if end > MAX_FILE_SIZE {
+            return Err(CassiniError::InvalidInput {
+                message: format!(
+                    "`{}` would be larger than the {MAX_FILE_SIZE} bytes an OCAD file may hold",
+                    self.path.display()
+                ),
+            });
+        }
+
+        let padding = [0u8; 8];
+        self.out
+            .write_all(&padding[..(pos - self.len) as usize])
+            .and_then(|_| self.out.write_all(data))
+            .context(format!("could not write `{}`", self.path.display()))?;
+        self.len = end;
+        Ok(pos as u32)
+    }
+
+    /// Overwrites the bytes at `pos`, written earlier.
+    fn write_at(&mut self, pos: u32, data: &[u8]) -> Result<()> {
+        self.out
+            .seek(SeekFrom::Start(pos as u64))
+            .and_then(|_| self.out.write_all(data))
+            .and_then(|_| self.out.seek(SeekFrom::Start(self.len)))
+            .map(|_| ())
+            .context(format!("could not write `{}`", self.path.display()))
+    }
+}
+
+/// Writes `object` as an OCD object record, which `read_object_record` reads
+/// back.
+pub fn write_object_record(out: &mut impl Write, object: &OcdObject) -> std::io::Result<()> {
+    out.write_all(&encode_object(object))
+}
+
+/// Reads an object record written by `write_object_record`, or `None` at the
+/// end of `input`.
+pub fn read_object_record(input: &mut impl Read) -> std::io::Result<Option<OcdObject>> {
+    // The end of `input` is only expected between records
+    let mut header = [0u8; OBJECT_HEADER_SIZE];
+    let mut filled = 0;
+    while filled < header.len() {
+        match input.read(&mut header[filled..]) {
+            Ok(0) if filled == 0 => return Ok(None),
+            Ok(0) => return Err(ErrorKind::UnexpectedEof.into()),
+            Ok(read) => filled += read,
+            Err(error) if error.kind() == ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+
+    let read_i32 =
+        |bytes: &[u8], pos: usize| i32::from_le_bytes(bytes[pos..pos + 4].try_into().unwrap());
+    let kind = match header[4] {
+        2 => ObjectKind::Line,
+        3 => ObjectKind::Area,
+        other => {
+            return Err(std::io::Error::new(
+                ErrorKind::InvalidData,
+                format!("unexpected object type {other}"),
+            ))
+        }
+    };
+    let num_items = read_i32(&header, 44) as u32 as usize;
+
+    let mut coordinates = vec![0u8; 8 * num_items];
+    input.read_exact(&mut coordinates)?;
+    let points = coordinates
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|coordinate| {
+            let y = read_i32(coordinate, 4);
+            OcdPoint {
+                x: read_i32(coordinate, 0) >> 8,
+                y: y >> 8,
+                y_flags: y & 0xff,
+            }
+        })
+        .collect();
+
+    Ok(Some(OcdObject {
+        symbol: read_i32(&header, 0),
+        kind,
+        points,
+    }))
 }
 
 fn encode_object(object: &OcdObject) -> Vec<u8> {
@@ -572,18 +737,18 @@ impl ByteReader<'_> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
-    struct WrittenObject {
-        object: OcdObject,
+    pub(crate) struct WrittenObject {
+        pub(crate) object: OcdObject,
         bounds: [i32; 4],
         size: usize,
         status: u8,
         color: i16,
     }
 
-    fn read_objects(bytes: &[u8]) -> Vec<WrittenObject> {
+    pub(crate) fn read_objects(bytes: &[u8]) -> Vec<WrittenObject> {
         let reader = ByteReader {
             bytes,
             source: Path::new("test.ocd"),
@@ -799,6 +964,80 @@ mod tests {
 
         assert_eq!(written.len(), 600);
         assert_eq!(written[599].object, objects[599]);
+    }
+
+    #[test]
+    fn reads_back_object_records() {
+        let objects = vec![
+            OcdObject {
+                symbol: 101000,
+                kind: ObjectKind::Line,
+                points: vec![point(-100, -200), point(300, 400)],
+            },
+            OcdObject {
+                symbol: 403000,
+                kind: ObjectKind::Area,
+                points: vec![
+                    point(0, 0),
+                    point(1_000, 0),
+                    point(0, 1_000),
+                    OcdPoint {
+                        x: 100,
+                        y: 100,
+                        y_flags: FLAG_HOLE,
+                    },
+                    point(200, 100),
+                    point(100, 200),
+                ],
+            },
+        ];
+
+        let mut bytes = vec![];
+        for object in &objects {
+            write_object_record(&mut bytes, object).unwrap();
+        }
+        let mut input = &bytes[..];
+        let mut read = vec![];
+        while let Some(object) = read_object_record(&mut input).unwrap() {
+            read.push(object);
+        }
+
+        assert_eq!(read, objects);
+
+        let mut truncated = &bytes[..OBJECT_HEADER_SIZE / 2];
+        assert!(read_object_record(&mut truncated).is_err());
+    }
+
+    #[test]
+    fn writes_object_index_blocks_between_the_objects() {
+        let template = OcdTemplate::load(None).unwrap();
+        let objects: Vec<OcdObject> = (0..600)
+            .map(|index| OcdObject {
+                symbol: 505000,
+                kind: ObjectKind::Line,
+                points: vec![point(index, 0), point(index, 10)],
+            })
+            .collect();
+
+        let bytes = template
+            .write(&template.georeferencing(0, 0), &objects)
+            .unwrap();
+
+        // The second block follows the objects the first one indexes
+        let first_block = u32::from_le_bytes(
+            bytes[HEADER_FIRST_OBJECT_BLOCK..HEADER_FIRST_OBJECT_BLOCK + 4]
+                .try_into()
+                .unwrap(),
+        ) as usize;
+        let second_block =
+            u32::from_le_bytes(bytes[first_block..first_block + 4].try_into().unwrap()) as usize;
+        let last_object_of_first_block = u32::from_le_bytes(
+            bytes[first_block + 4 + 255 * OBJECT_ENTRY_SIZE + 16..][..4]
+                .try_into()
+                .unwrap(),
+        ) as usize;
+        assert!(second_block > last_object_of_first_block);
+        assert_eq!(second_block % 8, 0);
     }
 
     #[test]

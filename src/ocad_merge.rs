@@ -4,7 +4,9 @@
 //! batch shares. A line that ends on an edge shared with another tile is
 //! joined to the line of the same symbol that ends at the same place on the
 //! other side. Areas that share a stretch of such an edge with an area of the
-//! same symbol on the other side are unioned with it.
+//! same symbol on the other side are unioned with it. The union covers every
+//! area of the group, so areas of the same symbol that overlap one another
+//! within a tile are unioned too when one of them reaches a seam.
 
 use crate::ocd::{ObjectKind, OcdObject, OcdPoint, FLAG_HOLE};
 use i_overlay::{
@@ -15,7 +17,7 @@ use i_overlay::{
     },
     i_float::int::point::IntPoint,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// A tile's objects, clipped to its bounds, in paper units.
 pub struct TileObjects {
@@ -35,6 +37,11 @@ pub struct Bounds {
 /// Points clipped to a tile edge are computed in projected coordinates, and
 /// may round to the paper unit next to the edge.
 const EDGE_TOLERANCE: i32 = 1;
+
+/// A joined line end closer than this, in paper units, to the segment between
+/// its neighbours is a vertex the tile edge cut a straight segment at, and is
+/// dropped. The cut point and both neighbours are rounded to paper units.
+const STRAIGHT_JOIN_TOLERANCE: f64 = 2.0;
 
 /// The line a tile edge lies on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -73,6 +80,51 @@ impl Bounds {
     }
 }
 
+/// The ends of a line object, start first.
+fn line_ends(object: &OcdObject) -> impl Iterator<Item = (bool, OcdPoint)> + '_ {
+    let first = object.points.first().map(|point| (true, *point));
+    let last = object.points.last().map(|point| (false, *point));
+    first.into_iter().chain(last)
+}
+
+/// The stretches of `edge_line` that the rings of an area object run along,
+/// as the positions of their ends along it.
+fn edge_contacts(object: &OcdObject, edge_line: EdgeLine) -> impl Iterator<Item = (i32, i32)> + '_ {
+    get_rings(&object.points)
+        .into_iter()
+        .flat_map(|ring| ring.windows(2))
+        .filter(move |segment| edge_line.contains(&segment[0]) && edge_line.contains(&segment[1]))
+        .map(move |segment| {
+            let (a, b) = (
+                edge_line.position(&segment[0]),
+                edge_line.position(&segment[1]),
+            );
+            (a.min(b), a.max(b))
+        })
+}
+
+/// Whether merging may change `object`: a line ending on an edge of
+/// `bounds`, or an area running along one.
+fn reaches_edge(object: &OcdObject, bounds: &Bounds) -> bool {
+    bounds
+        .edge_lines()
+        .into_iter()
+        .any(|edge_line| match object.kind {
+            ObjectKind::Line => line_ends(object).any(|(_, point)| edge_line.contains(&point)),
+            ObjectKind::Area => edge_contacts(object, edge_line).next().is_some(),
+        })
+}
+
+/// Removes from `tile` and returns its objects that do not reach its edges,
+/// which `merge_tile_objects` would leave unchanged.
+pub fn take_interior_objects(tile: &mut TileObjects) -> Vec<OcdObject> {
+    let (edge, interior) = std::mem::take(&mut tile.objects)
+        .into_iter()
+        .partition(|object| reaches_edge(object, &tile.bounds));
+    tile.objects = edge;
+    interior
+}
+
 /// The stretch of edge two tiles share.
 struct Seam {
     line: EdgeLine,
@@ -87,13 +139,12 @@ impl Seam {
     }
 }
 
-fn get_seams(tiles: &[TileObjects]) -> Vec<Seam> {
+fn get_seams(bounds: &[Bounds]) -> Vec<Seam> {
     let mut seams = vec![];
 
-    for (first_index, first) in tiles.iter().enumerate() {
-        for (second_index, second) in tiles.iter().enumerate() {
-            let (a, b) = (first.bounds, second.bounds);
-            // `first` west or south of `second`
+    for (first_index, a) in bounds.iter().enumerate() {
+        for (second_index, b) in bounds.iter().enumerate() {
+            // `a` west or south of `b`
             let (line, start, end) = if a.max_x == b.min_x {
                 (
                     EdgeLine::Vertical(a.max_x),
@@ -124,61 +175,108 @@ fn get_seams(tiles: &[TileObjects]) -> Vec<Seam> {
     seams
 }
 
+/// An object and the index of its tile.
+struct TileObject {
+    tile: usize,
+    object: OcdObject,
+}
+
+/// The tile edges, by tile index, that are part of a seam, the only ones
+/// objects are merged across.
+struct SeamEdges<'a> {
+    bounds: &'a [Bounds],
+    seams: &'a [Seam],
+    edges: HashSet<(usize, EdgeLine)>,
+}
+
+impl<'a> SeamEdges<'a> {
+    fn new(bounds: &'a [Bounds], seams: &'a [Seam]) -> Self {
+        Self {
+            bounds,
+            seams,
+            edges: seams
+                .iter()
+                .flat_map(|seam| seam.tiles.map(|tile| (tile, seam.line)))
+                .collect(),
+        }
+    }
+
+    /// The edge lines of `tile` that are part of a seam.
+    fn of_tile(&self, tile: usize) -> impl Iterator<Item = EdgeLine> + '_ {
+        self.bounds[tile]
+            .edge_lines()
+            .into_iter()
+            .filter(move |edge_line| self.edges.contains(&(tile, *edge_line)))
+    }
+}
+
 /// Joins lines and unions areas across the seams of `tiles`. Line ends on
 /// either side of a seam are joined when they are at most `join_tolerance`
 /// paper units apart.
 pub fn merge_tile_objects(tiles: Vec<TileObjects>, join_tolerance: i32) -> Vec<OcdObject> {
-    let seams = get_seams(&tiles);
     let bounds: Vec<Bounds> = tiles.iter().map(|tile| tile.bounds).collect();
-    let mut objects: Vec<(usize, OcdObject)> = vec![];
+    let seams = get_seams(&bounds);
+    let seam_edges = SeamEdges::new(&bounds, &seams);
+
+    let mut lines: Vec<TileObject> = vec![];
+    let mut areas: Vec<TileObject> = vec![];
     for (tile_index, tile) in tiles.into_iter().enumerate() {
-        objects.extend(tile.objects.into_iter().map(|object| (tile_index, object)));
+        for object in tile.objects {
+            let tile_object = TileObject {
+                tile: tile_index,
+                object,
+            };
+            match tile_object.object.kind {
+                ObjectKind::Line => lines.push(tile_object),
+                ObjectKind::Area => areas.push(tile_object),
+            }
+        }
     }
 
-    let mut merged: Vec<OcdObject> = vec![];
-    let mut is_merged = vec![false; objects.len()];
-
-    let lines: Vec<usize> = (0..objects.len())
-        .filter(|index| objects[*index].1.kind == ObjectKind::Line)
-        .collect();
-    for chain in get_line_chains(&objects, &lines, &bounds, &seams, join_tolerance) {
+    let mut joined_lines: Vec<OcdObject> = vec![];
+    let mut is_joined = vec![false; lines.len()];
+    for chain in get_line_chains(&lines, &seam_edges, join_tolerance) {
         if chain.lines.len() < 2 && !chain.closed {
             continue;
         }
         for (line, _) in &chain.lines {
-            is_merged[lines[*line]] = true;
+            is_joined[*line] = true;
         }
-        merged.push(join_lines(&objects, &lines, &chain));
+        joined_lines.push(join_lines(&lines, &chain));
     }
 
-    let areas: Vec<usize> = (0..objects.len())
-        .filter(|index| objects[*index].1.kind == ObjectKind::Area)
-        .collect();
-    for group in get_area_groups(&objects, &areas, &bounds, &seams) {
+    let mut unioned_areas: Vec<OcdObject> = vec![];
+    let mut is_unioned = vec![false; areas.len()];
+    for group in get_area_groups(&areas, &seam_edges) {
         if group.len() < 2 {
             continue;
         }
         let group_objects: Vec<&OcdObject> = group
             .iter()
             .map(|area| {
-                is_merged[areas[*area]] = true;
-                &objects[areas[*area]].1
+                is_unioned[*area] = true;
+                &areas[*area].object
             })
             .collect();
-        merged.extend(union_areas(&group_objects));
+        unioned_areas.extend(union_areas(&group_objects));
     }
 
-    objects
-        .into_iter()
-        .zip(is_merged)
-        .filter(|(_, is_merged)| !is_merged)
-        .map(|((_, object), _)| object)
-        .chain(merged)
+    let unchanged = |objects: Vec<TileObject>, is_changed: Vec<bool>| {
+        objects
+            .into_iter()
+            .zip(is_changed)
+            .filter(|(_, is_changed)| !is_changed)
+            .map(|(tile_object, _)| tile_object.object)
+    };
+    unchanged(lines, is_joined)
+        .chain(joined_lines)
+        .chain(unchanged(areas, is_unioned))
+        .chain(unioned_areas)
         .collect()
 }
 
 /// An end of a line, by index in the list of lines.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct LineEnd {
     line: usize,
     is_start: bool,
@@ -193,27 +291,20 @@ struct LineChain {
 /// Pairs the line ends on either side of each seam, closest pairs first, and
 /// returns the chains of lines the pairs form, single lines included.
 fn get_line_chains(
-    objects: &[(usize, OcdObject)],
-    lines: &[usize],
-    bounds: &[Bounds],
-    seams: &[Seam],
+    lines: &[TileObject],
+    seam_edges: &SeamEdges,
     join_tolerance: i32,
 ) -> Vec<LineChain> {
-    // The line ends on each edge of each tile
+    // The line ends on each seam edge of each tile
     let mut ends_on_edges: HashMap<(usize, EdgeLine), Vec<(LineEnd, OcdPoint)>> = HashMap::new();
-    for (line, object_index) in lines.iter().enumerate() {
-        let (tile, object) = &objects[*object_index];
-        let (Some(first), Some(last)) = (object.points.first(), object.points.last()) else {
-            continue;
-        };
-
-        for (is_start, point) in [(true, first), (false, last)] {
-            for edge_line in bounds[*tile].edge_lines() {
-                if edge_line.contains(point) {
+    for (line, tile_object) in lines.iter().enumerate() {
+        for (is_start, point) in line_ends(&tile_object.object) {
+            for edge_line in seam_edges.of_tile(tile_object.tile) {
+                if edge_line.contains(&point) {
                     ends_on_edges
-                        .entry((*tile, edge_line))
+                        .entry((tile_object.tile, edge_line))
                         .or_default()
-                        .push((LineEnd { line, is_start }, *point));
+                        .push((LineEnd { line, is_start }, point));
                 }
             }
         }
@@ -221,26 +312,43 @@ fn get_line_chains(
 
     let mut candidates: Vec<(i64, LineEnd, LineEnd)> = vec![];
     let max_squared_distance = (join_tolerance as i64).pow(2);
-    for seam in seams {
+    for seam in seam_edges.seams {
         let [Some(first_ends), Some(second_ends)] =
             seam.tiles.map(|tile| ends_on_edges.get(&(tile, seam.line)))
         else {
             continue;
         };
 
+        // The ends of the second side by symbol and position along the seam,
+        // to find those within the tolerance of each end of the first side
+        let symbol = |end: &LineEnd| lines[end.line].object.symbol;
+        let mut second_ends: Vec<(i32, i32, LineEnd, OcdPoint)> = second_ends
+            .iter()
+            .map(|(end, point)| (symbol(end), seam.line.position(point), *end, *point))
+            .filter(|(_, position, ..)| seam.contains(*position))
+            .collect();
+        second_ends.sort_unstable_by_key(|(symbol, position, end, _)| (*symbol, *position, *end));
+
         for (first_end, first_point) in first_ends {
-            if !seam.contains(seam.line.position(first_point)) {
+            let position = seam.line.position(first_point);
+            if !seam.contains(position) {
                 continue;
             }
-            let symbol = objects[lines[first_end.line]].1.symbol;
+            let symbol = symbol(first_end);
 
-            for (second_end, second_point) in second_ends {
+            let nearby = second_ends.partition_point(|(other_symbol, other_position, ..)| {
+                (*other_symbol, *other_position) < (symbol, position - join_tolerance)
+            });
+            for (_, _, second_end, second_point) in
+                second_ends[nearby..]
+                    .iter()
+                    .take_while(|(other_symbol, other_position, ..)| {
+                        (*other_symbol, *other_position) <= (symbol, position + join_tolerance)
+                    })
+            {
                 let squared_distance = (first_point.x as i64 - second_point.x as i64).pow(2)
                     + (first_point.y as i64 - second_point.y as i64).pow(2);
-                if squared_distance <= max_squared_distance
-                    && objects[lines[second_end.line]].1.symbol == symbol
-                    && seam.contains(seam.line.position(second_point))
-                {
+                if squared_distance <= max_squared_distance {
                     candidates.push((squared_distance, *first_end, *second_end));
                 }
             }
@@ -313,34 +421,46 @@ fn get_line_chains(
 }
 
 /// Concatenates the lines of `chain`. The ends joined are within the join
-/// tolerance, they are moved half way.
-fn join_lines(objects: &[(usize, OcdObject)], lines: &[usize], chain: &LineChain) -> OcdObject {
+/// tolerance, they are moved half way, and dropped where the line runs
+/// straight through them.
+fn join_lines(lines: &[TileObject], chain: &LineChain) -> OcdObject {
     let mut points: Vec<OcdPoint> = vec![];
 
     for (line, reversed) in &chain.lines {
-        let mut line_points = objects[lines[*line]].1.points.clone();
+        let mut line_points = lines[*line].object.points.clone();
         if *reversed {
             line_points.reverse();
         }
 
-        match points.last_mut() {
-            Some(last) => {
-                *last = midpoint(last, &line_points[0]);
-                points.extend_from_slice(&line_points[1..]);
-            }
-            None => points = line_points,
+        if points.is_empty() {
+            points = line_points;
+            continue;
         }
+
+        let joined = midpoint(points.last().unwrap(), &line_points[0]);
+        points.pop();
+        if !is_on_segment(&joined, points.last().unwrap(), &line_points[1]) {
+            points.push(joined);
+        }
+        points.extend_from_slice(&line_points[1..]);
     }
 
     if chain.closed {
         let joined = midpoint(&points[0], &points[points.len() - 1]);
         points[0] = joined;
         *points.last_mut().unwrap() = joined;
+
+        // The closing point moves to the next vertex when it is dropped
+        let len = points.len();
+        if len > 4 && is_on_segment(&joined, &points[len - 2], &points[1]) {
+            points.remove(0);
+            *points.last_mut().unwrap() = points[0];
+        }
     }
     points.dedup();
 
     OcdObject {
-        symbol: objects[lines[chain.lines[0].0]].1.symbol,
+        symbol: lines[chain.lines[0].0].object.symbol,
         kind: ObjectKind::Line,
         points,
     }
@@ -354,7 +474,21 @@ fn midpoint(a: &OcdPoint, b: &OcdPoint) -> OcdPoint {
     }
 }
 
-/// A stretch of a tile edge that an area, by index in the list of areas,
+/// Whether `point` is within `STRAIGHT_JOIN_TOLERANCE` of the segment from
+/// `a` to `b`.
+fn is_on_segment(point: &OcdPoint, a: &OcdPoint, b: &OcdPoint) -> bool {
+    let (dx, dy) = ((b.x - a.x) as f64, (b.y - a.y) as f64);
+    let (px, py) = ((point.x - a.x) as f64, (point.y - a.y) as f64);
+    let squared_length = dx * dx + dy * dy;
+    let t = if squared_length == 0.0 {
+        0.0
+    } else {
+        ((px * dx + py * dy) / squared_length).clamp(0.0, 1.0)
+    };
+    (px - t * dx).powi(2) + (py - t * dy).powi(2) <= STRAIGHT_JOIN_TOLERANCE.powi(2)
+}
+
+/// A stretch of a seam edge that an area, by index in the list of areas,
 /// runs along.
 struct EdgeContact {
     area: usize,
@@ -364,56 +498,60 @@ struct EdgeContact {
 
 /// Groups the areas, by index in the list of areas, that share a stretch of
 /// a seam with an area of the same symbol on the other side, transitively.
-fn get_area_groups(
-    objects: &[(usize, OcdObject)],
-    areas: &[usize],
-    bounds: &[Bounds],
-    seams: &[Seam],
-) -> Vec<Vec<usize>> {
+fn get_area_groups(areas: &[TileObject], seam_edges: &SeamEdges) -> Vec<Vec<usize>> {
     let mut contacts: HashMap<(usize, EdgeLine), Vec<EdgeContact>> = HashMap::new();
-    for (area, object_index) in areas.iter().enumerate() {
-        let (tile, object) = &objects[*object_index];
-
-        for ring in get_rings(&object.points) {
-            for segment in ring.windows(2) {
-                for edge_line in bounds[*tile].edge_lines() {
-                    if edge_line.contains(&segment[0]) && edge_line.contains(&segment[1]) {
-                        let (a, b) = (
-                            edge_line.position(&segment[0]),
-                            edge_line.position(&segment[1]),
-                        );
-                        contacts
-                            .entry((*tile, edge_line))
-                            .or_default()
-                            .push(EdgeContact {
-                                area,
-                                start: a.min(b),
-                                end: a.max(b),
-                            });
-                    }
-                }
+    for (area, tile_object) in areas.iter().enumerate() {
+        for edge_line in seam_edges.of_tile(tile_object.tile) {
+            for (start, end) in edge_contacts(&tile_object.object, edge_line) {
+                contacts
+                    .entry((tile_object.tile, edge_line))
+                    .or_default()
+                    .push(EdgeContact { area, start, end });
             }
         }
     }
 
     let mut groups = UnionFind::new(areas.len());
-    for seam in seams {
+    for seam in seam_edges.seams {
         let [Some(first_contacts), Some(second_contacts)] =
             seam.tiles.map(|tile| contacts.get(&(tile, seam.line)))
         else {
             continue;
         };
 
-        for first in first_contacts {
-            let symbol = objects[areas[first.area]].1.symbol;
+        // Sweeps the contacts of both sides, within the seam, by symbol and
+        // along the seam. A contact overlaps the contacts of the other side
+        // that started before it and end after its start.
+        let mut sweep: Vec<(i32, i32, i32, usize, usize)> = [first_contacts, second_contacts]
+            .into_iter()
+            .enumerate()
+            .flat_map(|(side, side_contacts)| {
+                side_contacts.iter().filter_map(move |contact| {
+                    let start = contact.start.max(seam.start);
+                    let end = contact.end.min(seam.end);
+                    (start < end).then(|| {
+                        let symbol = areas[contact.area].object.symbol;
+                        (symbol, start, end, side, contact.area)
+                    })
+                })
+            })
+            .collect();
+        sweep.sort_unstable();
 
-            for second in second_contacts {
-                let overlap_start = first.start.max(second.start).max(seam.start);
-                let overlap_end = first.end.min(second.end).min(seam.end);
-                if overlap_start < overlap_end && objects[areas[second.area]].1.symbol == symbol {
-                    groups.union(first.area, second.area);
-                }
+        let mut symbol = None;
+        let mut active: [Vec<(i32, usize)>; 2] = [vec![], vec![]];
+        for (contact_symbol, start, end, side, area) in sweep {
+            if symbol != Some(contact_symbol) {
+                symbol = Some(contact_symbol);
+                active = [vec![], vec![]];
             }
+            for side_active in &mut active {
+                side_active.retain(|(active_end, _)| *active_end > start);
+            }
+            for (_, other) in &active[1 - side] {
+                groups.union(area, *other);
+            }
+            active[side].push((end, area));
         }
     }
 
@@ -608,7 +746,7 @@ mod tests {
 
     #[test]
     fn finds_the_seams_of_tiles_sharing_an_edge() {
-        let tiles: Vec<TileObjects> = [
+        let seams = get_seams(&[
             WEST,
             EAST,
             // North of `EAST`, diagonal to `WEST`
@@ -618,15 +756,7 @@ mod tests {
                 max_x: 100,
                 max_y: 200,
             },
-        ]
-        .into_iter()
-        .map(|bounds| TileObjects {
-            bounds,
-            objects: vec![],
-        })
-        .collect();
-
-        let seams = get_seams(&tiles);
+        ]);
 
         let found: Vec<(EdgeLine, i32, i32, [usize; 2])> = seams
             .iter()
@@ -646,11 +776,22 @@ mod tests {
         let objects = merge(
             vec![line(101000, &[(-50, 10), (0, 20)])],
             // Drawn east to west, ending one unit off the west line's end
-            vec![line(101000, &[(50, 30), (0, 21)])],
+            vec![line(101000, &[(50, 50), (0, 21)])],
         );
 
         assert_eq!(objects.len(), 1);
-        assert_eq!(objects[0].points, points(&[(-50, 10), (0, 20), (50, 30)]));
+        assert_eq!(objects[0].points, points(&[(-50, 10), (0, 20), (50, 50)]));
+    }
+
+    #[test]
+    fn drops_the_vertices_where_seams_cut_straight_lines() {
+        let objects = merge(
+            vec![line(101000, &[(-50, 10), (0, 20)])],
+            vec![line(101000, &[(0, 20), (50, 31)])],
+        );
+
+        assert_eq!(objects.len(), 1);
+        assert_eq!(objects[0].points, points(&[(-50, 10), (50, 31)]));
     }
 
     #[test]
@@ -661,9 +802,11 @@ mod tests {
         );
 
         assert_eq!(objects.len(), 1);
+        // The rectangle's corners, closed, without the points on the seam
         let points = &objects[0].points;
-        assert_eq!(points.len(), 7);
+        assert_eq!(points.len(), 5);
         assert_eq!(points.first(), points.last());
+        assert!(points.iter().all(|point| point.x != 0));
     }
 
     #[test]
@@ -747,6 +890,42 @@ mod tests {
         assert_eq!(ring_area(rings[1]), 20 * 20);
         assert_eq!(rings[1][0].y_flags, FLAG_HOLE);
         assert!(merged.points.iter().all(|point| point.x != 0));
+    }
+
+    #[test]
+    fn unions_areas_along_a_seam_with_several_areas_across() {
+        let objects = merge(
+            vec![area(406000, &[&[(-50, 10), (0, 10), (0, 90), (-50, 90)]])],
+            vec![
+                area(406000, &[&[(0, 20), (50, 20), (50, 30), (0, 30)]]),
+                area(406000, &[&[(0, 50), (50, 50), (50, 60), (0, 60)]]),
+                area(406000, &[&[(0, 80), (50, 80), (50, 85), (0, 85)]]),
+            ],
+        );
+
+        assert_eq!(objects.len(), 1);
+        assert_eq!(ring_area(&objects[0].points), 50 * 80 + 50 * 25);
+    }
+
+    #[test]
+    fn takes_the_objects_away_from_the_tile_edges() {
+        let mut tile = TileObjects {
+            bounds: EAST,
+            objects: vec![
+                line(101000, &[(0, 10), (50, 10)]),
+                line(101000, &[(10, 10), (50, 10)]),
+                area(406000, &[&[(0, 20), (50, 20), (50, 30), (0, 30)]]),
+                // Touching the edge at a vertex only
+                area(406000, &[&[(0, 50), (50, 40), (50, 60)]]),
+            ],
+        };
+
+        let interior = take_interior_objects(&mut tile);
+
+        assert_eq!(tile.objects.len(), 2);
+        assert_eq!(interior.len(), 2);
+        assert_eq!(interior[0].kind, ObjectKind::Line);
+        assert_eq!(interior[1].kind, ObjectKind::Area);
     }
 
     #[test]

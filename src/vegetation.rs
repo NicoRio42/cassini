@@ -69,6 +69,28 @@ pub(crate) struct VegetationDensities {
 }
 
 impl VegetationRasters {
+    /// Rasters of `width` x `height` pixels, row-major from the north-west
+    /// corner.
+    #[cfg(test)]
+    pub(crate) fn from_pixels(
+        width: u32,
+        height: u32,
+        high: Vec<u8>,
+        medium: Vec<u8>,
+        low: Vec<u8>,
+    ) -> Self {
+        let image = |pixels: Vec<u8>| TifImage {
+            pixels,
+            width,
+            height,
+        };
+        Self {
+            high: image(high),
+            medium: image(medium),
+            low: image(low),
+        }
+    }
+
     /// Computes the densities the vegetation is classified from, for both the
     /// PNG renderer and the OCAD export.
     pub(crate) fn densities(
@@ -779,7 +801,8 @@ mod tests {
             height: 5,
         };
         let config = Config::default();
-        for value in 0..=5 {
+        // Covers every class with the default thresholds, of each mode
+        for value in 0..=7 {
             let image = || TifImage {
                 pixels: vec![value; width * height],
                 width: width as u32,
@@ -797,17 +820,17 @@ mod tests {
                 UndergrowthMode::Symbol409,
             ] {
                 let optimized = classify_vegetation(&rasters, interior, &config, &mode);
-                let expected_high = u8::from(value > 1);
+                let expected_high = u8::from(value as f32 > config.yellow_threshold);
                 let density = if matches!(mode, UndergrowthMode::Merge) {
                     value * 2
                 } else {
                     value
-                };
-                let expected_green = if density > 3 {
+                } as f32;
+                let expected_green = if density > config.green_threshold_3 {
                     3
-                } else if density > 2 {
+                } else if density > config.green_threshold_2 {
                     2
-                } else if density > 1 {
+                } else if density > config.green_threshold_1 {
                     1
                 } else {
                     0
@@ -816,7 +839,7 @@ mod tests {
                     matches!(
                         mode,
                         UndergrowthMode::Symbol406 | UndergrowthMode::Symbol409
-                    ) && value > 1,
+                    ) && value as f32 > config.low_vegetation_density_threshold,
                 );
                 assert!(optimized.high.iter().all(|&class| class == expected_high));
                 assert!(

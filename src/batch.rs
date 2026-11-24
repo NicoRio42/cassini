@@ -5,12 +5,13 @@ use crate::{
     helpers::remove_if_exists,
     lidar::generate_dem_and_vegetation_density_tiff_images_from_laz_file,
     merge::merge_maps,
-    ocad_export::{get_tile_objects, write_merged_ocd_file, MERGED_OCD_FILE_NAME},
-    ocad_merge::TileObjects,
-    render::{
-        cleanup_render_step_files,
-        generate_png_from_dem_vegetation_density_tiff_images_and_vector_file, RenderOptions,
+    ocad_export::{
+        get_batch_georeferencing, prepare_tile_for_merge, write_merged_ocd_file,
+        MERGED_OCD_FILE_NAME,
     },
+    ocad_merge::TileObjects,
+    ocd::{Georeferencing, OcdTemplate},
+    render::{cleanup_render_step_files, render_tile_map, RenderOptions},
     tile::{Tile, TileWithNeighbors},
 };
 use las::raw::Header;
@@ -26,6 +27,14 @@ use std::{
 /// A worker thread processing a chunk of tiles, with the first tile of the
 /// chunk to report a panic.
 type Worker<T> = (Option<TileId>, JoinHandle<Vec<Result<T>>>);
+
+/// The OCAD export of a batch to a single merged file.
+#[derive(Clone)]
+struct MergedOcadExport {
+    template: Arc<OcdTemplate>,
+    /// The tiles are exported in the coordinates of the merged file.
+    georeferencing: Georeferencing,
+}
 
 pub fn batch(
     input_dir: &str,
@@ -51,12 +60,16 @@ pub fn batch(
     let tiles_arc = Arc::new(tiles.clone());
     let chunk_size = tiles.len().div_ceil(number_of_threads);
 
-    // The tiles are exported in the coordinates of the merged OCAD file
-    let ocad_georeferencing = options.ocad.as_ref().map(|ocad| {
-        let (min_x, min_y, max_x, max_y) = get_batch_extent(&tiles);
-        ocad.template
-            .georeferencing((min_x + max_x) / 2, (min_y + max_y) / 2)
-    });
+    let ocad_export = options
+        .ocad
+        .as_ref()
+        .map(|ocad| -> Result<MergedOcadExport> {
+            Ok(MergedOcadExport {
+                template: ocad.template.clone(),
+                georeferencing: get_batch_georeferencing(&ocad.template, get_batch_extent(&tiles))?,
+            })
+        })
+        .transpose()?;
     let merged_ocd_path = Path::new(output_dir).join(MERGED_OCD_FILE_NAME);
     remove_if_exists(&merged_ocd_path).context(format!(
         "could not remove stale merged map `{}`",
@@ -138,6 +151,7 @@ pub fn batch(
 
         let cloned_options = options.clone();
         let cloned_config = config.clone();
+        let cloned_ocad_export = ocad_export.clone();
 
         let spawned_thread = spawn(move || {
             chunk
@@ -148,17 +162,18 @@ pub fn batch(
                         tile.tile.min_x, tile.tile.min_y, tile.tile.max_x, tile.tile.max_y
                     );
 
-                    let features =
-                        generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
-                            tile.tile.clone(),
-                            tile.neighbors.clone(),
-                            &cloned_options,
-                            &cloned_config,
-                        )?;
+                    let features = render_tile_map(
+                        tile.tile.clone(),
+                        tile.neighbors.clone(),
+                        &cloned_options,
+                        &cloned_config,
+                    )?;
 
-                    ocad_georeferencing
-                        .map(|georeferencing| {
-                            get_tile_objects(&tile.tile, &georeferencing, &features)
+                    cloned_ocad_export
+                        .as_ref()
+                        .zip(features)
+                        .map(|(export, features)| {
+                            prepare_tile_for_merge(&tile.tile, &export.georeferencing, &features)
                         })
                         .transpose()
                 })
@@ -168,7 +183,7 @@ pub fn batch(
         handles.push((first_tile, spawned_thread));
     }
 
-    let (tile_objects, failures) = collect_worker_results(handles, Stage::Render);
+    let (seam_objects, failures) = collect_worker_results(handles, Stage::Render);
     if !failures.is_empty() {
         return Err(CassiniError::Batch {
             failure_count: failures.len(),
@@ -176,16 +191,17 @@ pub fn batch(
         });
     }
 
-    merge_maps(output_dir, tiles, &config)?;
-
-    if let (Some(ocad), Some(georeferencing)) = (&options.ocad, ocad_georeferencing) {
+    if let Some(export) = &ocad_export {
         write_merged_ocd_file(
             Path::new(output_dir),
-            &ocad.template,
-            &georeferencing,
-            tile_objects.into_iter().flatten().collect(),
+            &export.template,
+            &export.georeferencing,
+            tiles.iter().map(|tile| &tile.tile),
+            seam_objects.into_iter().flatten().collect(),
         )?;
     }
+
+    merge_maps(output_dir, tiles, &config)?;
 
     Ok(())
 }
