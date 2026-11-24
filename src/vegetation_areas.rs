@@ -206,12 +206,12 @@ fn difference(subject: &Shapes, clip: &Shapes) -> Shapes {
 /// The vectorized window: the tile and a margin of `MARGIN` cells, row-major
 /// from the north-west corner.
 #[derive(Clone, Copy)]
-struct Grid {
+struct Window {
     width: usize,
     height: usize,
 }
 
-impl Grid {
+impl Window {
     fn len(self) -> usize {
         self.width * self.height
     }
@@ -310,7 +310,7 @@ impl Grid {
 
 /// Fields over the grid, positive inside their symbol's area.
 struct VegetationFields {
-    grid: Grid,
+    grid: Window,
     /// Whether each cell has a value: it has LiDAR data, or it is in the
     /// margin and extended from a tile cell with data.
     valid: Vec<bool>,
@@ -340,7 +340,7 @@ impl VegetationFields {
             width: interior.width + 2 * MARGIN,
             height: interior.height + 2 * MARGIN,
         };
-        let grid = Grid {
+        let grid = Window {
             width: window.width,
             height: window.height,
         };
@@ -442,7 +442,7 @@ fn generalise_area(
     allowed: &[bool],
     valid: &[bool],
     rules: &AreaRules,
-    grid: Grid,
+    grid: Window,
 ) {
     remove_thin_parts(field, Some(allowed), None, rules.min_width, grid);
     remove_small_islands(field, Some(allowed), None, rules.min_area, grid);
@@ -465,7 +465,7 @@ fn remove_thin_parts(
     allowed: Option<&[bool]>,
     keep: Option<&[bool]>,
     min_width: f32,
-    grid: Grid,
+    grid: Window,
 ) {
     let mask = get_mask(field, allowed);
     let radius = (min_width / 2.0) as f64;
@@ -497,7 +497,7 @@ fn remove_small_islands(
     allowed: Option<&[bool]>,
     keep: Option<&[bool]>,
     min_area: usize,
-    grid: Grid,
+    grid: Window,
 ) {
     let mask = get_mask(field, allowed);
 
@@ -522,7 +522,7 @@ fn fill_small_holes(
     allowed: Option<&[bool]>,
     fillable: &[bool],
     min_area: usize,
-    grid: Grid,
+    grid: Window,
 ) {
     let outside: Vec<bool> = get_mask(field, allowed)
         .into_iter()
@@ -548,7 +548,7 @@ mod tests {
     use super::*;
     use shapefile::PolygonRing;
 
-    const GRID: Grid = Grid {
+    const GRID: Window = Window {
         width: 20,
         height: 20,
     };
@@ -779,8 +779,8 @@ mod tests {
     }
 
     /// A grid of a 4 x 4 tile and its margin, without data in the margin.
-    fn grid_without_neighbors() -> (Grid, Vec<bool>) {
-        let grid = Grid {
+    fn grid_without_neighbors() -> (Window, Vec<bool>) {
+        let grid = Window {
             width: 2 * MARGIN + 4,
             height: 2 * MARGIN + 4,
         };

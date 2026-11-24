@@ -6,10 +6,10 @@ use shapefile::{Point, Polyline, Reader};
 use std::fs::{create_dir_all, File};
 use std::io::BufReader;
 use std::time::Instant;
-use tiff::decoder::{Decoder, DecodingResult};
 
 use crate::constants::BUFFER;
 use crate::error::{CassiniError, Result, ResultContext};
+use crate::grid::Grid;
 use crate::tile::Tile;
 
 pub fn pullautin_smooth_contours(
@@ -313,40 +313,11 @@ pub fn pullautin_smooth_contours(
 }
 
 pub fn get_elevation_matrix_from_dem(tile: &Tile) -> Result<Vec<Vec<f64>>> {
-    let dem_path = tile.render_dir_path.join("dem_2m_with_buffer.tif");
-    let dem_tif_file =
-        File::open(&dem_path).context(format!("could not open `{}`", dem_path.display()))?;
-
-    let mut dem_img_decoder = Decoder::new(dem_tif_file).context(format!(
-        "could not create decoder for `{}`",
-        dem_path.display()
-    ))?;
-    dem_img_decoder = dem_img_decoder.with_limits(tiff::decoder::Limits::unlimited());
-
-    let (dem_width, dem_height) = dem_img_decoder.dimensions().context(format!(
-        "could not read dimensions from `{}`",
-        dem_path.display()
-    ))?;
-
-    let width: usize = dem_width as usize;
-    let height: usize = dem_height as usize;
+    let dem = Grid::<f64>::read_geotiff(&tile.render_dir_path.join("dem_2m_with_buffer.tif"))?;
+    let (width, height) = (dem.width, dem.height);
     let mut avg_alt = vec![vec![f64::NAN; height + 2]; width + 2];
 
-    let image_data = match dem_img_decoder
-        .read_image()
-        .context(format!("could not decode `{}`", dem_path.display()))?
-    {
-        DecodingResult::F32(image_data) => image_data.into_iter().map(f64::from).collect(),
-        DecodingResult::F64(image_data) => image_data,
-        _ => {
-            return Err(CassiniError::InvalidArtifact {
-                path: dem_path,
-                message: "expected a floating-point TIFF band".to_owned(),
-            });
-        }
-    };
-
-    for (index, elevation) in image_data.into_iter().enumerate() {
+    for (index, elevation) in dem.values.into_iter().enumerate() {
         let x = index % width;
         let y = height - index / width;
         avg_alt[x][y] = elevation;

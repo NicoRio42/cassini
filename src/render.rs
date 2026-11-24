@@ -7,7 +7,7 @@ use crate::map_features::MapFeature;
 use crate::ocad_export::{SPILLED_OBJECTS_FILE_NAME, TILE_OCD_FILE_NAME};
 use crate::ocd::OcdTemplate;
 use crate::process::{checked_output, ensure_file};
-use crate::raster::F32Raster;
+use crate::grid::Grid;
 use crate::tile::TileWithNeighbors;
 use crate::vectors::{get_map_features_from_osm_shapes, render_map_with_osm_vector_shapes};
 use crate::vegetation_areas::get_vegetation_features;
@@ -100,7 +100,7 @@ pub fn render_tile_map(
     create_dem_with_buffer_and_slopes_tiff(&tile, &neighbor_tiles)?;
     let contour_features =
         generate_contours_with_pullautin_algorithme(&tile, image_width, image_height, config)?;
-    let slopes = F32Raster::read(&tile.render_dir_path.join("slopes.tif"))?;
+    let slopes = Grid::<f32>::read_geotiff(&tile.render_dir_path.join("slopes.tif"))?;
     render_cliffs(&tile, &slopes, image_width, image_height, config)?;
     let cliff_features = match &options.ocad {
         Some(ocad) => get_cliff_features(&tile, &slopes, config, ocad.simplify_tolerance)?,
