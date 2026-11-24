@@ -1,25 +1,15 @@
 //! The contour shapefiles: the layer `gdal_contour -a elev` writes, whose
 //! fields the smoothed contours and the form lines keep.
 
-use std::{fs, io::Cursor, io::Write, path::Path};
+use std::{io::Write, path::Path};
 
+use cassini::shapefile_output::write_shapefile;
 use shapefile::{
     dbase::{FieldIOError, FieldName, FieldWriter, TableWriterBuilder, WritableRecord},
-    Point, Polyline, ShapeType, ShapeWriter,
+    Point, Polyline,
 };
 
-use crate::{
-    error::{Result, ResultContext},
-    marching_squares::ContourLine,
-};
-
-/// The `.prj` OGR writes for EPSG:2154.
-const LAMBERT_93_ESRI_WKT: &str = r#"PROJCS["RGF_1993_Lambert_93",GEOGCS["GCS_RGF_1993",DATUM["D_RGF_1993",SPHEROID["GRS_1980",6378137.0,298.257222101]],PRIMEM["Greenwich",0.0],UNIT["Degree",0.0174532925199433]],PROJECTION["Lambert_Conformal_Conic"],PARAMETER["False_Easting",700000.0],PARAMETER["False_Northing",6600000.0],PARAMETER["Central_Meridian",3.0],PARAMETER["Standard_Parallel_1",49.0],PARAMETER["Standard_Parallel_2",44.0],PARAMETER["Latitude_Of_Origin",46.5],UNIT["Meter",1.0]]"#;
-
-/// The byte ranges of the shape type and the extent in the `.shp` and `.shx`
-/// headers.
-const SHAPE_TYPE_BYTES: std::ops::Range<usize> = 32..36;
-const EXTENT_BYTES: std::ops::Range<usize> = 36..100;
+use crate::{error::Result, marching_squares::ContourLine};
 
 /// The fields of a contour shapefile: `ID` and `elev`, as `gdal_contour -a
 /// elev` defines them.
@@ -53,68 +43,28 @@ impl WritableRecord for ContourRecord {
 /// does: a `LineString` layer with fields `ID` (from 0) and `elev`, and an
 /// EPSG:2154 `.prj`.
 pub fn write_contour_shapefile(path: &Path, lines: &[ContourLine]) -> Result<()> {
-    let context = || format!("could not write contour shapefile `{}`", path.display());
-
-    // The `shapefile` and `dbase` writers write their headers when dropped,
-    // and drop the errors, so they write to memory, where it cannot fail.
-    let (mut shp, mut shx, mut dbf) = (Vec::new(), Vec::new(), Vec::new());
-    {
-        let mut writer = shapefile::Writer::new(
-            ShapeWriter::with_shx(Cursor::new(&mut shp), Cursor::new(&mut shx)),
-            contour_table().build_with_dest(Cursor::new(&mut dbf)),
-        );
-        for (id, line) in lines.iter().enumerate() {
-            let points = line.points.iter().map(|&(x, y)| Point::new(x, y)).collect();
-            let record = ContourRecord {
-                id: id as f64,
-                elevation: line.elevation,
-            };
-            writer
-                .write_shape_and_record(&Polyline::new(points), &record)
-                .context(context())?;
-        }
-    }
-    // The shape type is set by the first shape, so an empty layer would be a
-    // null shape one, with the no-data M range. OGR writes a polyline layer
-    // with a zero extent.
-    if lines.is_empty() {
-        for header in [&mut shp, &mut shx] {
-            header[SHAPE_TYPE_BYTES].copy_from_slice(&(ShapeType::Polyline as i32).to_le_bytes());
-            header[EXTENT_BYTES].fill(0);
-        }
-    }
-
-    for (extension, contents) in [
-        ("shp", &shp[..]),
-        ("shx", &shx[..]),
-        ("dbf", &dbf[..]),
-        ("prj", LAMBERT_93_ESRI_WKT.as_bytes()),
-    ] {
-        let file_path = path.with_extension(extension);
-        fs::write(&file_path, contents)
-            .context(format!("could not write `{}`", file_path.display()))?;
-    }
-    Ok(())
+    let features = lines.iter().enumerate().map(|(id, line)| {
+        let points = line.points.iter().map(|&(x, y)| Point::new(x, y)).collect();
+        let record = ContourRecord {
+            id: id as f64,
+            elevation: line.elevation,
+        };
+        (Polyline::new(points), record)
+    });
+    write_shapefile(path, contour_table(), features)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cassini::shapefile_output::LAMBERT_93_ESRI_WKT;
     use shapefile::{dbase::FieldValue, Reader};
-
-    fn temp_shapefile(name: &str) -> std::path::PathBuf {
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("cassini-contour-shapefile-{unique}"));
-        fs::create_dir_all(&dir).unwrap();
-        dir.join(name)
-    }
+    use std::fs;
 
     #[test]
     fn writes_lines_with_id_and_elevation() {
-        let path = temp_shapefile("contours.shp");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("contours.shp");
         let lines = [
             ContourLine {
                 elevation: 2.5,
@@ -133,7 +83,6 @@ mod tests {
             .map(|shape_record| shape_record.unwrap())
             .collect();
         let prj = fs::read_to_string(path.with_extension("prj")).unwrap();
-        fs::remove_dir_all(path.parent().unwrap()).unwrap();
 
         assert_eq!(read.len(), 2);
         for (index, ((polyline, record), line)) in read.iter().zip(&lines).enumerate() {
@@ -149,23 +98,5 @@ mod tests {
             );
         }
         assert_eq!(prj, LAMBERT_93_ESRI_WKT);
-    }
-
-    #[test]
-    fn writes_an_empty_layer_as_polylines() {
-        let path = temp_shapefile("empty.shp");
-        write_contour_shapefile(&path, &[]).unwrap();
-        let shp = fs::read(&path).unwrap();
-        let shx = fs::read(path.with_extension("shx")).unwrap();
-        let reader = Reader::from_path(&path).unwrap();
-        fs::remove_dir_all(path.parent().unwrap()).unwrap();
-
-        // As OGR writes it: a 100-byte header, polyline type, empty extent.
-        for file in [&shp, &shx] {
-            assert_eq!(file.len(), 100);
-            assert_eq!(file[SHAPE_TYPE_BYTES], 3i32.to_le_bytes());
-            assert!(file[EXTENT_BYTES].iter().all(|&byte| byte == 0));
-        }
-        assert_eq!(reader.header().shape_type, ShapeType::Polyline);
     }
 }

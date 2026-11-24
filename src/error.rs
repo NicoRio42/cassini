@@ -1,11 +1,10 @@
-use std::{error::Error as StdError, fmt, path::PathBuf, process::ExitStatus};
+use std::{error::Error as StdError, fmt, path::PathBuf};
 
 pub type Result<T> = std::result::Result<T, CassiniError>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stage {
     Lidar,
-    Vectors,
     Render,
 }
 
@@ -13,7 +12,6 @@ impl fmt::Display for Stage {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::Lidar => "LiDAR processing",
-            Self::Vectors => "vector rendering",
             Self::Render => "map rendering",
         })
     }
@@ -56,24 +54,6 @@ pub enum CassiniError {
         context: String,
         #[source]
         source: Box<dyn StdError + Send + Sync>,
-    },
-
-    #[error("could not start `{program}` during {stage}{tile_suffix}")]
-    CommandStart {
-        program: String,
-        stage: Stage,
-        tile_suffix: String,
-        #[source]
-        source: std::io::Error,
-    },
-
-    #[error("`{program}` failed during {stage}{tile_suffix} with {status}: {stderr}")]
-    CommandFailed {
-        program: String,
-        stage: Stage,
-        tile_suffix: String,
-        status: ExitStatus,
-        stderr: String,
     },
 
     #[error("worker panicked during {stage}{tile_suffix}: {message}")]

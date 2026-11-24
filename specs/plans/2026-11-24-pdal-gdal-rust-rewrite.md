@@ -38,7 +38,7 @@ We are replacing these with plain Rust rather than embedding GDAL through the `g
 | 2 | Simple raster ops and coordinate conversion | 1 | Done |
 | 3 | DEM hole filling and contour extraction | 1, 2 | Done |
 | 4 | LiDAR pipeline (PDAL replacement) | 1 | Done |
-| 5 | OSM import (ogr2ogr replacement) | 2 | Not started |
+| 5 | OSM import (ogr2ogr replacement) | 2 | Done |
 | 6 | Cleanup, docs and end-to-end verification without external tools | 3, 4, 5 | Not started |
 | 7 | Packaging and release builds for the three platforms | 6 | Not started |
 | 8 | Vegetation layers from height above ground | 6 | Not started |
@@ -434,3 +434,47 @@ _Each session appends findings here: decisions, tolerances, measured parity, tim
   - A cold page cache can triple the LiDAR time (17 s per tile seen once).
 - **Removed:** the `pdal` call and `process::checked_output_with_input`. Remaining external call: `ogr2ogr` (step 5). The CLI `about` text still mentions PDAL (step 6).
 
+### Step 5 (branch `rust-pipeline/step-5-osm-import`, cut from `remove-pdal-gdal` after the step 4 merge)
+
+- **Parity with `ogr2ogr` (GDAL 3.12.2)** on all 27 tiles that have an `.osm` file (poussebout, tunnels, arselle, correncon, evg; 9 multipolygon relations in all), with `compare_shapefiles`:
+  - Both layers have the same features in the same order, the same rings with the same order and orientation, and vertices within 4e-9 m.
+  - Per-tag counts are identical, and areas and lengths match within 0.0005% (519 tag rows).
+  - The final renders of `--skip-lidar --ocad` batches on poussebout (against `out-reference-poussebout`) and tunnels (against a fresh `cassini-reference` run) are pixel-identical: all 34 PNGs. The new binary ran with `PATH=/nonexistent`.
+- **Field differences are encoding only**, in 74 features over the 27 tiles, in no field `vectors.rs` reads:
+  - OGR writes ISO-8859-1 (LDID 87) and turns other characters into `?` (`’`, `−`). [osm_import](../../src/osm_import/mod.rs) writes UTF-8 with a `.cpg`; `ogrinfo` reads it correctly.
+  - Values over 254 bytes are cut on a character boundary. OGR cuts at 254 Latin-1 characters, so with accented values the UTF-8 cut comes a few characters earlier.
+- **Semantics ported** from `ogr/ogrsf_frmts/osm`, `ograssemblepolygon.cpp` and `organizePolygons` (MIT, attribution kept):
+  - Node coordinates are stored as integers in 1e-7° (`floor(x * 1e7 + 0.5)`); rings are assembled in lon/lat, then projected.
+  - OGR looks up way nodes when it reaches the first relation or the end of the file, so it needed `fix_osm_file` to move the relations after the nodes. The port reads the whole file first and resolves ways against all nodes, wherever the relations are.
+  - A closed way is an area if it has a `closed_ways_are_polygons` tag; `area=yes`/`no` decides, in tag order. Lines are the other ways with at least one tag (the lines layer has no insignificant keys). Ways with fewer than 2 known nodes are dropped.
+  - Area ways keep their tags minus `area`, `created_by`, `converted_by`, `note`, `todo`, `fixme`, `FIXME`. Those with tags left become standalone polygons, written after the relations by increasing way id, unless they are a closed `outer` member of a relation that was built.
+  - Relations with `type=multipolygon` or `boundary`:
+    - Roles do not shape the geometry. They only pick the tags of an old-style relation (only `type`, plus `created_by`), taken from the first `outer` way that has tags, plus `type`, and they pick the ways that stop being standalone.
+    - Closed members are rings. Open ones are joined end to end (the first edge that touches, reversed if its end does), and rings that stay open are dropped.
+    - Rings are nested by area, largest first, with a point-in-ring test; a ring inside a hole is a new polygon.
+    - A relation with a missing member way is skipped, with a warning.
+  - Fields:
+    - OGR's column names (`admin_leve`), `osm_id` / `osm_way_id`, and string widths from 80 up to 254, grown to the longest value.
+    - `z_order` is N(9,0), from the default SQL expression.
+    - `other_tags` is hstore without the layer's `ignore` keys (and the `openGeoDB:` prefix).
+- **Quirks kept**, since `vectors.rs` is untouched; fixing them would change renders and is out of scope:
+  - The default `lines` layer has no `tunnel`, `itermittent` or `seasonal` column, so tunnels come from `other_tags` only and symbol 306 is never drawn. `vectors.rs` also misspells `intermittent`.
+  - `other_tags` is cut at 254 bytes, which can drop late keys. In the tunnels set, 3 railway ways lose `tunnel` this way, in both outputs, with no render effect because railways have no tunnel symbol.
+- **Timing:** converting the 27 files takes 0.29 s in all (about 10 ms per tile), against 9.3 s for the two `ogr2ogr` runs. A `--skip-lidar --ocad` batch takes 8.4 s on poussebout (11.8 s at step 3) and 8.4 s on tunnels (15.2 s for `cassini-reference`).
+- **Tools:**
+  - `cargo run --release --example compare_shapefiles -- a_dir b_dir [--tolerance 1e-4]` compares `multipolygons.shp` and `lines.shp`. It prints per-tag counts and areas or lengths, then matches features by OSM id and compares fields and vertices. Exit 0 = identical, 1 = different, 2 = error. It reads OGR's Latin-1 `.dbf` itself, as the `dbase` crate here has no code pages.
+  - `cargo run --release --example osm_to_shapefiles -- tile.osm out_dir` runs the conversion alone.
+- **Code:**
+  - [shapefile_output.rs](../../src/shapefile_output.rs), in `lib.rs`, is the shapefile writer that `contour_shapefile.rs` used to contain: it writes to memory first, fixes the empty-layer header and writes the `.prj`. The contour files are unchanged (byte-identical, apart from the known `.dbf` byte 29).
+  - New dependency: `quick-xml` 0.42.
+- **Review follow-up:**
+  - The vector step reads the OSM file in memory ([`read_osm_file`](../../src/osm_import/mod.rs)) and no longer writes `shapes/`. `vectors.rs` classifies a tag map built from the OSM tags, or from a `--shapefiles` record's text columns then its `other_tags`. A test checks both give the same features. `other_tags` is no longer cut on this path, so the 3 tunnels railways keep `tunnel`.
+  - Symbol 306 stays off for OSM files, as with `ogr2ogr`: only a `--shapefiles` layer with an `intermittent` (spelling fixed) or `seasonal` column draws it. Which tags should draw 306 is left for step 8.
+  - The parser fails on a file that is not one whole `<osm>` element (empty, HTML or text, truncated), where it used to read an empty map, and warns about Overpass `<remark>`s. The download goes to `<tile>.osm.part`, renamed when complete, and `fix_osm_file` is gone.
+  - Duplicate nodes keep the first, as OGR's SQLite insert does.
+  - `osm_import` is split into `parse`, `layers`, `rings` and `shapefiles`, with tests for holes touching their polygon, nesting stopping at a degenerate ring, several polygons from open ways, and the untagged copies Overpass writes of member ways. `write_shapefile` takes the shape type from the shape. Tests use `tempfile`.
+  - `compare_shapefiles` counts the encoding-only differences apart and passes on them: all 23 tiles that still had `ogr2ogr` shapefiles pass (74 such features), where 10 failed.
+  - Measured: the shapefiles of the 27 tiles are byte-identical to before, and so are the 34 PNGs of the poussebout and tunnels batches. `merged-map.ocd` holds the same objects (5187 and 8540), but its object order changes from run to run, before this change too: the merge iterates `HashMap`s.
+- **Removed:**
+  - The `ogr2ogr` calls, `process::checked_output`, `Stage::Vectors`, and `CassiniError::CommandStart` / `CommandFailed`.
+  - `Command::new` now remains only in the `gdalinfo` test of `grid.rs`. The CLI `about` text and the docs are left for step 6.
