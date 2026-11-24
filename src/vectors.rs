@@ -8,6 +8,7 @@ use crate::{
     map_renderer::MapRenderer,
     tile::Tile,
 };
+use cassini::osm_import::{read_osm_file, Tag};
 use log::info;
 use shapefile::{
     dbase::{FieldValue, Record},
@@ -120,10 +121,107 @@ pub fn render_map_with_osm_vector_shapes(
     Ok(())
 }
 
-/// Classifies the OSM shapefiles in `shapes_path` into ISOM map features.
-pub fn get_map_features_from_osm_shapes(
+/// The OSM tags of a shape, as the classification reads them.
+struct ShapeTags {
+    tags: HashMap<String, String>,
+    /// Whether a lines shapefile given with `--shapefiles` has an
+    /// `intermittent` or `seasonal` column set. The default `osmconf.ini`
+    /// has neither, so the `ogr2ogr` shapefiles never drew symbol 306, and
+    /// neither do OSM files.
+    has_seasonal_column: bool,
+}
+
+impl ShapeTags {
+    fn from_osm(tags: &[Tag]) -> Self {
+        Self {
+            tags: tags.iter().cloned().collect(),
+            has_seasonal_column: false,
+        }
+    }
+
+    /// The tags of a record of an `ogr2ogr` shapefile: its text columns,
+    /// and the `other_tags` the columns do not hold.
+    fn from_record(record: Record) -> Self {
+        let mut tags = HashMap::new();
+        let mut columns = vec![];
+        for (name, value) in record {
+            match value {
+                FieldValue::Character(Some(value)) if !value.is_empty() => {
+                    if name == "other_tags" {
+                        tags.extend(parse_other_tags(&value));
+                    } else {
+                        columns.push((name, value));
+                    }
+                }
+                _ => {}
+            }
+        }
+        let has_seasonal_column = columns
+            .iter()
+            .any(|(name, _)| name == "intermittent" || name == "seasonal");
+        tags.extend(columns);
+        Self {
+            tags,
+            has_seasonal_column,
+        }
+    }
+
+    /// The value of `key`, empty if there is none.
+    fn get(&self, key: &str) -> &str {
+        self.tags.get(key).map_or("", String::as_str)
+    }
+}
+
+/// Classifies the features of the OSM file `osm_path` into ISOM map
+/// features.
+pub fn get_map_features_from_osm_file(
+    tile: &Tile,
+    osm_path: &Path,
+    skip_520: bool,
+) -> Result<Vec<MapFeature>> {
+    let layers = read_osm_file(osm_path)?;
+    let areas = layers
+        .multipolygons
+        .iter()
+        .map(|area| (area.to_polygon(), ShapeTags::from_osm(&area.tags)));
+    let lines = layers
+        .lines
+        .iter()
+        .map(|line| (line.to_polyline(), ShapeTags::from_osm(&line.tags)));
+    classify_osm_shapes(tile, areas, lines, skip_520)
+}
+
+/// Classifies the `ogr2ogr` shapefiles in `shapes_path`, given with
+/// `--shapefiles`, into ISOM map features.
+pub fn get_map_features_from_osm_shapefiles(
     tile: &Tile,
     shapes_path: &Path,
+    skip_520: bool,
+) -> Result<Vec<MapFeature>> {
+    let multipolygons_path = shapes_path.join("multipolygons.shp");
+    let multipolygons = read_as::<_, Polygon, Record>(&multipolygons_path).context(format!(
+        "could not read multipolygon shapefile `{}`",
+        multipolygons_path.display()
+    ))?;
+    let lines_path = shapes_path.join("lines.shp");
+    let lines = read_as::<_, Polyline, Record>(&lines_path).context(format!(
+        "could not read line shapefile `{}`",
+        lines_path.display()
+    ))?;
+
+    let areas = multipolygons
+        .into_iter()
+        .map(|(polygon, record)| (polygon, ShapeTags::from_record(record)));
+    let lines = lines
+        .into_iter()
+        .map(|(line, record)| (line, ShapeTags::from_record(record)));
+    classify_osm_shapes(tile, areas, lines, skip_520)
+}
+
+fn classify_osm_shapes(
+    tile: &Tile,
+    areas: impl IntoIterator<Item = (Polygon, ShapeTags)>,
+    lines: impl IntoIterator<Item = (Polyline, ShapeTags)>,
     skip_520: bool,
 ) -> Result<Vec<MapFeature>> {
     info!(
@@ -142,20 +240,10 @@ pub fn get_map_features_from_osm_shapes(
     }
     .expanded(BUFFER as f64);
 
-    let multipolygons_path = shapes_path.join("multipolygons.shp");
-    let multipolygons = read_as::<_, Polygon, Record>(&multipolygons_path).context(format!(
-        "could not read multipolygon shapefile `{}`",
-        multipolygons_path.display()
-    ))?;
-
     let mut islands: Vec<Vec<(f32, f32)>> = vec![];
 
-    for (polygon, record) in multipolygons {
-        let natural = match record.get("natural") {
-            Some(FieldValue::Character(Some(x))) => x,
-            Some(_) => "",
-            None => "",
-        };
+    for (polygon, tags) in areas {
+        let natural = tags.get("natural");
 
         // 308 marsh
         if natural == "wetland" {
@@ -183,11 +271,7 @@ pub fn get_map_features_from_osm_shapes(
             continue;
         }
 
-        let building = match record.get("building") {
-            Some(FieldValue::Character(Some(x))) => x,
-            Some(_) => "",
-            None => "",
-        };
+        let building = tags.get("building");
 
         // 521 building
         if building != "" {
@@ -196,11 +280,7 @@ pub fn get_map_features_from_osm_shapes(
         }
 
         if !skip_520 {
-            let landuse = match record.get("landuse") {
-                Some(FieldValue::Character(Some(x))) => x,
-                Some(_) => "",
-                None => "",
-            };
+            let landuse = tags.get("landuse");
 
             // 520 area that shall not be entered
             if landuse == "residential" || landuse == "railway" || landuse == "industrial" {
@@ -215,23 +295,12 @@ pub fn get_map_features_from_osm_shapes(
 
     features.retain(|feature| feature.overlaps(&extent));
 
-    let lines_path = shapes_path.join("lines.shp");
-    let lines = read_as::<_, Polyline, Record>(&lines_path).context(format!(
-        "could not read line shapefile `{}`",
-        lines_path.display()
-    ))?;
-
     let mut coastlines: Vec<Vec<(f32, f32)>> = vec![];
 
-    for (line, record) in lines {
-        let highway = match record.get("highway") {
-            Some(FieldValue::Character(Some(x))) => x,
-            Some(_) => "",
-            None => "",
-        };
+    for (line, tags) in lines {
+        let highway = tags.get("highway");
 
-        let other_tags = get_and_parse_other_tags(&record);
-        let tunnel = is_tunnel(&record, &other_tags);
+        let tunnel = is_tunnel(&tags);
 
         // 502 wide road
         if highway == "motorway" || highway == "motorway_link" {
@@ -294,30 +363,14 @@ pub fn get_map_features_from_osm_shapes(
             continue;
         }
 
-        let waterway = match record.get("waterway") {
-            Some(FieldValue::Character(Some(x))) => x,
-            Some(_) => "",
-            None => "",
-        };
+        let waterway = tags.get("waterway");
 
         let should_draw_water_course =
             waterway == "stream" || waterway == "drain" || waterway == "ditch";
 
         // 304 crossable watercourse
         if should_draw_water_course {
-            let itermittent = match record.get("itermittent") {
-                Some(FieldValue::Character(Some(x))) => x,
-                Some(_) => "",
-                None => "",
-            };
-
-            let seasonal = match record.get("seasonal") {
-                Some(FieldValue::Character(Some(x))) => x,
-                Some(_) => "",
-                None => "",
-            };
-
-            if itermittent != "" || seasonal != "" {
+            if tags.has_seasonal_column {
                 features.push(MapFeature::Line(
                     LineSymbol::MinorSeasonalWaterChannel306,
                     line,
@@ -329,11 +382,7 @@ pub fn get_map_features_from_osm_shapes(
             continue;
         }
 
-        let railway = match record.get("railway") {
-            Some(FieldValue::Character(Some(x))) => x,
-            Some(_) => "",
-            None => "",
-        };
+        let railway = tags.get("railway");
 
         // 509 railway
         if railway == "rail" {
@@ -341,16 +390,9 @@ pub fn get_map_features_from_osm_shapes(
             continue;
         }
 
-        let power = match other_tags.get("power") {
-            Some(p) => p,
-            None => "",
-        };
+        let power = tags.get("power");
 
-        let aerialway = match record.get("aerialway") {
-            Some(FieldValue::Character(Some(x))) => x,
-            Some(_) => "",
-            None => "",
-        };
+        let aerialway = tags.get("aerialway");
 
         // 510 power line, cableway or skilift
         if power == "minor_line"
@@ -379,10 +421,7 @@ pub fn get_map_features_from_osm_shapes(
             continue;
         }
 
-        let natural = match other_tags.get("natural") {
-            Some(p) => p,
-            None => "",
-        };
+        let natural = tags.get("natural");
 
         if natural == "coastline" {
             let mut points: Vec<(f32, f32)> = vec![];
@@ -441,32 +480,14 @@ pub fn get_map_features_from_osm_shapes(
     Ok(features)
 }
 
-fn is_tunnel(record: &Record, other_tags: &HashMap<String, String>) -> bool {
-    let tunnel = match record.get("tunnel") {
-        Some(FieldValue::Character(Some(x))) => x.as_str(),
-        Some(_) => "",
-        None => "",
-    };
-    let tunnel = if tunnel == "" {
-        match other_tags.get("tunnel") {
-            Some(x) => x.as_str(),
-            None => "",
-        }
-    } else {
-        tunnel
-    };
-
-    return tunnel != "" && tunnel != "no" && tunnel != "false" && tunnel != "0";
+fn is_tunnel(tags: &ShapeTags) -> bool {
+    let tunnel = tags.get("tunnel");
+    !tunnel.is_empty() && tunnel != "no" && tunnel != "false" && tunnel != "0"
 }
 
-fn get_and_parse_other_tags(record: &Record) -> HashMap<String, String> {
+/// The `"key"=>"value"` pairs of an `other_tags` value.
+fn parse_other_tags(raw_other_tags: &str) -> HashMap<String, String> {
     let mut other_tags = HashMap::new();
-
-    let raw_other_tags = match record.get("other_tags") {
-        Some(FieldValue::Character(Some(x))) => x,
-        Some(_) => "",
-        None => "",
-    };
 
     for row in raw_other_tags.split(",") {
         let parts: Vec<&str> = row.split("=>").collect();
@@ -481,5 +502,99 @@ fn get_and_parse_other_tags(record: &Record) -> HashMap<String, String> {
         other_tags.insert(key.to_string(), value.to_string());
     }
 
-    return other_tags;
+    other_tags
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::projection::wgs84_to_lambert93;
+    use cassini::osm_import::convert_osm_file_to_shapefiles;
+    use std::{collections::HashMap, fs};
+
+    /// A square of nodes 1–4, a smaller one of nodes 5–8 inside it, and ways
+    /// of each symbol along them.
+    const OSM: &str = r#"<?xml version="1.0" encoding="UTF-8"?><osm version="0.6">
+        <way id="1"><nd ref="5"/><nd ref="6"/><nd ref="7"/><nd ref="8"/><nd ref="5"/><tag k="building" v="yes"/></way>
+        <way id="2"><nd ref="1"/><nd ref="2"/><nd ref="3"/><nd ref="4"/><nd ref="1"/><tag k="natural" v="wetland"/></way>
+        <way id="3"><nd ref="1"/><nd ref="3"/><tag k="highway" v="motorway"/><tag k="tunnel" v="yes"/></way>
+        <way id="4"><nd ref="2"/><nd ref="4"/><tag k="waterway" v="stream"/><tag k="seasonal" v="yes"/></way>
+        <way id="5"><nd ref="1"/><nd ref="2"/><tag k="railway" v="rail"/></way>
+        <way id="6"><nd ref="3"/><nd ref="4"/><tag k="power" v="line"/></way>
+        <way id="7"><nd ref="1"/><nd ref="2"/><nd ref="3"/></way>
+        <way id="8"><nd ref="3"/><nd ref="4"/><nd ref="1"/></way>
+        <relation id="9"><member type="way" ref="7" role="outer"/><member type="way" ref="8" role="outer"/>
+            <tag k="type" v="multipolygon"/><tag k="natural" v="water"/></relation>
+        <node id="1" lat="45.10" lon="5.70"/><node id="2" lat="45.11" lon="5.70"/>
+        <node id="3" lat="45.11" lon="5.71"/><node id="4" lat="45.10" lon="5.71"/>
+        <node id="5" lat="45.102" lon="5.702"/><node id="6" lat="45.108" lon="5.702"/>
+        <node id="7" lat="45.108" lon="5.708"/><node id="8" lat="45.102" lon="5.708"/>
+        </osm>"#;
+
+    #[test]
+    fn osm_files_and_their_shapefiles_give_the_same_features() {
+        let dir = tempfile::tempdir().unwrap();
+        let osm_path = dir.path().join("tile.osm");
+        fs::write(&osm_path, OSM).unwrap();
+        let shapes_path = dir.path().join("shapes");
+        convert_osm_file_to_shapefiles(&osm_path, &shapes_path).unwrap();
+
+        let (min_x, min_y) = wgs84_to_lambert93(5.70, 45.10);
+        let (max_x, max_y) = wgs84_to_lambert93(5.71, 45.11);
+        let tile = Tile {
+            lidar_dir_path: dir.path().to_path_buf(),
+            render_dir_path: dir.path().to_path_buf(),
+            min_x: min_x as i64,
+            min_y: min_y as i64,
+            max_x: max_x as i64 + 1,
+            max_y: max_y as i64 + 1,
+        };
+        let from_osm = get_map_features_from_osm_file(&tile, &osm_path, false).unwrap();
+        let from_shapefiles =
+            get_map_features_from_osm_shapefiles(&tile, &shapes_path, false).unwrap();
+
+        assert_eq!(from_osm, from_shapefiles);
+        let symbols: Vec<String> = from_osm
+            .iter()
+            .map(|feature| match feature {
+                MapFeature::Point(symbol, _) => format!("{symbol:?}"),
+                MapFeature::Line(symbol, _) => format!("{symbol:?}"),
+                MapFeature::Area(symbol, _) => format!("{symbol:?}"),
+            })
+            .collect();
+        // The stream is no 306: the `seasonal` tag is no column.
+        assert_eq!(
+            symbols,
+            [
+                "UncrossableBodyOfWater301",
+                "Building521",
+                "Marsh308",
+                "DoubleTrackWideRoad502 { tunnel: true }",
+                "CrossableWatercourse304",
+                "Railway509",
+                "PowerLineCablewayOrSkilift510",
+            ]
+        );
+    }
+
+    #[test]
+    fn shapefile_records_read_their_columns_then_other_tags() {
+        let text = |value: &str| FieldValue::Character(Some(value.to_owned()));
+        let record = Record::from(HashMap::from([
+            ("highway".to_owned(), text("track")),
+            ("waterway".to_owned(), FieldValue::Character(None)),
+            ("intermittent".to_owned(), text("yes")),
+            (
+                "other_tags".to_owned(),
+                text(r#""tunnel"=>"yes","highway"=>"path""#),
+            ),
+        ]));
+        let tags = ShapeTags::from_record(record);
+
+        assert_eq!(tags.get("highway"), "track");
+        assert_eq!(tags.get("tunnel"), "yes");
+        assert_eq!(tags.get("waterway"), "");
+        assert!(tags.has_seasonal_column);
+        assert!(is_tunnel(&tags));
+    }
 }

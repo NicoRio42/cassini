@@ -2,8 +2,8 @@ use log::{info, warn};
 use reqwest::blocking::Client;
 use reqwest::header::{CONTENT_TYPE, RETRY_AFTER, USER_AGENT};
 use std::{
-    fs::File,
-    io::{copy, BufRead, BufReader, BufWriter, Write},
+    fs::{self, File},
+    io::copy,
     path::Path,
     thread::sleep,
     time::{Duration, Instant, SystemTime},
@@ -34,8 +34,10 @@ pub fn download_osm_file(
     max_y: i64,
     output_dir_path: &Path,
 ) -> Result<()> {
-    let raw_osm_file_path = output_dir_path.join(format!("{:0>7}_{:0>7}_raw.osm", min_x, max_y));
     let osm_file_path = output_dir_path.join(format!("{:0>7}_{:0>7}.osm", min_x, max_y));
+    // The download goes to a temporary file, renamed when complete: an
+    // existing `.osm` file is never downloaded again.
+    let partial_osm_file_path = osm_file_path.with_extension("osm.part");
 
     info!(
         "Tile min_x={} min_y={} max_x={} max_y={}. Downloading osm file",
@@ -150,17 +152,19 @@ out skel qt;
         sleep(retry_delay);
     };
 
-    let mut file = File::create(&raw_osm_file_path).context(format!(
+    let mut file = File::create(&partial_osm_file_path).context(format!(
         "could not create `{}`",
-        raw_osm_file_path.display()
+        partial_osm_file_path.display()
     ))?;
-    copy(&mut response, &mut file)
-        .context(format!("could not write `{}`", raw_osm_file_path.display()))?;
-
-    fix_osm_file(&raw_osm_file_path, &osm_file_path)?;
-    std::fs::remove_file(&raw_osm_file_path).context(format!(
-        "could not remove temporary download `{}`",
-        raw_osm_file_path.display()
+    copy(&mut response, &mut file).context(format!(
+        "could not write `{}`",
+        partial_osm_file_path.display()
+    ))?;
+    drop(file);
+    fs::rename(&partial_osm_file_path, &osm_file_path).context(format!(
+        "could not rename `{}` to `{}`",
+        partial_osm_file_path.display(),
+        osm_file_path.display()
     ))?;
 
     let duration = start.elapsed();
@@ -196,55 +200,6 @@ fn parse_retry_after(value: &str) -> Option<Duration> {
         date.duration_since(SystemTime::now())
             .unwrap_or(Duration::ZERO)
     })
-}
-
-fn fix_osm_file(input: &Path, output: &Path) -> Result<()> {
-    let reader =
-        BufReader::new(File::open(input).context(format!("could not open `{}`", input.display()))?);
-    let mut writer = BufWriter::new(
-        File::create(output).context(format!("could not create `{}`", output.display()))?,
-    );
-    let mut relations_lines: Vec<String> = vec![];
-
-    let mut is_inside_relation = false;
-
-    for line in reader.lines() {
-        let line = line.context(format!("could not read `{}`", input.display()))?;
-
-        if line.contains("</osm>") {
-            for relations_line in &relations_lines {
-                writeln!(writer, "{}", relations_line)
-                    .context(format!("could not write `{}`", output.display()))?;
-            }
-
-            writeln!(writer, "{}", line)
-                .context(format!("could not write `{}`", output.display()))?;
-            break;
-        }
-
-        if line.contains("</relation>") {
-            is_inside_relation = false;
-            relations_lines.push(line);
-            continue;
-        }
-
-        if line.contains("<relation") {
-            is_inside_relation = true;
-            relations_lines.push(line);
-            continue;
-        }
-
-        if is_inside_relation {
-            relations_lines.push(line);
-            continue;
-        }
-
-        writeln!(writer, "{}", line).context(format!("could not write `{}`", output.display()))?;
-    }
-    writer
-        .flush()
-        .context(format!("could not flush `{}`", output.display()))?;
-    Ok(())
 }
 
 #[cfg(test)]

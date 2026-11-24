@@ -6,7 +6,7 @@ use std::{io::Write, path::Path};
 use cassini::shapefile_output::write_shapefile;
 use shapefile::{
     dbase::{FieldIOError, FieldName, FieldWriter, TableWriterBuilder, WritableRecord},
-    Point, Polyline, ShapeType,
+    Point, Polyline,
 };
 
 use crate::{error::Result, marching_squares::ContourLine};
@@ -51,7 +51,7 @@ pub fn write_contour_shapefile(path: &Path, lines: &[ContourLine]) -> Result<()>
         };
         (Polyline::new(points), record)
     });
-    write_shapefile(path, ShapeType::Polyline, contour_table(), features)
+    write_shapefile(path, contour_table(), features)
 }
 
 #[cfg(test)]
@@ -61,19 +61,10 @@ mod tests {
     use shapefile::{dbase::FieldValue, Reader};
     use std::fs;
 
-    fn temp_shapefile(name: &str) -> std::path::PathBuf {
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("cassini-contour-shapefile-{unique}"));
-        fs::create_dir_all(&dir).unwrap();
-        dir.join(name)
-    }
-
     #[test]
     fn writes_lines_with_id_and_elevation() {
-        let path = temp_shapefile("contours.shp");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("contours.shp");
         let lines = [
             ContourLine {
                 elevation: 2.5,
@@ -92,7 +83,6 @@ mod tests {
             .map(|shape_record| shape_record.unwrap())
             .collect();
         let prj = fs::read_to_string(path.with_extension("prj")).unwrap();
-        fs::remove_dir_all(path.parent().unwrap()).unwrap();
 
         assert_eq!(read.len(), 2);
         for (index, ((polyline, record), line)) in read.iter().zip(&lines).enumerate() {

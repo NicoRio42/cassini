@@ -441,11 +441,11 @@ _Each session appends findings here: decisions, tolerances, measured parity, tim
   - Per-tag counts are identical, and areas and lengths match within 0.0005% (519 tag rows).
   - The final renders of `--skip-lidar --ocad` batches on poussebout (against `out-reference-poussebout`) and tunnels (against a fresh `cassini-reference` run) are pixel-identical: all 34 PNGs. The new binary ran with `PATH=/nonexistent`.
 - **Field differences are encoding only**, in 74 features over the 27 tiles, in no field `vectors.rs` reads:
-  - OGR writes ISO-8859-1 (LDID 87) and turns other characters into `?` (`’`, `−`). [osm_import.rs](../../src/osm_import.rs) writes UTF-8 with a `.cpg`; `ogrinfo` reads it correctly.
+  - OGR writes ISO-8859-1 (LDID 87) and turns other characters into `?` (`’`, `−`). [osm_import](../../src/osm_import/mod.rs) writes UTF-8 with a `.cpg`; `ogrinfo` reads it correctly.
   - Values over 254 bytes are cut on a character boundary. OGR cuts at 254 Latin-1 characters, so with accented values the UTF-8 cut comes a few characters earlier.
 - **Semantics ported** from `ogr/ogrsf_frmts/osm`, `ograssemblepolygon.cpp` and `organizePolygons` (MIT, attribution kept):
   - Node coordinates are stored as integers in 1e-7° (`floor(x * 1e7 + 0.5)`); rings are assembled in lon/lat, then projected.
-  - OGR looks up way nodes when it reaches the first relation or the end of the file. Overpass lists ways before nodes and `fix_osm_file` moves relations last, so every node is known by then: the port resolves ways against all nodes. Revisit this if `fix_osm_file` or the query changes.
+  - OGR looks up way nodes when it reaches the first relation or the end of the file, so it needed `fix_osm_file` to move the relations after the nodes. The port reads the whole file first and resolves ways against all nodes, wherever the relations are.
   - A closed way is an area if it has a `closed_ways_are_polygons` tag; `area=yes`/`no` decides, in tag order. Lines are the other ways with at least one tag (the lines layer has no insignificant keys). Ways with fewer than 2 known nodes are dropped.
   - Area ways keep their tags minus `area`, `created_by`, `converted_by`, `note`, `todo`, `fixme`, `FIXME`. Those with tags left become standalone polygons, written after the relations by increasing way id, unless they are a closed `outer` member of a relation that was built.
   - Relations with `type=multipolygon` or `boundary`:
@@ -467,6 +467,14 @@ _Each session appends findings here: decisions, tolerances, measured parity, tim
 - **Code:**
   - [shapefile_output.rs](../../src/shapefile_output.rs), in `lib.rs`, is the shapefile writer that `contour_shapefile.rs` used to contain: it writes to memory first, fixes the empty-layer header and writes the `.prj`. The contour files are unchanged (byte-identical, apart from the known `.dbf` byte 29).
   - New dependency: `quick-xml` 0.42.
+- **Review follow-up:**
+  - The vector step reads the OSM file in memory ([`read_osm_file`](../../src/osm_import/mod.rs)) and no longer writes `shapes/`. `vectors.rs` classifies a tag map built from the OSM tags, or from a `--shapefiles` record's text columns then its `other_tags`. A test checks both give the same features. `other_tags` is no longer cut on this path, so the 3 tunnels railways keep `tunnel`.
+  - Symbol 306 stays off for OSM files, as with `ogr2ogr`: only a `--shapefiles` layer with an `intermittent` (spelling fixed) or `seasonal` column draws it. Which tags should draw 306 is left for step 8.
+  - The parser fails on a file that is not one whole `<osm>` element (empty, HTML or text, truncated), where it used to read an empty map, and warns about Overpass `<remark>`s. The download goes to `<tile>.osm.part`, renamed when complete, and `fix_osm_file` is gone.
+  - Duplicate nodes keep the first, as OGR's SQLite insert does.
+  - `osm_import` is split into `parse`, `layers`, `rings` and `shapefiles`, with tests for holes touching their polygon, nesting stopping at a degenerate ring, several polygons from open ways, and the untagged copies Overpass writes of member ways. `write_shapefile` takes the shape type from the shape. Tests use `tempfile`.
+  - `compare_shapefiles` counts the encoding-only differences apart and passes on them: all 23 tiles that still had `ogr2ogr` shapefiles pass (74 such features), where 10 failed.
+  - Measured: the shapefiles of the 27 tiles are byte-identical to before, and so are the 34 PNGs of the poussebout and tunnels batches. `merged-map.ocd` holds the same objects (5187 and 8540), but its object order changes from run to run, before this change too: the merge iterates `HashMap`s.
 - **Removed:**
   - The `ogr2ogr` calls, `process::checked_output`, `Stage::Vectors`, and `CassiniError::CommandStart` / `CommandFailed`.
   - `Command::new` now remains only in the `gdalinfo` test of `grid.rs`. The CLI `about` text and the docs are left for step 6.

@@ -3,12 +3,15 @@ use crate::constants::INCH;
 use crate::contours::generate_contours_with_pullautin_algorithme;
 use crate::error::{CassiniError, Result, ResultContext, TileId};
 use crate::grid::Grid;
-use crate::helpers::{remove_dir_content, remove_if_exists};
+use crate::helpers::remove_if_exists;
 use crate::map_features::MapFeature;
 use crate::ocad_export::{SPILLED_OBJECTS_FILE_NAME, TILE_OCD_FILE_NAME};
 use crate::ocd::OcdTemplate;
 use crate::tile::TileWithNeighbors;
-use crate::vectors::{get_map_features_from_osm_shapes, render_map_with_osm_vector_shapes};
+use crate::vectors::{
+    get_map_features_from_osm_file, get_map_features_from_osm_shapefiles,
+    render_map_with_osm_vector_shapes,
+};
 use crate::vegetation_areas::get_vegetation_features;
 use crate::world_file::create_world_file;
 use crate::{
@@ -18,7 +21,6 @@ use crate::{
     tile::Tile,
     vegetation::{render_vegetation, UndergrowthMode},
 };
-use cassini::osm_import::convert_osm_file_to_shapefiles;
 use log::info;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -123,39 +125,15 @@ pub fn render_tile_map(
     let vegetation_path = tile.render_dir_path.join("vegetation.png");
     let contours_path = tile.render_dir_path.join("contours.png");
 
-    let shapes_path: Option<PathBuf> = if options.shapefiles_dir.is_some() {
-        options.shapefiles_dir.clone()
+    let osm_features = if let Some(shapefiles_dir) = &options.shapefiles_dir {
+        get_map_features_from_osm_shapefiles(&tile, shapefiles_dir, options.skip_520)?
     } else if !options.skip_vector {
-        let shapes_output_path = tile.render_dir_path.join("shapes");
-
-        if shapes_output_path.exists() {
-            remove_dir_content(&shapes_output_path).context(format!(
-                "could not clean shapefile directory `{}`",
-                shapes_output_path.display()
-            ))?;
-        }
-
         let osm_path = tile
             .render_dir_path
             .join(format!("{:0>7}_{:0>7}.osm", tile.min_x, tile.max_y));
-
-        info!(
-            "Tile min_x={} min_y={} max_x={} max_y={}. Transforming osm file to shapefiles",
-            tile.min_x, tile.min_y, tile.max_x, tile.max_y
-        );
-
-        convert_osm_file_to_shapefiles(&osm_path, &shapes_output_path)?;
-
-        Some(shapes_output_path)
+        get_map_features_from_osm_file(&tile, &osm_path, options.skip_520)?
     } else {
-        None
-    };
-
-    let osm_features = match shapes_path {
-        Some(shapes_path) => {
-            get_map_features_from_osm_shapes(&tile, &shapes_path, options.skip_520)?
-        }
-        None => vec![],
+        vec![]
     };
 
     render_map_with_osm_vector_shapes(
@@ -214,6 +192,7 @@ const RENDER_STEP_FILES: [&str; 18] = [
     "low_vegetation_with_buffer.tif",
     "medium_vegetation_with_buffer.tif",
     SPILLED_OBJECTS_FILE_NAME,
+    // Written by the versions that converted the OSM file with `ogr2ogr`.
     "shapes",
     "slopes.tif",
     "undergrowth.png",

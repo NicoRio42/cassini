@@ -11,7 +11,8 @@
 //! field or a vertex differs (by more than `--tolerance` metres).
 //!
 //! The `.dbf` is read as ISO-8859-1 when its language driver says so (as
-//! OGR writes it), as UTF-8 otherwise.
+//! OGR writes it), as UTF-8 otherwise. Values that differ only by how the
+//! two encodings store them are counted apart, and are no difference.
 
 use clap::Parser;
 use shapefile::{Point, PolygonRing, Shape};
@@ -34,6 +35,9 @@ struct Args {
 
 /// The ISO-8859-1 language driver ID (LDID/87) that OGR writes.
 const LATIN_1_LANGUAGE_DRIVER: u8 = 0x57;
+
+/// The most bytes a `.dbf` text field holds.
+const MAX_FIELD_WIDTH: usize = 254;
 
 /// The fields whose values are grouped in the per-tag statistics.
 const MULTIPOLYGON_TAG_KEYS: [&str; 3] = ["natural", "building", "landuse"];
@@ -169,6 +173,7 @@ fn compare_layer(args: &Args, layer: &str, is_polygon: bool) -> Result<bool, Str
     }
 
     let mut field_differences = 0;
+    let mut encoding_differences = 0;
     let mut geometry_differences = 0;
     let mut max_distance: f64 = 0.0;
     for feature_a in &a {
@@ -181,23 +186,31 @@ fn compare_layer(args: &Args, layer: &str, is_polygon: bool) -> Result<bool, Str
             .chain(feature_b.fields.keys())
             .collect();
         let empty = String::new();
-        let differing: Vec<String> = names
+        let differing: Vec<(&String, &String, &String)> = names
             .into_iter()
-            .filter(|name| {
-                feature_a.fields.get(*name).unwrap_or(&empty)
-                    != feature_b.fields.get(*name).unwrap_or(&empty)
-            })
             .map(|name| {
-                format!(
-                    "{name}: {:?} vs {:?}",
+                (
+                    name,
                     feature_a.fields.get(name).unwrap_or(&empty),
-                    feature_b.fields.get(name).unwrap_or(&empty)
+                    feature_b.fields.get(name).unwrap_or(&empty),
                 )
             })
+            .filter(|(_, value_a, value_b)| value_a != value_b)
             .collect();
-        if !differing.is_empty() {
+        if differing
+            .iter()
+            .all(|(_, value_a, value_b)| differ_by_encoding_only(value_a, value_b))
+        {
+            if !differing.is_empty() {
+                encoding_differences += 1;
+            }
+        } else {
             field_differences += 1;
             if field_differences <= 10 {
+                let differing: Vec<String> = differing
+                    .iter()
+                    .map(|(name, value_a, value_b)| format!("{name}: {value_a:?} vs {value_b:?}"))
+                    .collect();
                 println!(
                     "feature {} fields differ: {}",
                     feature_a.id,
@@ -227,9 +240,40 @@ fn compare_layer(args: &Args, layer: &str, is_polygon: bool) -> Result<bool, Str
         }
     }
     println!(
-        "matched features: {field_differences} with different fields, {geometry_differences} with different geometries, max vertex distance {max_distance:.2e} m"
+        "matched features: {field_differences} with different fields ({encoding_differences} more by encoding only), {geometry_differences} with different geometries, max vertex distance {max_distance:.2e} m"
     );
     Ok(identical && field_differences == 0 && geometry_differences == 0)
+}
+
+/// Whether two values differ only as OGR's ISO-8859-1 `.dbf` and Cassini's
+/// UTF-8 one store them: OGR writes `?` for the characters ISO-8859-1 does
+/// not have, and cuts values at 254 characters where Cassini cuts at 254
+/// bytes, a few characters earlier with accents.
+fn differ_by_encoding_only(a: &str, b: &str) -> bool {
+    let latin_1 = |value: &str| -> String {
+        value
+            .chars()
+            .map(|character| {
+                if u32::from(character) <= 0xff {
+                    character
+                } else {
+                    '?'
+                }
+            })
+            .collect()
+    };
+    let (latin_1_a, latin_1_b) = (latin_1(a), latin_1(b));
+    if latin_1_a == latin_1_b {
+        return true;
+    }
+    let ((shorter, latin_1_shorter), latin_1_longer) =
+        if latin_1_a.chars().count() <= latin_1_b.chars().count() {
+            ((a, latin_1_a), latin_1_b)
+        } else {
+            ((b, latin_1_b), latin_1_a)
+        };
+    // A cut on a character boundary drops at most 3 bytes.
+    latin_1_longer.starts_with(&latin_1_shorter) && shorter.len() > MAX_FIELD_WIDTH - 4
 }
 
 fn preview(ids: &[&str]) -> String {

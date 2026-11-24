@@ -6,7 +6,7 @@ use std::{fs, io::Cursor, path::Path};
 use shapefile::{
     dbase::{TableWriterBuilder, WritableRecord},
     record::EsriShape,
-    ShapeType, ShapeWriter,
+    ShapeWriter,
 };
 
 use crate::error::{Result, ResultContext};
@@ -22,11 +22,10 @@ const EXTENT_BYTES: std::ops::Range<usize> = 36..100;
 /// Writes `features` to the shapefile at `path` (`.shp`, `.shx`, `.dbf`)
 /// with the fields of `table`, and an EPSG:2154 `.prj`.
 ///
-/// An empty layer is written as OGR writes it: `shape_type`, with a zero
-/// extent.
+/// An empty layer is written as OGR writes it: with the shape type of `S`,
+/// and a zero extent.
 pub fn write_shapefile<S: EsriShape, R: WritableRecord>(
     path: &Path,
-    shape_type: ShapeType,
     table: TableWriterBuilder,
     features: impl IntoIterator<Item = (S, R)>,
 ) -> Result<()> {
@@ -52,7 +51,7 @@ pub fn write_shapefile<S: EsriShape, R: WritableRecord>(
     // null shape one, with the no-data M range.
     if is_empty {
         for header in [&mut shp, &mut shx] {
-            header[SHAPE_TYPE_BYTES].copy_from_slice(&(shape_type as i32).to_le_bytes());
+            header[SHAPE_TYPE_BYTES].copy_from_slice(&(S::shapetype() as i32).to_le_bytes());
             header[EXTENT_BYTES].fill(0);
         }
     }
@@ -73,30 +72,18 @@ pub fn write_shapefile<S: EsriShape, R: WritableRecord>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use shapefile::{dbase::Record, Polyline, Reader};
+    use shapefile::{dbase::Record, Polyline, Reader, ShapeType};
 
     #[test]
     fn writes_an_empty_layer_with_its_shape_type() {
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("cassini-shapefile-output-{unique}"));
-        fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("empty.shp");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("empty.shp");
 
-        write_shapefile::<Polyline, Record>(
-            &path,
-            ShapeType::Polyline,
-            TableWriterBuilder::new(),
-            [],
-        )
-        .unwrap();
+        write_shapefile::<Polyline, Record>(&path, TableWriterBuilder::new(), []).unwrap();
         let shp = fs::read(&path).unwrap();
         let shx = fs::read(path.with_extension("shx")).unwrap();
         let prj = fs::read_to_string(path.with_extension("prj")).unwrap();
         let reader = Reader::from_path(&path).unwrap();
-        fs::remove_dir_all(&dir).unwrap();
 
         // As OGR writes it: a 100-byte header, polyline type, empty extent.
         for file in [&shp, &shx] {
