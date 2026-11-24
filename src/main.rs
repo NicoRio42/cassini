@@ -20,7 +20,6 @@ mod merge;
 mod ocad_export;
 mod ocad_merge;
 mod ocd;
-mod process;
 mod pullautin_contours_render;
 mod pullautin_smooth_contours;
 mod render;
@@ -57,7 +56,7 @@ use vegetation::UndergrowthMode;
 #[derive(Parser, Debug)]
 #[command(
     version,
-    about = "A software that generates highly accurate topographic maps from LiDAR data. See documentation: https://cassini-map.com. GDAL and PDAL must be installed on the system for this program to work.",
+    about = "A software that generates highly accurate topographic maps from LiDAR data. See documentation: https://cassini-map.com.",
     long_about = "Cassini is a software that generates highly accurate topographic maps from LiDAR data and shapefile vector data in record times."
 )]
 struct Args {

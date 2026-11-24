@@ -39,7 +39,7 @@ We are replacing these with plain Rust rather than embedding GDAL through the `g
 | 3 | DEM hole filling and contour extraction | 1, 2 | Done |
 | 4 | LiDAR pipeline (PDAL replacement) | 1 | Done |
 | 5 | OSM import (ogr2ogr replacement) | 2 | Done |
-| 6 | Cleanup, docs and end-to-end verification without external tools | 3, 4, 5 | Not started |
+| 6 | Cleanup, docs and end-to-end verification without external tools | 3, 4, 5 | Done |
 | 7 | Packaging and release builds for the three platforms | 6 | Not started |
 | 8 | Vegetation layers from height above ground | 6 | Not started |
 
@@ -478,3 +478,36 @@ _Each session appends findings here: decisions, tolerances, measured parity, tim
 - **Removed:**
   - The `ogr2ogr` calls, `process::checked_output`, `Stage::Vectors`, and `CassiniError::CommandStart` / `CommandFailed`.
   - `Command::new` now remains only in the `gdalinfo` test of `grid.rs`. The CLI `about` text and the docs are left for step 6.
+
+### Step 6 (branch `rust-pipeline/step-6-cleanup`, cut from `remove-pdal-gdal` after the step 5 merge)
+
+- **Removed:** `process.rs`. Its last function, `ensure_file`, checked the LiDAR rasters after writing them, which `write_geotiff` already guarantees by returning an error. No `CassiniError` variant became unused. `Command::new` remains only in the `gdalinfo`/`gdal_translate` tests of `grid.rs`, which skip when the tools are missing. The CLI `about` text no longer mentions GDAL and PDAL. The release binary links only libc, libm, libgcc_s and libstdc++ (`ldd`).
+- **References for the other datasets:** `out-arselle`, `out-correncon` and `out-evg` come from an older pipeline with other file names (`low-vegetation.tif`, no `*_vegetation.tif`), so `cassini-reference --skip-lidar` can't run on them. Their references (`out-reference-<dataset>`) are `cassini-reference --skip-lidar --ocad` runs on a copy of the **new** binary's full-batch output. That covers every GDAL and ogr2ogr replacement (steps 2, 3, 5) end to end, but not the LiDAR stage. `out-reference-tunnels` is built from `out-tunnels` (PDAL rasters), like poussebout. The script is in the session scratchpad, not in the repo:
+
+  ```bash
+  cp -r out-$d out-step6-$d
+  env PATH=/nonexistent ./target/release/cassini batch -o out-step6-$d --ocad in-$d
+  cp -r out-step6-$d out-reference-$d    # tunnels: cp -r out-tunnels out-reference-tunnels
+  cp out-reference-poussebout/cassini-reference out-reference-$d/
+  ./out-reference-$d/cassini-reference batch -o out-reference-$d --skip-lidar --ocad in-$d
+  cargo run --release --example compare_images -- out-reference-$d out-step6-$d
+  ```
+
+- **Empty-`PATH` full batches** (`env PATH=/nonexistent`, LiDAR included, `--ocad`, default 3 threads) succeed on all five datasets. Final PNGs against the references:
+  - arselle (17 images), correncon (25), evg (37): pixel-identical.
+  - poussebout: `contours.png` and `cliffs.png` identical, `vegetation.png` 2.2–8.0%, `full-map.png` 1.4–4.6%, `merged-map.png` 2.64%: the step 4 numbers exactly.
+  - tunnels: `contours.png` and `cliffs.png` identical, `vegetation.png` 3.2–4.3%, `full-map.png` 1.0–3.5%, `merged-map.png` 2.15%. That is the same voxel-origin noise as poussebout.
+  - A `cassini process --ocad` on one poussebout tile into an empty directory, with an empty `PATH`, downloads the OSM file from Overpass and renders: 62 s in all, most of it the download.
+- **Timings**, in seconds, on 12 cores with a warm cache. The reference can't run the LiDAR stage, so only `--skip-lidar` compares:
+
+  | Dataset | Tiles | Full batch | `--skip-lidar` | `cassini-reference --skip-lidar` |
+  |---|---|---|---|---|
+  | poussebout | 4 | 21.0 | 7.2 | 15.2 (step 2) |
+  | tunnels | 4 | 19.1 | 7.2 | 15.5 |
+  | arselle | 4 | 23.7 | 8.1 | 17.0 |
+  | correncon | 6 | 30.5 | 7.6 | 17.0 |
+  | evg | 9 | 48.0 | 11.4 | 25.6 |
+
+- **Docs:** the installation guide now covers downloading a release binary (with the macOS quarantine workaround, since binaries aren't signed yet) and building from source. Docker and Conda are gone from it. `what-and-why.mdx`, `index.mdx`, the CLI reference help block (now the real `cassini -h` output) and the README were updated. The `pdal`, `gdal`, `miniconda` and `docker` glossary entries are deleted; `what-and-why.mdx` links PDAL and GDAL directly where it gives the history. `npm run build` in `docs/` passes.
+- **Dockerfile:** the user chose to keep publishing the image on a slim base: `ubuntu:22.04` with `ca-certificates` (for the HTTPS Overpass download) and the binary. It uses Ubuntu 22.04 because the release binary is built on the `ubuntu-22.04` runner with a static glibc, which still loads the system's NSS modules for DNS. The image was **not built or run** here: neither `ubuntu:22.04` nor the `crt-static` binary was available locally. Check it in step 7, and change the base image if the release runner changes. `linux-release.yml` still builds and pushes it.
+- **Left as is:** `benchmarks/` (scripts for the old GDAL/PDAL pipeline, kept as the record of the performance report's measurements) and `examples/compare_shapefiles.rs` (compares against `ogr2ogr` output). Neither is shipped.

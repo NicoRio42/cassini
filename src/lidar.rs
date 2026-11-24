@@ -22,7 +22,6 @@ use crate::{
     error::{CassiniError, Result, ResultContext, TileId},
     grid::{Compression, Grid, Sample},
     helpers::remove_dir_content_except,
-    process::ensure_file,
 };
 
 /// The ASPRS classifications of ground and of low, medium and high
@@ -111,23 +110,13 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
     }
     let (dem, [low, medium, high]) = rasters.into_grids();
 
-    let dem_path = output_dir_path.join("dem.tif");
-    let low_vegetation_path = output_dir_path.join("low_vegetation.tif");
-    let medium_vegetation_path = output_dir_path.join("medium_vegetation.tif");
-    let high_vegetation_path = output_dir_path.join("high_vegetation.tif");
-
-    dem.write_geotiff(&dem_path, Compression::Deflate)?;
-    low.write_geotiff(&low_vegetation_path, Compression::Deflate)?;
-    medium.write_geotiff(&medium_vegetation_path, Compression::Deflate)?;
-    high.write_geotiff(&high_vegetation_path, Compression::Deflate)?;
-
-    for output in [
-        &dem_path,
-        &low_vegetation_path,
-        &medium_vegetation_path,
-        &high_vegetation_path,
+    dem.write_geotiff(&output_dir_path.join("dem.tif"), Compression::Deflate)?;
+    for (grid, name) in [
+        (low, "low_vegetation.tif"),
+        (medium, "medium_vegetation.tif"),
+        (high, "high_vegetation.tif"),
     ] {
-        ensure_file(output)?;
+        grid.write_geotiff(&output_dir_path.join(name), Compression::Deflate)?;
     }
 
     // Downstream tools use extent.txt as the completion marker, so write it last.
