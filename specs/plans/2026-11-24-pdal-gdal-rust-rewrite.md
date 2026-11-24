@@ -35,7 +35,7 @@ We are replacing these with plain Rust rather than embedding GDAL through the `g
 | Step | Title | Depends on | Status |
 |---|---|---|---|
 | 1 | Foundations: GeoTIFF I/O, comparison tool, reference outputs | – | Done |
-| 2 | Simple raster ops and coordinate conversion | 1 | Not started |
+| 2 | Simple raster ops and coordinate conversion | 1 | Done |
 | 3 | DEM hole filling and contour extraction | 1, 2 | Not started |
 | 4 | LiDAR pipeline (PDAL replacement) | 1 | Not started |
 | 5 | OSM import (ogr2ogr replacement) | 2 | Not started |
@@ -335,3 +335,13 @@ _Each session appends findings here: decisions, tolerances, measured parity, tim
   ```
 
   To check a new binary: copy `out-poussebout` to the scratchpad, run the same batch on the copy with `./target/release/cassini`, then `compare_images out-reference-poussebout <copy>` (about 20 s per batch). Reference intermediates: `dem_with_buffer.tif`, `dem_2m_with_buffer.tif` and `slopes.tif` are Float32 (2800², 700², 2800²), uncompressed, nodata -9999; `*_vegetation_with_buffer.tif` are Byte 1400², nodata 255.
+
+### Step 2 (branch `rust-pipeline/step-2-raster-ops`, cut from `remove-pdal-gdal` after the step 1 merge)
+
+- **Parity: bit-identical.** On all four poussebout tiles, `compare_rasters` exits 0 for `dem_with_buffer.tif` (after `gdal_fillnodata`), the three `*_vegetation_with_buffer.tif`, `dem_2m_with_buffer.tif` and `slopes.tif`. `contours-raw.shp` and all 17 final PNGs are byte-identical too. `--skip-lidar --ocad` batch: 12.3 s vs 15.2 s for `cassini-reference`.
+- **Buffer** ([buffer.rs](../../src/buffer.rs)): `create_tif_with_buffer::<T>(…, resolution)` replaces the `-ot` string with the output type (`f32` for the DEM, `u8` for vegetation). Sources are read as `T`, pasted in order (tile, then neighbours) with nearest neighbour at output cell centres; nodata is transparent and a later valid cell wins, like the VRT. The output nodata is the tile raster's (an error if it has none); uncovered cells are nodata. Output size is `round(extent / resolution)`, uncompressed like `gdal_translate`. The DEM extent bug (2 km overhang of nodata) is harmless here: the overhang is transparent.
+- **2 m DEM** (`downsample_average` in [dem.rs](../../src/dem.rs)): `f64` sum of the valid cells of each 4×4 block, divided by their count, cast to `f32`. Matches GDAL 3.12 exactly. Assumes the size is a multiple of the factor (true for 1 km tiles with a 200 m buffer).
+- **Slope** (`slopes_in_degrees`): Horn's window sums in `f32` (GDAL reads a Float32 DEM as `float`), then `f64` for `* (1/ewres)`, `sqrt`, `/ 8`, `atan`, `to_degrees`. Edges and cells with a nodata neighbour are -9999. Exact against GDAL 3.12 on Linux (both use glibc `atan`; other platforms may differ by an ulp).
+- **DEM step order** is unchanged: buffer → `gdal_fillnodata` in place → read the filled DEM once → 2 m DEM → `gdal_contour` → slope. Step 3 can keep the filled `Grid<f32>` in memory instead of re-reading it.
+- **Projection** ([projection.rs](../../src/projection.rs), in `lib.rs` so examples can use it): direct LCC formulas (Snyder), no new dependency. Within 1e-8° of `cs2cs` (PROJ 9.7) for 7 points across France, forward within 1e-5 m. The Overpass bbox is formatted with `{:.8}` to keep the query as `cs2cs -f %.8f` produced it.
+- **Removed:** `gdalbuildvrt`, both `gdal_translate`, `gdaldem` and `cs2cs` calls, and the now-unused `Stage::Buffer` and `Stage::Download`. `checked_output_with_input` stays in `process.rs`: `lidar.rs` pipes the PDAL pipeline through it.
