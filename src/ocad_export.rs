@@ -3,6 +3,7 @@ use crate::{
     map_features::{
         clip_line_part, clip_ring, get_polygon_areas, AreaSymbol, Extent, LineSymbol, MapFeature,
     },
+    ocad_merge::{merge_tile_objects, Bounds, TileObjects},
     ocd::{
         format_symbol_number, Georeferencing, ObjectKind, OcdObject, OcdPoint, OcdTemplate,
         FLAG_HOLE,
@@ -11,7 +12,9 @@ use crate::{
 };
 use log::{info, warn};
 use shapefile::Point;
-use std::{iter::once, time::Instant};
+use std::{iter::once, path::Path, time::Instant};
+
+pub const MERGED_OCD_FILE_NAME: &str = "merged-map.ocd";
 
 /// Returns the OCD symbols drawn for a line feature. A motorway is two
 /// overlaid lines. Wide road tunnels are drawn as 512 bridge / tunnel, and
@@ -102,6 +105,12 @@ pub fn check_template(template: &OcdTemplate) -> Result<()> {
     Ok(())
 }
 
+/// Line ends on either side of a tile edge closer than this, in metres, are
+/// joined in the merged OCAD file of a batch. Both tiles compute the lines
+/// crossing their common edge from the same data, so their ends coincide
+/// almost always.
+const SEAM_JOIN_TOLERANCE: f64 = 1.0;
+
 /// Writes `features`, clipped to the tile extent, to `full-map.ocd` in the
 /// tile's render directory.
 pub fn write_ocd_file(tile: &Tile, template: &OcdTemplate, features: &[MapFeature]) -> Result<()> {
@@ -112,15 +121,9 @@ pub fn write_ocd_file(tile: &Tile, template: &OcdTemplate, features: &[MapFeatur
 
     let start = Instant::now();
 
-    let extent = Extent {
-        min_x: tile.min_x as f64,
-        min_y: tile.min_y as f64,
-        max_x: tile.max_x as f64,
-        max_y: tile.max_y as f64,
-    };
     let georeferencing =
         template.georeferencing((tile.min_x + tile.max_x) / 2, (tile.min_y + tile.max_y) / 2);
-    let objects = get_ocd_objects(features, &extent, &georeferencing)?;
+    let objects = get_tile_objects(tile, &georeferencing, features)?.objects;
 
     let bytes = template.write(&georeferencing, &objects)?;
     let ocd_path = tile.render_dir_path.join("full-map.ocd");
@@ -136,6 +139,65 @@ pub fn write_ocd_file(tile: &Tile, template: &OcdTemplate, features: &[MapFeatur
         tile.max_x,
         tile.max_y,
         objects.len(),
+        duration
+    );
+
+    Ok(())
+}
+
+/// Converts `features`, clipped to the tile extent, to OCD objects.
+pub fn get_tile_objects(
+    tile: &Tile,
+    georeferencing: &Georeferencing,
+    features: &[MapFeature],
+) -> Result<TileObjects> {
+    let extent = Extent {
+        min_x: tile.min_x as f64,
+        min_y: tile.min_y as f64,
+        max_x: tile.max_x as f64,
+        max_y: tile.max_y as f64,
+    };
+    let (min_x, min_y) = georeferencing.to_ocd(extent.min_x, extent.min_y)?;
+    let (max_x, max_y) = georeferencing.to_ocd(extent.max_x, extent.max_y)?;
+
+    Ok(TileObjects {
+        bounds: Bounds {
+            min_x,
+            min_y,
+            max_x,
+            max_y,
+        },
+        objects: get_ocd_objects(features, &extent, georeferencing)?,
+    })
+}
+
+/// Writes the objects of every tile of a batch, joined across the tile
+/// edges, to `merged-map.ocd` in `output_dir`. The objects must be in
+/// `georeferencing`'s paper coordinates.
+pub fn write_merged_ocd_file(
+    output_dir: &Path,
+    template: &OcdTemplate,
+    georeferencing: &Georeferencing,
+    tiles: Vec<TileObjects>,
+) -> Result<()> {
+    info!("Merging OCAD export");
+
+    let start = Instant::now();
+
+    let join_tolerance = (SEAM_JOIN_TOLERANCE * georeferencing.units_per_meter()).round() as i32;
+    let objects = merge_tile_objects(tiles, join_tolerance);
+
+    let bytes = template.write(georeferencing, &objects)?;
+    let ocd_path = output_dir.join(MERGED_OCD_FILE_NAME);
+    std::fs::write(&ocd_path, bytes)
+        .context(format!("could not write `{}`", ocd_path.display()))?;
+
+    let duration = start.elapsed();
+
+    info!(
+        "{} objects exported to `{}` in {:.1?}",
+        objects.len(),
+        ocd_path.display(),
         duration
     );
 
@@ -285,6 +347,7 @@ fn convert_points(points: &[Point], georeferencing: &Georeferencing) -> Result<V
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ocad_merge::merge_tile_objects;
     use shapefile::{Polygon, PolygonRing, Polyline};
 
     const EXTENT: Extent = Extent {
@@ -438,6 +501,64 @@ mod tests {
                 point(-5_000, -4_000),
                 point(-4_000, -4_000),
                 point(-4_000, -5_000)
+            ]
+        );
+    }
+
+    #[test]
+    fn merges_features_cut_by_tile_edges() {
+        let tile = |min_x: i64| Tile {
+            lidar_dir_path: Default::default(),
+            render_dir_path: Default::default(),
+            min_x,
+            min_y: 0,
+            max_x: min_x + 1000,
+            max_y: 1000,
+        };
+        // Both tiles hold the whole features, as they do with OpenStreetMap
+        let features = || {
+            vec![
+                MapFeature::Line(
+                    LineSymbol::Footpath505 { tunnel: false },
+                    Polyline::new(ring(&[(500.0, 500.0), (1500.0, 600.0)])),
+                ),
+                MapFeature::Area(
+                    AreaSymbol::UncrossableBodyOfWater301,
+                    Polygon::new(PolygonRing::Outer(ring(&[
+                        (900.0, 400.0),
+                        (900.0, 600.0),
+                        (1100.0, 600.0),
+                        (1100.0, 400.0),
+                        (900.0, 400.0),
+                    ]))),
+                ),
+            ]
+        };
+
+        let tiles: Vec<TileObjects> = [tile(0), tile(1000)]
+            .iter()
+            .map(|tile| get_tile_objects(tile, &GEOREFERENCING, &features()).unwrap())
+            .collect();
+        assert_eq!(tiles[0].bounds.max_x, 5_000);
+        assert_eq!(tiles[1].bounds.min_x, 5_000);
+        // The bank line is cut where its ring starts too
+        let counts: Vec<usize> = tiles.iter().map(|tile| tile.objects.len()).collect();
+        assert_eq!(counts, vec![4, 3]);
+
+        let objects = merge_tile_objects(tiles, 10);
+
+        let mut kinds: Vec<(i32, ObjectKind, usize)> = objects
+            .iter()
+            .map(|object| (object.symbol, object.kind, object.points.len()))
+            .collect();
+        kinds.sort_by_key(|(symbol, ..)| *symbol);
+        assert_eq!(
+            kinds,
+            vec![
+                // The lake, its bank line closed, and the footpath
+                (301001, ObjectKind::Area, 5),
+                (301004, ObjectKind::Line, 7),
+                (505000, ObjectKind::Line, 3),
             ]
         );
     }

@@ -351,7 +351,7 @@ Vegetation is exported as 403 (rough open land), 406, 408 and 410 (vegetation: s
 
 Lakes are exported as a 301.001 area with 301.004 bank lines, and buildings as a 521.003 area with 521.004 outlines, so that no bank line or outline is drawn where the tile edge cuts them. Wide road tunnels are exported as 512 (bridge / tunnel), road and footpath tunnels are left out.
 
-With `batch`, each tile gets its own `full-map.ocd` in its directory. The tiles are not merged into a single OCAD file.
+With `batch`, the whole batch is exported to a single `merged-map.ocd` file in the output directory, next to the merged PNG map, instead of one file per tile. Its objects are joined across the tile edges: a line ending on the edge between two tiles is joined to the line of the same symbol continuing it in the neighbouring tile, and areas of the same symbol meeting along that edge are merged into one area. Only the outer edge of the batch cuts the objects.
 
 ### `--ocad-template`
 

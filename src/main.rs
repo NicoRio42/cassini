@@ -15,6 +15,7 @@ mod map_features;
 mod map_renderer;
 mod merge;
 mod ocad_export;
+mod ocad_merge;
 mod ocd;
 mod process;
 mod pullautin_contours_render;
@@ -28,13 +29,13 @@ mod world_file;
 
 use batch::batch;
 use clap::{CommandFactory, Parser, Subcommand};
-use config::{default_config, get_config};
+use config::{default_config, get_config, Config};
 use download::download_osm_file;
 use error::{CassiniError, Result, ResultContext};
 use las::raw::Header;
 use lidar::generate_dem_and_vegetation_density_tiff_images_from_laz_file;
 use log::info;
-use ocad_export::check_template;
+use ocad_export::{check_template, write_ocd_file};
 use ocd::OcdTemplate;
 use render::{
     generate_png_from_dem_vegetation_density_tiff_images_and_vector_file, OcadOptions,
@@ -234,7 +235,10 @@ enum Commands {
 
 #[derive(clap::Args, Debug)]
 struct OcadArgs {
-    #[arg(long, help = "Also export the map as an OCAD 12 file (full-map.ocd)")]
+    #[arg(
+        long,
+        help = "Also export the map as an OCAD 12 file (full-map.ocd, or merged-map.ocd for a batch)"
+    )]
     ocad: bool,
 
     #[arg(
@@ -294,12 +298,7 @@ fn process_single_tile(
         download_osm_file_if_needed(&tile)?;
     }
 
-    generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
-        tile,
-        vec![],
-        &options,
-        &config,
-    )
+    render_tile(tile, vec![], &options, &config)
 }
 
 fn process_single_tile_lidar_step(
@@ -342,12 +341,27 @@ fn process_single_tile_render_step(
         download_osm_file_if_needed(&tile)?;
     }
 
-    generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
-        tile,
+    render_tile(tile, neighbor_tiles, &options, &config)
+}
+
+/// Renders a single tile, and exports it to `full-map.ocd` when requested.
+fn render_tile(
+    tile: Tile,
+    neighbor_tiles: Vec<PathBuf>,
+    options: &RenderOptions,
+    config: &Config,
+) -> Result<()> {
+    let features = generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
+        tile.clone(),
         neighbor_tiles,
-        &options,
-        &config,
-    )
+        options,
+        config,
+    )?;
+
+    match &options.ocad {
+        Some(ocad) => write_ocd_file(&tile, &ocad.template, &features),
+        None => Ok(()),
+    }
 }
 
 /// Loads the OCAD template when the export is requested, before any

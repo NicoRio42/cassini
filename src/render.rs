@@ -3,7 +3,7 @@ use crate::constants::INCH;
 use crate::contours::generate_contours_with_pullautin_algorithme;
 use crate::error::{CassiniError, Result, ResultContext, Stage, TileId};
 use crate::helpers::{remove_dir_content, remove_if_exists};
-use crate::ocad_export::write_ocd_file;
+use crate::map_features::MapFeature;
 use crate::ocd::OcdTemplate;
 use crate::process::{checked_output, ensure_file};
 use crate::tile::TileWithNeighbors;
@@ -43,12 +43,14 @@ pub struct OcadOptions {
     pub simplify_tolerance: f64,
 }
 
+/// Renders the tile to `full-map.png`. When the OCAD export is requested,
+/// returns the map features to export, else nothing.
 pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
     tile: Tile,
     neighbor_tiles: Vec<PathBuf>,
     options: &RenderOptions,
     config: &Config,
-) -> Result<()> {
+) -> Result<Vec<MapFeature>> {
     let width = tile.max_x - tile.min_x;
     let height = tile.max_y - tile.min_y;
     if width <= 0 || height <= 0 {
@@ -219,14 +221,14 @@ pub fn generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
         tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
     );
 
-    if let Some(ocad) = &options.ocad {
-        let mut features = vegetation_features;
-        features.extend(contour_features);
-        features.extend(osm_features);
-        write_ocd_file(&tile, &ocad.template, &features)?;
+    if options.ocad.is_none() {
+        return Ok(vec![]);
     }
 
-    Ok(())
+    let mut features = vegetation_features;
+    features.extend(contour_features);
+    features.extend(osm_features);
+    Ok(features)
 }
 
 const RENDER_STEP_FILES: [&str; 17] = [

@@ -2,8 +2,11 @@ use crate::{
     config::Config,
     download::download_osm_file,
     error::{CassiniError, Result, ResultContext, Stage, TileId},
+    helpers::remove_if_exists,
     lidar::generate_dem_and_vegetation_density_tiff_images_from_laz_file,
     merge::merge_maps,
+    ocad_export::{get_tile_objects, write_merged_ocd_file, MERGED_OCD_FILE_NAME},
+    ocad_merge::TileObjects,
     render::{
         cleanup_render_step_files,
         generate_png_from_dem_vegetation_density_tiff_images_and_vector_file, RenderOptions,
@@ -19,6 +22,10 @@ use std::{
     sync::Arc,
     thread::{spawn, JoinHandle},
 };
+
+/// A worker thread processing a chunk of tiles, with the first tile of the
+/// chunk to report a panic.
+type Worker<T> = (Option<TileId>, JoinHandle<Vec<Result<T>>>);
 
 pub fn batch(
     input_dir: &str,
@@ -44,6 +51,18 @@ pub fn batch(
     let tiles_arc = Arc::new(tiles.clone());
     let chunk_size = tiles.len().div_ceil(number_of_threads);
 
+    // The tiles are exported in the coordinates of the merged OCAD file
+    let ocad_georeferencing = options.ocad.as_ref().map(|ocad| {
+        let (min_x, min_y, max_x, max_y) = get_batch_extent(&tiles);
+        ocad.template
+            .georeferencing((min_x + max_x) / 2, (min_y + max_y) / 2)
+    });
+    let merged_ocd_path = Path::new(output_dir).join(MERGED_OCD_FILE_NAME);
+    remove_if_exists(&merged_ocd_path).context(format!(
+        "could not remove stale merged map `{}`",
+        merged_ocd_path.display()
+    ))?;
+
     if skip_lidar {
         cleanup_render_step_files(&tiles, output_dir)?;
     } else {
@@ -52,37 +71,33 @@ pub fn batch(
             .map(|chunk| chunk.to_vec())
             .collect();
 
-        let mut handles: Vec<(Option<TileId>, JoinHandle<Vec<CassiniError>>)> =
-            Vec::with_capacity(number_of_threads);
+        let mut handles: Vec<Worker<()>> = Vec::with_capacity(number_of_threads);
 
         for chunk in tiles_chunks {
             let first_tile = chunk.first().map(|tile| TileId::from(&tile.tile));
             let chunk = Arc::new(chunk);
 
             let spawned_thread = spawn(move || {
-                let mut failures = Vec::new();
-                for tile in chunk.iter() {
-                    info!(
-                        "Tile min_x={} min_y={} max_x={} max_y={}. Generating raw rasters",
-                        tile.tile.min_x, tile.tile.min_y, tile.tile.max_x, tile.tile.max_y
-                    );
+                chunk
+                    .iter()
+                    .map(|tile| {
+                        info!(
+                            "Tile min_x={} min_y={} max_x={} max_y={}. Generating raw rasters",
+                            tile.tile.min_x, tile.tile.min_y, tile.tile.max_x, tile.tile.max_y
+                        );
 
-                    if let Err(error) =
                         generate_dem_and_vegetation_density_tiff_images_from_laz_file(
                             &tile.laz_path,
                             &tile.tile.lidar_dir_path,
                         )
-                    {
-                        failures.push(error);
-                    }
-                }
-                failures
+                    })
+                    .collect()
             });
 
             handles.push((first_tile, spawned_thread));
         }
 
-        let failures = collect_worker_failures(handles, Stage::Lidar);
+        let (_, failures) = collect_worker_results(handles, Stage::Lidar);
         if !failures.is_empty() {
             return Err(CassiniError::Batch {
                 failure_count: failures.len(),
@@ -115,8 +130,7 @@ pub fn batch(
         .map(|chunk| chunk.to_vec())
         .collect();
 
-    let mut handles: Vec<(Option<TileId>, JoinHandle<Vec<CassiniError>>)> =
-        Vec::with_capacity(number_of_threads);
+    let mut handles: Vec<Worker<Option<TileObjects>>> = Vec::with_capacity(number_of_threads);
 
     for chunk in tiles_chunks {
         let first_tile = chunk.first().map(|tile| TileId::from(&tile.tile));
@@ -126,31 +140,35 @@ pub fn batch(
         let cloned_config = config.clone();
 
         let spawned_thread = spawn(move || {
-            let mut failures = Vec::new();
-            for tile in chunk.iter() {
-                info!(
-                    "Tile min_x={} min_y={} max_x={} max_y={}. Rendering map",
-                    tile.tile.min_x, tile.tile.min_y, tile.tile.max_x, tile.tile.max_y
-                );
+            chunk
+                .iter()
+                .map(|tile| {
+                    info!(
+                        "Tile min_x={} min_y={} max_x={} max_y={}. Rendering map",
+                        tile.tile.min_x, tile.tile.min_y, tile.tile.max_x, tile.tile.max_y
+                    );
 
-                if let Err(error) =
-                    generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
-                        tile.tile.clone(),
-                        tile.neighbors.clone(),
-                        &cloned_options,
-                        &cloned_config,
-                    )
-                {
-                    failures.push(error);
-                }
-            }
-            failures
+                    let features =
+                        generate_png_from_dem_vegetation_density_tiff_images_and_vector_file(
+                            tile.tile.clone(),
+                            tile.neighbors.clone(),
+                            &cloned_options,
+                            &cloned_config,
+                        )?;
+
+                    ocad_georeferencing
+                        .map(|georeferencing| {
+                            get_tile_objects(&tile.tile, &georeferencing, &features)
+                        })
+                        .transpose()
+                })
+                .collect()
         });
 
         handles.push((first_tile, spawned_thread));
     }
 
-    let failures = collect_worker_failures(handles, Stage::Render);
+    let (tile_objects, failures) = collect_worker_results(handles, Stage::Render);
     if !failures.is_empty() {
         return Err(CassiniError::Batch {
             failure_count: failures.len(),
@@ -158,17 +176,50 @@ pub fn batch(
         });
     }
 
-    merge_maps(output_dir, tiles, &config)
+    merge_maps(output_dir, tiles, &config)?;
+
+    if let (Some(ocad), Some(georeferencing)) = (&options.ocad, ocad_georeferencing) {
+        write_merged_ocd_file(
+            Path::new(output_dir),
+            &ocad.template,
+            &georeferencing,
+            tile_objects.into_iter().flatten().collect(),
+        )?;
+    }
+
+    Ok(())
 }
 
-fn collect_worker_failures(
-    handles: Vec<(Option<TileId>, JoinHandle<Vec<CassiniError>>)>,
-    stage: Stage,
-) -> Vec<CassiniError> {
+/// The extent covering every tile, as min x, min y, max x, max y.
+fn get_batch_extent(tiles: &[TileWithNeighbors]) -> (i64, i64, i64, i64) {
+    tiles.iter().fold(
+        (i64::MAX, i64::MAX, i64::MIN, i64::MIN),
+        |(min_x, min_y, max_x, max_y), tile| {
+            (
+                min_x.min(tile.tile.min_x),
+                min_y.min(tile.tile.min_y),
+                max_x.max(tile.tile.max_x),
+                max_y.max(tile.tile.max_y),
+            )
+        },
+    )
+}
+
+/// Returns the results of the workers' tiles, and the failures of the tiles
+/// and of the workers that panicked.
+fn collect_worker_results<T>(handles: Vec<Worker<T>>, stage: Stage) -> (Vec<T>, Vec<CassiniError>) {
+    let mut values = Vec::new();
     let mut failures = Vec::new();
     for (tile, handle) in handles {
         match handle.join() {
-            Ok(mut worker_failures) => failures.append(&mut worker_failures),
+            Ok(results) => {
+                for result in results {
+                    match result {
+                        Ok(value) => values.push(value),
+                        Err(error) => failures.push(error),
+                    }
+                }
+            }
             Err(payload) => failures.push(CassiniError::WorkerPanicked {
                 stage,
                 tile_suffix: CassiniError::tile_suffix(tile),
@@ -176,7 +227,7 @@ fn collect_worker_failures(
             }),
         }
     }
-    failures
+    (values, failures)
 }
 
 fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {

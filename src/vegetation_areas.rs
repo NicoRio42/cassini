@@ -276,6 +276,10 @@ struct Tracer {
 
 impl Tracer {
     /// Returns the area where `field` is positive, clipped to the tile.
+    ///
+    /// The iso-lines are clipped before they are simplified, keeping the
+    /// vertices on the tile edge, so that they cross the edge where the
+    /// iso-lines of the neighbouring tile do, and batch mode can join them.
     fn trace(&self, field: &[f32]) -> Result<Shapes> {
         let values: Vec<f64> = field
             .iter()
@@ -304,17 +308,34 @@ impl Tracer {
                 if ring.len() > 1 && ring.first() == ring.last() {
                     ring.pop();
                 }
-                // Each ring is simplified on its own, so neighbouring rings
-                // may cross by up to the tolerance. The pieces this leaves
-                // after the boolean operations are dropped as slivers.
-                simplify_ring(&ring, self.simplify_tolerance)
+                ring
             })
             .filter(|ring| ring.len() >= 3)
             .collect();
 
         // Iso-lines of a threshold never cross, so the even-odd rule turns
         // nested rings into holes and islands in holes.
-        Ok(rings.overlay(
+        let clipped = rings.overlay(
+            &self.tile_rectangle,
+            OverlayRule::Intersect,
+            FillRule::EvenOdd,
+        );
+        if self.simplify_tolerance <= 0.0 {
+            return Ok(clipped);
+        }
+
+        let is_on_tile_edge = |point: [f64; 2]| is_on_rectangle_edge(point, &self.tile_rectangle);
+        let simplified: Vec<Vec<[f64; 2]>> = clipped
+            .iter()
+            .flatten()
+            .map(|ring| simplify_ring(ring, self.simplify_tolerance, is_on_tile_edge))
+            .filter(|ring| ring.len() >= 3)
+            .collect();
+
+        // Each ring is simplified on its own, so neighbouring rings may cross
+        // by up to the tolerance. The pieces this leaves after the boolean
+        // operations are dropped as slivers.
+        Ok(simplified.overlay(
             &self.tile_rectangle,
             OverlayRule::Intersect,
             FillRule::EvenOdd,
@@ -322,27 +343,61 @@ impl Tracer {
     }
 }
 
-/// Douglas–Peucker simplification of a ring without closing point.
-fn simplify_ring(ring: &[[f64; 2]], tolerance: f64) -> Vec<[f64; 2]> {
+/// Whether `point` lies on the edge of the axis-aligned `rectangle`.
+fn is_on_rectangle_edge(point: [f64; 2], rectangle: &[[f64; 2]]) -> bool {
+    // The boolean operations snap the coordinates to an integer grid
+    const TOLERANCE: f64 = 1e-3;
+    rectangle.iter().any(|corner| {
+        (point[0] - corner[0]).abs() < TOLERANCE || (point[1] - corner[1]).abs() < TOLERANCE
+    })
+}
+
+/// Douglas–Peucker simplification of a ring without closing point, keeping
+/// the vertices for which `is_pinned` holds.
+fn simplify_ring(
+    ring: &[[f64; 2]],
+    tolerance: f64,
+    is_pinned: impl Fn([f64; 2]) -> bool,
+) -> Vec<[f64; 2]> {
     if tolerance <= 0.0 || ring.len() < 4 {
         return ring.to_vec();
     }
 
-    // Douglas–Peucker keeps the ends of a chain, so the ring is split in two
-    // chains at the vertex farthest from its first one
-    let farthest = (1..ring.len())
-        .max_by(|a, b| {
-            squared_distance(ring[0], ring[*a]).total_cmp(&squared_distance(ring[0], ring[*b]))
-        })
-        .unwrap();
+    // Douglas–Peucker keeps the ends of a chain, so the ring is split in
+    // chains at its pinned vertices. It starts at the first one, and is also
+    // split at the vertex farthest from it when there are fewer than two.
+    let first = (0..ring.len())
+        .find(|index| is_pinned(ring[*index]))
+        .unwrap_or(0);
+    let closed: Vec<[f64; 2]> = ring[first..]
+        .iter()
+        .chain(&ring[..=first])
+        .copied()
+        .collect();
+    let len = ring.len();
 
-    let closed: Vec<[f64; 2]> = ring.iter().copied().chain([ring[0]]).collect();
+    let mut anchors: Vec<usize> = (0..len).filter(|index| is_pinned(closed[*index])).collect();
+    if anchors.len() < 2 {
+        let farthest = (1..len)
+            .max_by(|a, b| {
+                squared_distance(closed[0], closed[*a])
+                    .total_cmp(&squared_distance(closed[0], closed[*b]))
+            })
+            .unwrap();
+        anchors = vec![0, farthest];
+    }
+
     let mut kept = vec![false; closed.len()];
-    kept[0] = true;
-    kept[farthest] = true;
+    for anchor in &anchors {
+        kept[*anchor] = true;
+    }
 
     let squared_tolerance = tolerance * tolerance;
-    let mut chains = vec![(0, farthest), (farthest, ring.len())];
+    let mut chains: Vec<(usize, usize)> = anchors
+        .iter()
+        .zip(anchors.iter().skip(1).chain([&len]))
+        .map(|(first, last)| (*first, *last))
+        .collect();
     while let Some((first, last)) = chains.pop() {
         let farthest_from_chord = (first + 1..last)
             .map(|index| {
@@ -363,7 +418,8 @@ fn simplify_ring(ring: &[[f64; 2]], tolerance: f64) -> Vec<[f64; 2]> {
     }
 
     // The closing point duplicates the first one
-    ring.iter()
+    closed[..len]
+        .iter()
         .zip(&kept)
         .filter(|(_, kept)| **kept)
         .map(|(point, _)| *point)
@@ -836,14 +892,78 @@ mod tests {
         ring.push([5.0, 10.2]);
         ring.push([0.0, 10.0]);
 
-        let simplified = simplify_ring(&ring, 0.5);
+        let simplified = simplify_ring(&ring, 0.5, |_| false);
 
         assert_eq!(
             simplified,
             vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]]
         );
-        assert_eq!(simplify_ring(&ring, 0.0), ring);
-        assert_eq!(simplify_ring(&ring, 0.1).len(), 5);
+        assert_eq!(simplify_ring(&ring, 0.0, |_| false), ring);
+        assert_eq!(simplify_ring(&ring, 0.1, |_| false).len(), 5);
+    }
+
+    #[test]
+    fn keeps_pinned_vertices_when_simplifying() {
+        let mut ring: Vec<[f64; 2]> = (0..=10).map(|x| [x as f64, 0.0]).collect();
+        ring.push([10.0, 10.0]);
+        ring.push([0.0, 10.0]);
+
+        let simplified = simplify_ring(&ring, 0.5, |point| point == [3.0, 0.0]);
+        assert_eq!(
+            simplified,
+            vec![
+                [3.0, 0.0],
+                [10.0, 0.0],
+                [10.0, 10.0],
+                [0.0, 10.0],
+                [0.0, 0.0]
+            ]
+        );
+
+        let simplified = simplify_ring(&ring, 0.5, |point| point[1] == 0.0);
+        assert_eq!(simplified.len(), ring.len());
+    }
+
+    #[test]
+    fn keeps_the_points_where_iso_lines_cross_the_tile_edge() {
+        // A wavy band crossing the tile edge at x = 10, traced in two tiles
+        let grid = Grid {
+            width: 20,
+            height: 20,
+        };
+        let values: Vec<f32> = (0..grid.len())
+            .map(|cell| {
+                let (x, y) = ((cell % grid.width) as f32, (cell / grid.width) as f32);
+                3.0 - (y - 10.0 - 2.0 * (x * 0.7).sin()).abs()
+            })
+            .collect();
+        let tracer = |min_x: f64, max_x: f64| Tracer {
+            builder: ContourBuilder::new(grid.width, grid.height, true),
+            tile_rectangle: vec![[min_x, 0.0], [max_x, 0.0], [max_x, 20.0], [min_x, 20.0]],
+            simplify_tolerance: 1.0,
+        };
+
+        let edge_points = |shapes: Shapes| {
+            let mut points: Vec<[i64; 2]> = shapes
+                .iter()
+                .flatten()
+                .flatten()
+                .filter(|point| (point[0] - 10.0).abs() < 1e-3)
+                .map(|point| {
+                    [
+                        (point[0] * 1e4).round() as i64,
+                        (point[1] * 1e4).round() as i64,
+                    ]
+                })
+                .collect();
+            points.sort();
+            points
+        };
+
+        let west = edge_points(tracer(0.0, 10.0).trace(&values).unwrap());
+        let east = edge_points(tracer(10.0, 19.0).trace(&values).unwrap());
+        assert_eq!(west.len(), 2);
+        assert_eq!(west, east);
     }
 
     #[test]

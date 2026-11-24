@@ -95,8 +95,13 @@ pub struct Georeferencing {
 }
 
 impl Georeferencing {
+    /// Paper units (0.01 mm) per projected metre.
+    pub fn units_per_meter(self) -> f64 {
+        100_000.0 / self.scale
+    }
+
     pub fn to_ocd(self, x: f64, y: f64) -> Result<(i32, i32)> {
-        let units_per_meter = 100_000.0 / self.scale;
+        let units_per_meter = self.units_per_meter();
         let ocd_x = ((x - self.offset_x as f64) * units_per_meter).round();
         let ocd_y = ((y - self.offset_y as f64) * units_per_meter).round();
 
