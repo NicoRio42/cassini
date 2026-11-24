@@ -18,3 +18,11 @@ If you are not happy with the result (too few cliffs, too much green...), you ca
 ```sh frame="none"
 cassini batch --skip-lidar
 ```
+
+## Export to OCAD
+
+To also get a map you can edit in <GlossaryLink slug="ocad" />, add the `--ocad` option. The whole batch is exported to a single `merged-map.ocd` file in the output directory, next to the merged PNG map, with the objects joined across the tile edges. It also works with `--skip-lidar`. Check the [OCAD export options](/reference/cli-reference#ocad-export-options) to use your own symbol set or change how much the areas are simplified.
+
+```sh frame="none"
+cassini batch --ocad
+```

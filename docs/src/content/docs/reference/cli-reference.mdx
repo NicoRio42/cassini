@@ -61,7 +61,7 @@ The output directory for the processed LiDAR file.
 
 Optional path to a directory containing shapefiles to use instead of downloading from OpenStreetMap.
 
-This subcommand also accepts the [common rendering options](#common-rendering-options).
+This subcommand also accepts the [common rendering options](#common-rendering-options) and the [OCAD export options](#ocad-export-options).
 
 ## `cassini lidar`
 
@@ -189,7 +189,7 @@ A list of directories containing the output of the <GlossaryLink slug="lidar" />
 
 Optional path to a directory containing shapefiles to use instead of downloading from OpenStreetMap.
 
-This subcommand also accepts the [common rendering options](#common-rendering-options).
+This subcommand also accepts the [common rendering options](#common-rendering-options) and the [OCAD export options](#ocad-export-options).
 
 ## `cassini batch`
 
@@ -231,7 +231,7 @@ The path to the configuration file to use. If omitted, Cassini uses `./config.js
 
 </p>
 
-In batch mode, you can specify the number of <GlossaryLink slug="thread" label="threads" /> used by Cassini to parallelize the work.
+In batch mode, you can specify the number of <GlossaryLink slug="thread" label="threads" /> used by Cassini to parallelize the work: each thread processes one tile at a time. The decompression of the LiDAR files is shared between all CPU cores whatever this number, so even `--threads 1` keeps every core busy during the LiDAR step. More threads mostly speed up the render step, and use more memory (about 250 MB per thread for the LiDAR step on 1 km tiles).
 
 ```sh frame="none"
 cassini batch --threads 6
@@ -247,7 +247,7 @@ cassini batch --threads 6
 
 The `--skip-lidar` option will skip the <GlossaryLink slug="lidar" /> processing stage of the pipeline. It will only work if you allready ran `cassini` once with the same input files, as it will reuse some temp files.
 
-This subcommand also accepts the [common rendering options](#common-rendering-options).
+This subcommand also accepts the [common rendering options](#common-rendering-options) and the [OCAD export options](#ocad-export-options).
 
 ## `cassini config`
 
@@ -274,17 +274,17 @@ cassini config
 Print a help message:
 
 ```
-A software that generates highly accurate topographic maps from LiDAR data. See documentation: https://cassini-map.com. GDAL and PDAL must be installed on the system for this program to work.
+A software that generates highly accurate topographic maps from LiDAR data. See documentation: https://cassini-map.com.
 
 Usage: cassini [COMMAND]
 
 Commands:
-  process         Generate a map from a single LiDAR file
-  lidar           Run only the LiDAR processing step for a single tile
-  render          Run only the map generation step for a single tile
-  batch           Process multiple LiDAR files at once
-  config          Output a default config.json file
-  help            Print this message or the help of the given subcommand(s)
+  process  Generate a map from a single LiDAR file
+  lidar    Run only the LiDAR processing step for a single tile
+  render   Run only the map generation step for a single tile
+  batch    Process multiple LiDAR files at once
+  config   Output a default config.json file
+  help     Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help     Print help (see more with '--help')
@@ -332,6 +332,57 @@ The undergrowth rendering mode. The possible values are:
 - `merge`: Undergrowth is merged with the vegetation rendering (default mode).
 - `406`: Undergrowth is rendered as the [406 vegetation: slow running](https://omapwiki.orienteering.sport/symbols/406-vegetation-slow-running/) symbol.
 - `409`: Undergrowth is rendered as the [409 vegetation: walk, good visibility](https://omapwiki.orienteering.sport/symbols/409-vegetation-walk-good-visibility/) symbol.
+
+## OCAD export options
+
+The following options are available for the `process`, `render` and `batch` subcommands.
+
+### `--ocad`
+
+<p>
+
+**Type:** `boolean`<br />
+
+</p>
+
+Also export the map as an <GlossaryLink slug="ocad" /> 12 file, `full-map.ocd`, next to `full-map.png`. The file contains contours (101, 102), form lines (103), vegetation areas and the vector features (roads, paths, water, buildings...) as editable objects, clipped to the tile extent and georeferenced in RGF93 / Lambert-93.
+
+Vegetation is exported as 403 (rough open land), 406, 408 and 410 (vegetation: slow running, walk, fight) areas, plus 409 (vegetation: walk, good visibility) in the `409` [undergrowth mode](#--undergrowth). The areas follow the same thresholds as the PNG rendering, and are generalised with the ISOM 2017-2 minimum areas and widths: areas, holes and parts narrower than the minimum are merged into their surroundings. The green areas and 403 do not overlap and share the same boundary. 403 and 409 are left out under the green areas, but 409 may overlap 403, as `undergrowth.png` covers the yellow in `full-map.png`. Areas crossing the tile edge are measured whole, up to 50 m beyond it, so that neighbouring tiles keep or drop them alike. When the neighbouring tile is missing, they are measured as if they continued beyond the edge. As a result, the exported map is less green than `full-map.png`, whose small patches are below the ISOM minimums.
+
+Cliffs are exported from the cells steeper than [`cliff_threshold_1`](/reference/configuration-reference#cliff-threshold-1), the ones `cliffs.png` draws as dots: 3.5 m dots for the cells steeper than [`cliff_threshold_2`](/reference/configuration-reference#cliff-threshold-2), 2.5 m dots for the others. Both thresholds are 60 by default, so every dot is 3.5 m:
+
+- Touching steep cells that fit in the 205 symbol, about 9 m across, and whose top stands at least 1 m above three quarters of the ground around them, are exported as a 205 (large boulder).
+- Where the dots merge into black wider than a 202 line drawn over 3.5 m dots, about 7 m, the black is exported as a 206 (gigantic boulder or rock pillar) area, when it is larger than the 205 symbol. Its outline follows the dots, so steep hillsides and dense groups of small cliffs are exported this way too.
+- The other steep cells are exported as 202 (cliff) lines along the middle of their steep band. A cliff leaving a 206 area is a line starting at the area's edge. A short cliff in a slope gives a short line, and a rock too large for the 205 symbol, whose flat top is not steep, gives a line closed around its top. Branches shorter than 2 m are dropped, and so are groups of touching cells whose lines are shorter than 3 m in total, or of fewer than 4 cells. A branch ends on the line it leaves.
+
+The 202 lines have no tags, and their direction is not meaningful. The export has no 201 (impassable cliff): `cliff_threshold_2` only sets the size of the dots, which the 206 areas follow. The sizes above are ISOM 2017-2 sizes on the ground, whatever the scale of the template.
+
+Lakes are exported as a 301.001 area with 301.004 bank lines, and buildings as a 521.003 area with 521.004 outlines, so that no bank line or outline is drawn where the tile edge cuts them. Wide road tunnels are exported as 512 (bridge / tunnel), road and footpath tunnels are left out.
+
+With `batch`, the whole batch is exported to a single `merged-map.ocd` file in the output directory, next to the merged PNG map, instead of one file per tile. Its objects are joined across the edges between tiles: a line ending on the edge between two tiles is joined to the line of the same symbol ending within 1 m of it in the neighbouring tile, and areas of the same symbol meeting along that edge are merged into one area, together with the areas of that symbol they overlap. Objects are joined only where both tiles agree. The outer edge of the batch and the edges of missing tiles still cut them, and so does a corner where tiles meet only diagonally. Form lines are culled tile by tile, so a form line may stop at an edge where the neighbouring tile left out its continuation.
+
+The whole batch must fit in one <GlossaryLink slug="ocad" /> file at the template's scale: about 1,670 km across at 1:10 000, or 670 km at 1:4 000. A larger batch is rejected before any tile is rendered. While the batch renders, each tile directory holds an `ocad-objects.bin` file. It holds the objects that do not reach the tile edges, and it is removed once `merged-map.ocd` is written.
+
+### `--ocad-template`
+
+<p>
+
+**Type:** `string`<br />
+
+</p>
+
+Optional path to an <GlossaryLink slug="ocad" /> 12 file whose colors and symbols are copied into the exported file, instead of the built-in ISOM 2017-2 symbol set (1:10 000). The map scale is also taken from this file. Its objects are not copied. Cassini checks that the template defines every symbol it exports, including the cliff symbols 202, 205 and 206, as a point, line or area symbol as its objects need, and lists the missing or mistyped ones otherwise. Requires `--ocad`.
+
+### `--ocad-simplify`
+
+<p>
+
+**Type:** `number`<br />
+**Default value:** `0.5`
+
+</p>
+
+Tolerance in meters for simplifying the boundaries of the exported vegetation areas and the 202 cliff lines (Douglas–Peucker). The 206 areas are simplified with twice this tolerance. A larger tolerance gives fewer vertices, which makes the areas easier to edit in <GlossaryLink slug="ocad" />, at the cost of fidelity. `0` keeps every traced vertex, about one per meter of boundary. Requires `--ocad`.
 
 ## Common options
 

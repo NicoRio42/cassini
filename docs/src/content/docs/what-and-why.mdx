@@ -9,7 +9,7 @@ import GlossaryLink from "../../components/GlossaryLink.astro";
 
 Cassini is a software that generates highly accurate [topographic maps](https://en.wikipedia.org/wiki/Topographic_map) from <GlossaryLink slug="lidar" /> data and <GlossaryLink slug="shapefile" /> vector data. The maps produced by Cassini follow the <GlossaryLink slug="isom" label="ISOM Specification" />, witch is one of the most detailed specification for [topographic maps](https://en.wikipedia.org/wiki/Topographic_map).
 
-This project is heavily inspired by <GlossaryLink slug="karttapullautin" /> and [Terje Mathisen's pipeline](https://tmsw.no/mapping/basemap_generation.html) for generating orienteering maps. Unlike them, it uses <GlossaryLink slug="pdal" /> (The Point Data Abstraction Library) and <GlossaryLink slug="gdal" /> (The Geospatial Data Abstraction Library) to preprocess the <GlossaryLink slug="lidar" /> data.
+This project is heavily inspired by <GlossaryLink slug="karttapullautin" /> and [Terje Mathisen's pipeline](https://tmsw.no/mapping/basemap_generation.html) for generating orienteering maps. Unlike them, it reads each <GlossaryLink slug="lidar" /> point only once, and adds the buffer needed around each tile to much smaller intermediate <GlossaryLink slug="raster" label="rasters" /> (see [the Cassini approach](#the-cassini-approach)).
 
 :::caution
 Cassini is very early stage and still an experimental project. Use it at your own risks, expect API changes and bugs! Please [fill an issue on Github](https://github.com/NicoRio42/cassini/issues/new) if you find any bug.
@@ -36,7 +36,7 @@ However, there is some reasons that pushed me to develop my own rendering engine
 
 ### The point cloud reading bottleneck
 
-A <GlossaryLink slug="lidar" /> file is basically just a list of millions of 3 dimensions points (with some metadata). To process it, a program should at some point loop over all these points, witch is very time consuming. <GlossaryLink slug="karttapullautin" /> uses the popular [`las` Rust library](https://crates.io/crates/las) to do so. For some reason (that I ignore), this library performs worst than the <GlossaryLink slug="cpp" /> equivalent programs (<GlossaryLink slug="pdal" />, The Point Data Abstraction Library or <GlossaryLink slug="lastools" />).
+A <GlossaryLink slug="lidar" /> file is basically just a list of millions of 3 dimensions points (with some metadata). To process it, a program should at some point loop over all these points, witch is very time consuming. Most <GlossaryLink slug="lidar" /> files are compressed in the LAZ format, and decompressing the points takes most of that time. <GlossaryLink slug="karttapullautin" /> uses the popular [`las` Rust library](https://crates.io/crates/las) to read them.
 
 ### The edges artifacts problem
 
@@ -66,12 +66,12 @@ As mentioned in the previous paragraph, reading <GlossaryLink slug="lidar" /> po
 
 ### The Cassini approach
 
-Cassini is designed to adress these two problems. To improve the point cloud reading speed, it simply uses the <GlossaryLink slug="pdal" /> library to read and preprocess the <GlossaryLink slug="lidar" /> data.
+Cassini is designed to adress these two problems. To improve the point cloud reading speed, it decompresses the <GlossaryLink slug="lidar" /> files on all the processor cores at once, and computes everything it needs from the points in a single pass over them.
 
-To solve the edges artifacts problem, it uses a much more efficient approach than the one described above. First, all <GlossaryLink slug="lidar" /> tiles are processed once with <GlossaryLink slug="pdal" />. During this step, the program produces temporary files that are not subject to the edges artifacts problem:
+To solve the edges artifacts problem, it uses a much more efficient approach than the one described above. First, all <GlossaryLink slug="lidar" /> tiles are processed once. During this step, the program produces temporary files that are not subject to the edges artifacts problem:
 
 - A <GlossaryLink slug="dem" />, representing the terrain elevation
-- A set of vegetation density <GlossaryLink slug="raster" label="rasters" /> (one for low vegetation, and one for high vegetation)
+- A set of vegetation density <GlossaryLink slug="raster" label="rasters" /> (one each for low, medium and high vegetation)
 
 These <GlossaryLink slug="raster" label="rasters" /> are not subject to the edges artifacts problem because:
 
@@ -88,9 +88,11 @@ With this approach, each <GlossaryLink slug="lidar" /> point is only read once, 
 - The points from the processed tile and the 8 adjacent ones are read to generate a <GlossaryLink slug="lidar" /> tile with a buffer.
 - The points of this <GlossaryLink slug="lidar" /> tile are then read once again to generate the map.
 
-### The tradeoffs
+### A single executable
 
-As mentioned, Cassini uses the <GlossaryLink slug="pdal" /> and the <GlossaryLink slug="gdal" /> libraries to process <GlossaryLink slug="lidar" /> and <GlossaryLink slug="raster" /> data. These libraries are very fast and efficient, but they are implemented in C++. As for now, their is no stable integration in the <GlossaryLink slug="rust" label="Rust programming language" /> for <GlossaryLink slug="pdal" /> and <GlossaryLink slug="gdal" />. Thus, they should be installed separately on the computer (using [Miniconda](https://docs.anaconda.com/miniconda/)). This is much more complexe and less beginner friendly than <GlossaryLink slug="karttapullautin" /> for example, that is a standalone program with no external runtime dependencies.
+Earlier versions of Cassini used [PDAL](https://pdal.io) (The Point Data Abstraction Library) and [GDAL](https://gdal.org) (The Geospatial Data Abstraction Library) to process <GlossaryLink slug="lidar" /> and <GlossaryLink slug="raster" /> data. These libraries are implemented in <GlossaryLink slug="cpp" /> and had to be installed separately, with Miniconda or Docker, which was much less beginner friendly than a standalone program.
+
+Cassini now does all of this processing itself, in <GlossaryLink slug="rust" />. Like <GlossaryLink slug="karttapullautin" />, it is a single executable with no external dependencies.
 
 ## Alternatives to Cassini
 
@@ -107,7 +109,7 @@ requires using a terminal.
 
 ### Terje Mathisen's pipeline
 
-In 2013, Terje Mathisen wrote [an article](https://tmsw.no/mapping/basemap_generation.html) about a pipeline he developed to generate maps from <GlossaryLink slug="lidar" /> data. Being an orienteering mapper, his main goal was to output a base map to help him during his mapping surveys. His pipeline uses the <GlossaryLink slug="lastools" /> library to preprocess the <GlossaryLink slug="lidar" /> files, the same way that Cassini uses PDAL to do so. <GlossaryLink slug="lastools" /> being a licenced software, it constraints the usage of this pipeline. However, the accompanying article is very interesting by explaining the process step by step.
+In 2013, Terje Mathisen wrote [an article](https://tmsw.no/mapping/basemap_generation.html) about a pipeline he developed to generate maps from <GlossaryLink slug="lidar" /> data. Being an orienteering mapper, his main goal was to output a base map to help him during his mapping surveys. His pipeline uses the <GlossaryLink slug="lastools" /> library to preprocess the <GlossaryLink slug="lidar" /> files. <GlossaryLink slug="lastools" /> being a licenced software, it constraints the usage of this pipeline. However, the accompanying article is very interesting by explaining the process step by step.
 
 ### OCAD
 

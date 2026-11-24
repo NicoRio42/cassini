@@ -1,3 +1,15 @@
 .inline-icon {
   display: inline-block !important;
 }
+
+/* The front page has nothing below its hero: drop the empty content and
+   footer (no edit link or pagination) and their spacing, so that it fits on
+   one screen. */
+[data-has-hero] .sl-markdown-content:not(:has(*)),
+[data-has-hero] footer {
+  display: none;
+}
+
+[data-has-hero] main {
+  padding-bottom: 0;
+}

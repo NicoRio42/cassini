@@ -2,6 +2,7 @@ use crate::{
     constants::COASTLINE_EDGE_BUFFER,
     error::{CassiniError, Result},
     helpers::{does_polyline_intersect_tile, does_segment_intersect_tile},
+    map_features::is_point_in_ring,
 };
 use shapefile::{
     record::{polygon::GenericPolygon, polyline::GenericPolyline},
@@ -152,9 +153,19 @@ pub fn get_polygon_with_holes_from_coastlines(
                 points.push(Point::new(x as f64, y as f64))
             }
 
-            let mut rings: Vec<PolygonRing<Point>> = vec![PolygonRing::Outer(points)];
-            let mut island_rings_copy = island_rings.clone();
-            rings.append(&mut island_rings_copy);
+            // Only the islands in this sea polygon are its holes: an island
+            // ring outside it would be filled by the even-odd fill rule
+            let mut rings: Vec<PolygonRing<Point>> = island_rings
+                .iter()
+                .filter(|island| {
+                    island
+                        .points()
+                        .iter()
+                        .any(|point| is_point_in_ring(point, &points))
+                })
+                .cloned()
+                .collect();
+            rings.insert(0, PolygonRing::Outer(points));
             let generic_polygon = GenericPolygon::with_rings(rings);
             polygons.push(generic_polygon);
         }
@@ -630,5 +641,43 @@ fn get_segments_intersection(
         Some(intersection)
     } else {
         None // The intersection does not lie within the segment bounds
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::get_polygon_with_holes_from_coastlines;
+    use shapefile::PolygonRing;
+
+    #[test]
+    fn adds_islands_only_to_the_sea_polygon_containing_them() {
+        // Two coastlines cutting off the bottom left and top right corners,
+        // with an island in the bottom left sea
+        let coastlines = vec![
+            vec![(-100.0, 300.0), (300.0, -100.0)],
+            vec![(1100.0, 700.0), (700.0, 1100.0)],
+        ];
+        let islands = vec![vec![
+            (50.0, 50.0),
+            (50.0, 80.0),
+            (80.0, 80.0),
+            (80.0, 50.0),
+            (50.0, 50.0),
+        ]];
+
+        let (polygons, _) =
+            get_polygon_with_holes_from_coastlines(coastlines, islands, 0, 0, 1000, 1000).unwrap();
+
+        let holes: Vec<usize> = polygons
+            .iter()
+            .map(|polygon| {
+                polygon
+                    .rings()
+                    .iter()
+                    .filter(|ring| matches!(ring, PolygonRing::Inner(_)))
+                    .count()
+            })
+            .collect();
+        assert_eq!(holes, vec![1, 0]);
     }
 }

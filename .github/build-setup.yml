@@ -1,0 +1,11 @@
+# Steps dist runs before building the release binaries (see
+# `github-build-setup` in dist-workspace.toml).
+- name: Check that Cargo.lock is up to date
+  shell: bash
+  run: cargo fetch --locked
+# skia-bindings passes -lfontconfig -lfreetype to the linker. The binary
+# doesn't end up depending on them (--as-needed drops them), but the link
+# needs them.
+- name: Install the libraries Skia links against
+  if: runner.os == 'Linux'
+  run: sudo apt-get update && sudo apt-get install --yes libfontconfig1-dev libfreetype6-dev

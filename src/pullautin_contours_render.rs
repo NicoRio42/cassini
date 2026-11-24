@@ -1,34 +1,15 @@
 use image::RgbaImage;
 use imageproc::drawing::draw_line_segment_mut;
 use log::info;
-use shapefile::dbase::{FieldIOError, FieldWriter, WritableRecord};
 use shapefile::record::polyline::GenericPolyline;
-use shapefile::{Point, Reader, Writer};
+use shapefile::{Point, Polyline, Writer};
 use std::fs::{create_dir_all, File};
-use std::io::{BufReader, Write};
 use std::time::Instant;
-
-struct FormLineRecord {
-    id: f64,
-    elev: f64,
-}
-
-impl WritableRecord for FormLineRecord {
-    fn write_using<'a, W>(
-        &self,
-        field_writer: &mut FieldWriter<'a, W>,
-    ) -> std::result::Result<(), FieldIOError>
-    where
-        W: Write,
-    {
-        field_writer.write_next_field_value(&self.id)?;
-        field_writer.write_next_field_value(&self.elev)?;
-        Ok(())
-    }
-}
 
 use crate::config::Config;
 use crate::constants::{BUFFER, INCH, PURPLE};
+use crate::contour_shapefile::{contour_table, ContourRecord};
+use crate::map_features::{LineSymbol, MapFeature};
 use crate::{
     constants::{BROWN, TRANSPARENT},
     error::{Result, ResultContext},
@@ -42,7 +23,7 @@ pub fn pullautin_cull_formlines_render_contours(
     config: &Config,
     avg_alt: &Vec<Vec<f64>>,
     smoothed_contours: Vec<(Vec<f64>, Vec<f64>, f64)>,
-) -> Result<()> {
+) -> Result<Vec<MapFeature>> {
     info!(
         "Tile min_x={} min_y={} max_x={} max_y={}. Culling formlines and rendering contours",
         tile.min_x, tile.min_y, tile.max_x, tile.max_y
@@ -58,9 +39,6 @@ pub fn pullautin_cull_formlines_render_contours(
     let mut img = RgbaImage::from_pixel(image_width, image_height, TRANSPARENT);
     let formlinesteepness: f64 = 0.37;
     let buffer_in_pixels = BUFFER as f32 * (config.dpi_resolution / INCH) as f32;
-    let indexcontours: f64 = 25.;
-    let contour_interval: f64 = 5.0;
-    let halfinterval = contour_interval / 2.0 * scalefactor;
 
     let dem_cell_size: f64 = 2.0;
     let xstart: f64 = (tile.min_x - BUFFER as i64) as f64;
@@ -182,19 +160,6 @@ pub fn pullautin_cull_formlines_render_contours(
     }
 
     let mut id: i32 = 0;
-    let contours_polylines_path = tile
-        .render_dir_path
-        .join("contours-raw")
-        .join("contours-raw.shp");
-
-    let contours_polylines_reader: shapefile::Reader<BufReader<File>, BufReader<File>> =
-        Reader::from_path(&contours_polylines_path).context(format!(
-            "could not open contour shapefile `{}`",
-            contours_polylines_path.display()
-        ))?;
-
-    let table_info = contours_polylines_reader.into_table_info();
-
     let formlines_dir = tile.render_dir_path.join("formlines");
     create_dir_all(&formlines_dir).context(format!(
         "could not create formline directory `{}`",
@@ -202,10 +167,12 @@ pub fn pullautin_cull_formlines_render_contours(
     ))?;
 
     let formlines_path = formlines_dir.join("formlines.shp");
-    let mut writer = Writer::from_path_with_info(&formlines_path, table_info).context(format!(
+    let mut writer = Writer::from_path(&formlines_path, contour_table()).context(format!(
         "could not create formline shapefile `{}`",
         formlines_path.display()
     ))?;
+
+    let mut features: Vec<MapFeature> = vec![];
 
     for smoothed_contour in smoothed_contours {
         let color =
@@ -216,6 +183,7 @@ pub fn pullautin_cull_formlines_render_contours(
             };
 
         let (x_array, y_array, elevation) = smoothed_contour;
+        let symbol = get_contour_symbol(elevation);
         let mut x = Vec::<f64>::new();
         let mut y = Vec::<f64>::new();
 
@@ -224,15 +192,21 @@ pub fn pullautin_cull_formlines_render_contours(
             y.push((y0 - y_array[i]) * 600.0 / 254.0 / scalefactor);
         }
 
-        let mut curvew = 2.0;
-
-        if elevation.round() as isize % indexcontours as isize == 0 {
-            curvew = 3.5;
-        } else if elevation.round() as isize % contour_interval as isize != 0
-            && (elevation * 2.).round() as isize % (halfinterval * 2.).round() as isize == 0
-        {
-            curvew = 1.5;
+        // Only the culled parts of form lines are mapped, they are pushed below
+        if symbol != LineSymbol::FormLine103 && x_array.len() >= 2 {
+            let points: Vec<Point> = x_array
+                .iter()
+                .zip(&y_array)
+                .map(|(x, y)| Point::new(*x, *y))
+                .collect();
+            features.push(MapFeature::Line(symbol, Polyline::new(points)));
         }
+
+        let curvew = match symbol {
+            LineSymbol::IndexContour102 => 3.5,
+            LineSymbol::FormLine103 => 1.5,
+            _ => 2.0,
+        };
 
         let mut smallringtest = false;
         let mut help = vec![false; x.len()];
@@ -485,26 +459,26 @@ pub fn pullautin_cull_formlines_render_contours(
                     }
                 }
             } else if formlinestart {
-                write_formline_shape_to_shapefile(
+                features.extend(write_formline_shape_to_shapefile(
                     &current_formline,
                     id,
                     elevation,
                     &mut writer,
                     &formlines_path,
-                )?;
+                )?);
                 id += 1;
                 formlinestart = false;
             }
         }
 
         if formlinestart {
-            write_formline_shape_to_shapefile(
+            features.extend(write_formline_shape_to_shapefile(
                 &current_formline,
                 id,
                 elevation,
                 &mut writer,
                 &formlines_path,
-            )?;
+            )?);
             id += 1;
         }
     }
@@ -520,7 +494,26 @@ pub fn pullautin_cull_formlines_render_contours(
         tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
     );
 
-    Ok(())
+    Ok(features)
+}
+
+const INDEX_CONTOUR_INTERVAL: f64 = 25.;
+const CONTOUR_INTERVAL: f64 = 5.0;
+
+/// Returns the ISOM symbol of a smoothed contour at `elevation`. Half-interval
+/// contours are form line candidates: only their culled parts are drawn.
+pub fn get_contour_symbol(elevation: f64) -> LineSymbol {
+    let rounded_elevation = elevation.round() as isize;
+
+    if rounded_elevation % INDEX_CONTOUR_INTERVAL as isize == 0 {
+        LineSymbol::IndexContour102
+    } else if rounded_elevation % CONTOUR_INTERVAL as isize != 0
+        && (elevation * 2.).round() as isize % CONTOUR_INTERVAL as isize == 0
+    {
+        LineSymbol::FormLine103
+    } else {
+        LineSymbol::Contour101
+    }
 }
 
 fn write_formline_shape_to_shapefile(
@@ -529,9 +522,9 @@ fn write_formline_shape_to_shapefile(
     elevation: f64,
     writer: &mut shapefile::Writer<std::io::BufWriter<File>>,
     output_path: &std::path::Path,
-) -> Result<()> {
+) -> Result<Option<MapFeature>> {
     if current_formline.len() < 2 {
-        return Ok(());
+        return Ok(None);
     }
 
     let mut points: Vec<Point> = vec![];
@@ -540,11 +533,11 @@ fn write_formline_shape_to_shapefile(
         points.push(Point { x: *x, y: *y });
     }
 
-    let record = FormLineRecord {
+    let record = ContourRecord {
         // dBase Numeric fields are serialized from f64, even when they have
         // zero decimal places and represent an integer identifier.
         id: f64::from(id),
-        elev: elevation,
+        elevation,
     };
 
     let smoothed_polyline = GenericPolyline::new(points);
@@ -554,7 +547,10 @@ fn write_formline_shape_to_shapefile(
             "could not write formline to `{}`",
             output_path.display()
         ))?;
-    Ok(())
+    Ok(Some(MapFeature::Line(
+        LineSymbol::FormLine103,
+        smoothed_polyline,
+    )))
 }
 
 fn is_contour_depression(
@@ -779,9 +775,7 @@ fn get_point_elevation_from_dem_bilinear_interpolation(
 
 #[cfg(test)]
 mod tests {
-    use super::{find_interior_point, point_in_polygon, FormLineRecord};
-    use shapefile::dbase::{FieldName, TableWriterBuilder};
-    use std::io::Cursor;
+    use super::{find_interior_point, point_in_polygon};
 
     #[test]
     fn finds_interior_point_for_large_contour_without_scanning_its_area() {
@@ -801,20 +795,5 @@ mod tests {
         let (point_x, point_y) = find_interior_point(&x, &y).unwrap();
 
         assert!(point_in_polygon(point_x, point_y, &x, &y));
-    }
-
-    #[test]
-    fn writes_formline_record_to_numeric_contour_schema() {
-        let mut writer = TableWriterBuilder::new()
-            .add_numeric_field(FieldName::try_from("ID").unwrap(), 8, 0)
-            .add_numeric_field(FieldName::try_from("elev").unwrap(), 12, 3)
-            .build_with_dest(Cursor::new(Vec::<u8>::new()));
-
-        writer
-            .write_record(&FormLineRecord {
-                id: 0.0,
-                elev: 123.5,
-            })
-            .unwrap();
     }
 }
