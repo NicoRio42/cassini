@@ -16,7 +16,7 @@ use imageproc::{
 use log::info;
 use std::{
     f32::consts::E,
-    path::{Path, PathBuf},
+    path::PathBuf,
     time::Instant,
 };
 
@@ -200,26 +200,13 @@ pub fn render_vegetation(
     let casted_base_vegetation_block_size_pixel = (vegetation_block_size_pixel * 2.).ceil() as i32;
     let casted_green_block_size_pixel = (vegetation_block_size_pixel).ceil() as u32;
 
-    create_tif_with_buffer::<u8>(tile, neighbor_tiles, BUFFER as i64, "high_vegetation", 1.0)?;
-    create_tif_with_buffer::<u8>(
-        tile,
-        neighbor_tiles,
-        BUFFER as i64,
-        "medium_vegetation",
-        1.0,
-    )?;
-    create_tif_with_buffer::<u8>(tile, neighbor_tiles, BUFFER as i64, "low_vegetation", 1.0)?;
-
+    let buffered = |name: &str| {
+        create_tif_with_buffer::<u8>(tile, neighbor_tiles, name, 1.0).map(TifImage::from)
+    };
     let rasters = VegetationRasters {
-        high: get_image_data_from_tif(
-            &tile.render_dir_path.join("high_vegetation_with_buffer.tif"),
-        )?,
-        medium: get_image_data_from_tif(
-            &tile
-                .render_dir_path
-                .join("medium_vegetation_with_buffer.tif"),
-        )?,
-        low: get_image_data_from_tif(&tile.render_dir_path.join("low_vegetation_with_buffer.tif"))?,
+        high: buffered("high_vegetation")?,
+        medium: buffered("medium_vegetation")?,
+        low: buffered("low_vegetation")?,
     };
 
     let mut base_vegetation_img = RgbaImage::from_pixel(image_width, image_height, YELLOW);
@@ -528,17 +515,16 @@ struct TifImage {
     height: u32,
 }
 
-fn get_image_data_from_tif(path: &Path) -> Result<TifImage> {
-    let grid = Grid::<u8>::read_geotiff(path)?;
-    let invalid_size = || CassiniError::InvalidArtifact {
-        path: path.to_path_buf(),
-        message: format!("{} x {} cells is too large", grid.width, grid.height),
-    };
-    Ok(TifImage {
-        width: u32::try_from(grid.width).map_err(|_| invalid_size())?,
-        height: u32::try_from(grid.height).map_err(|_| invalid_size())?,
-        pixels: grid.values,
-    })
+impl From<Grid<u8>> for TifImage {
+    /// The grid's size must fit in `u32`, as for any grid written to a TIFF
+    /// file.
+    fn from(grid: Grid<u8>) -> Self {
+        Self {
+            width: grid.width as u32,
+            height: grid.height as u32,
+            pixels: grid.values,
+        }
+    }
 }
 
 #[cfg(test)]

@@ -6,7 +6,10 @@
 //! does. The formulas are those of Snyder, "Map Projections: A Working
 //! Manual" (1987), pages 107 to 109, as implemented by PROJ.
 
-use std::f64::consts::{FRAC_PI_2, FRAC_PI_4};
+use std::{
+    f64::consts::{FRAC_PI_2, FRAC_PI_4},
+    sync::LazyLock,
+};
 
 /// The GRS80 ellipsoid.
 const SEMI_MAJOR_AXIS: f64 = 6_378_137.0;
@@ -19,6 +22,9 @@ const ORIGIN_LATITUDE: f64 = 46.5;
 const CENTRAL_MERIDIAN: f64 = 3.0;
 const FALSE_EASTING: f64 = 700_000.0;
 const FALSE_NORTHING: f64 = 6_600_000.0;
+
+/// The constants of Lambert-93, computed once.
+static LAMBERT_93: LazyLock<Lambert93> = LazyLock::new(Lambert93::new);
 
 /// The constants of the projection derived from its parameters.
 struct Lambert93 {
@@ -84,7 +90,7 @@ fn tsfn(phi: f64, eccentricity: f64) -> f64 {
 /// The WGS84 longitude and latitude, in degrees, of the Lambert-93 point
 /// (`x`, `y`).
 pub fn lambert93_to_wgs84(x: f64, y: f64) -> (f64, f64) {
-    let projection = Lambert93::new();
+    let projection = &*LAMBERT_93;
     let dx = x - FALSE_EASTING;
     let dy = projection.rho_0 - (y - FALSE_NORTHING);
     // `n` is positive, as both standard parallels are north.
@@ -99,7 +105,7 @@ pub fn lambert93_to_wgs84(x: f64, y: f64) -> (f64, f64) {
 /// The Lambert-93 coordinates of the WGS84 point at longitude `lon` and
 /// latitude `lat`, in degrees.
 pub fn wgs84_to_lambert93(lon: f64, lat: f64) -> (f64, f64) {
-    let projection = Lambert93::new();
+    let projection = &*LAMBERT_93;
     let rho = projection.a_f * tsfn(lat.to_radians(), projection.eccentricity).powf(projection.n);
     let theta = projection.n * (lon - CENTRAL_MERIDIAN).to_radians();
     let x = FALSE_EASTING + rho * theta.sin();

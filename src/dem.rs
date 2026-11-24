@@ -1,6 +1,6 @@
 use crate::{
     buffer::create_tif_with_buffer,
-    constants::{BUFFER, DEM_BLOCK_SIZE},
+    constants::DEM_BLOCK_SIZE,
     error::{Result, ResultContext, Stage, TileId},
     grid::{Compression, Grid},
     process::{checked_output, ensure_file},
@@ -10,7 +10,14 @@ use log::info;
 use std::{fs::create_dir_all, path::PathBuf, process::Command, time::Instant};
 
 /// The cell size of the DEM contours are extracted from, in metres.
-const CONTOUR_DEM_RESOLUTION: f32 = 2.0;
+const CONTOUR_DEM_RESOLUTION: f64 = 2.0;
+
+/// How many DEM cells wide a cell of the contour DEM is.
+const CONTOUR_DEM_FACTOR: usize = (CONTOUR_DEM_RESOLUTION / DEM_BLOCK_SIZE) as usize;
+const _: () = assert!(
+    CONTOUR_DEM_FACTOR as f64 * DEM_BLOCK_SIZE == CONTOUR_DEM_RESOLUTION,
+    "the contour DEM resolution must be a multiple of the DEM resolution"
+);
 
 /// The nodata value of `slopes.tif`, as `gdaldem slope` writes it.
 const SLOPE_NODATA: f32 = -9999.0;
@@ -27,13 +34,9 @@ pub fn create_dem_with_buffer_and_slopes_tiff(
     let start = Instant::now();
 
     let dem_with_buffer_path = tile.render_dir_path.join("dem_with_buffer.tif");
-    create_tif_with_buffer::<f32>(
-        tile,
-        neighbor_tiles,
-        BUFFER as i64,
-        "dem",
-        DEM_BLOCK_SIZE as f64,
-    )?;
+    // `gdal_fillnodata` fills the file in place, so the returned grid is not
+    // the filled DEM.
+    create_tif_with_buffer::<f32>(tile, neighbor_tiles, "dem", DEM_BLOCK_SIZE)?;
     let tile_id = Some(TileId::from(tile));
 
     // Filling holes
@@ -69,11 +72,8 @@ pub fn create_dem_with_buffer_and_slopes_tiff(
     let dem_2m_with_buffer_path = tile.render_dir_path.join("dem_2m_with_buffer.tif");
 
     let dem_with_buffer = Grid::<f32>::read_geotiff(&dem_with_buffer_path)?;
-    downsample_average(
-        &dem_with_buffer,
-        (CONTOUR_DEM_RESOLUTION / DEM_BLOCK_SIZE) as usize,
-    )
-    .write_geotiff(&dem_2m_with_buffer_path, Compression::None)?;
+    downsample_average(&dem_with_buffer, CONTOUR_DEM_FACTOR)
+        .write_geotiff(&dem_2m_with_buffer_path, Compression::None)?;
 
     checked_output(
         Command::new("gdal_contour")
@@ -116,17 +116,21 @@ pub fn create_dem_with_buffer_and_slopes_tiff(
 
 /// `grid` with cells `factor` times larger, each the mean of the data cells of
 /// its `factor` x `factor` block, or nodata if the block has none, as
-/// `gdal_translate -tr … -r average` computes it. The grid size must be a
-/// multiple of `factor`.
+/// `gdal_translate -tr … -r average` computes it.
+///
+/// As with GDAL, a size that is not a multiple of `factor` is rounded to the
+/// nearest number of cells: a remainder of less than half a block is dropped,
+/// and a last block partly outside the grid repeats its last row or column
+/// in place of the missing cells.
 fn downsample_average(grid: &Grid<f32>, factor: usize) -> Grid<f32> {
-    debug_assert!(grid.width.is_multiple_of(factor) && grid.height.is_multiple_of(factor));
+    let downsampled_size = |size: usize| (size as f64 / factor as f64).round() as usize;
     let nodata = grid.nodata.unwrap_or(f32::NAN);
     let mut downsampled = Grid::new(
         grid.min_x,
         grid.max_y,
         grid.resolution * factor as f64,
-        grid.width / factor,
-        grid.height / factor,
+        downsampled_size(grid.width),
+        downsampled_size(grid.height),
         grid.nodata,
         nodata,
     );
@@ -136,7 +140,10 @@ fn downsample_average(grid: &Grid<f32>, factor: usize) -> Grid<f32> {
             let mut count = 0usize;
             for source_row in row * factor..(row + 1) * factor {
                 for source_col in col * factor..(col + 1) * factor {
-                    let value = grid.get(source_col, source_row);
+                    let value = grid.get(
+                        source_col.min(grid.width - 1),
+                        source_row.min(grid.height - 1),
+                    );
                     if grid.has_data(value) {
                         sum += value as f64;
                         count += 1;
@@ -219,6 +226,34 @@ mod tests {
         assert_eq!(downsampled.values, [2.0, -9999.0]);
     }
 
+    /// A `width` x `height` DEM whose cell `i` is `1.25 * i`, or nodata every
+    /// 7 cells.
+    fn ramp(width: usize, height: usize) -> Grid<f32> {
+        let values = (0..width * height)
+            .map(|i| if i % 7 == 3 { -9999.0 } else { i as f32 * 1.25 })
+            .collect();
+        grid(width, height, values)
+    }
+
+    #[test]
+    fn averages_partial_blocks_like_gdal() {
+        // Expected values from `gdal_translate -tr 2 2 -r average` (GDAL 3.12)
+        // on `ramp` written as a Float32 GeoTIFF of 0.5 m cells.
+        let check = |width, height, size, expected: &[f32]| {
+            let downsampled = downsample_average(&ramp(width, height), 4);
+            assert_eq!((downsampled.width, downsampled.height), size);
+            assert_eq!(downsampled.values, expected, "{width} x {height}");
+        };
+        // 1.25 blocks: the remainder is dropped.
+        check(5, 5, (1, 1), &[10.961538]);
+        // 2.25 x 1.5 blocks.
+        check(9, 6, (2, 2), &[20.267857, 22.232143, 55.729168, 59.23077]);
+        // 2.5 x 1.75 blocks: the last block of each row and column is partly
+        // outside.
+        #[rustfmt::skip]
+        check(10, 7, (3, 2), &[21.153847, 25.625, 28.5, 67.666664, 72.21154, 77.21154]);
+    }
+
     #[test]
     fn computes_slopes_with_horn_method() {
         // A plane rising 1 m every 0.5 m to the east: 63.43°.
@@ -233,7 +268,8 @@ mod tests {
         ]);
 
         dem.set(3, 0, -9999.0);
-        assert_eq!(slopes_in_degrees(&dem).get(2, 1), SLOPE_NODATA);
-        assert_eq!(slopes_in_degrees(&dem).get(1, 1), expected);
+        let slopes = slopes_in_degrees(&dem);
+        assert_eq!(slopes.get(2, 1), SLOPE_NODATA);
+        assert_eq!(slopes.get(1, 1), expected);
     }
 }

@@ -1,64 +1,79 @@
 use crate::{
-    error::{CassiniError, Result},
+    constants::BUFFER,
+    error::{CassiniError, Result, ResultContext, TileId},
     grid::{Compression, Grid, Sample},
     tile::Tile,
 };
+use log::warn;
 use std::path::{Path, PathBuf};
 
-/// Writes `<name>_with_buffer.tif` in the tile's render directory: the
-/// `<name>.tif` rasters of the tile and its neighbors, mosaicked and cropped
-/// to the tile extended by `buffer` metres, at `resolution`, as `T`.
+/// Writes and returns `<name>_with_buffer.tif` in the tile's render directory:
+/// the `<name>.tif` rasters of the tile and its neighbors, mosaicked and
+/// cropped to the tile extended by `BUFFER` metres, at `resolution`, as `T`.
 ///
 /// This does what `gdalbuildvrt` then `gdal_translate -projwin … -tr … -ot …`
 /// did: cells are sampled with nearest neighbor at the output cell centres,
 /// a source's nodata cells are transparent, a later source wins where two
-/// have data, and cells no source covers are nodata.
+/// have data, and cells no source covers are nodata. A missing neighbor
+/// raster is skipped with a warning, as `gdalbuildvrt` skips it.
 pub fn create_tif_with_buffer<T: Sample>(
     tile: &Tile,
     neighbor_tiles: &[PathBuf],
-    buffer: i64,
     tif_filename_without_extension: &str,
     resolution: f64,
-) -> Result<()> {
+) -> Result<Grid<T>> {
     let raster_with_buffer_path = tile.render_dir_path.join(format!(
         "{}_with_buffer.tif",
         tif_filename_without_extension
     ));
+    mosaic_with_buffer(tile, neighbor_tiles, tif_filename_without_extension, resolution)
+        .and_then(|raster_with_buffer| {
+            raster_with_buffer.write_geotiff(&raster_with_buffer_path, Compression::None)?;
+            Ok(raster_with_buffer)
+        })
+        .context(format!(
+            "could not create `{}` for tile {}",
+            raster_with_buffer_path.display(),
+            TileId::from(tile)
+        ))
+}
 
-    let tile_raster_path = tile
-        .lidar_dir_path
-        .join(format!("{}.tif", tif_filename_without_extension));
-    let mut rasters_paths = vec![tile_raster_path];
-    rasters_paths.extend(neighbor_tiles.iter().map(|neighbor_tile| {
-        neighbor_tile.join(format!("{}.tif", tif_filename_without_extension))
-    }));
+fn mosaic_with_buffer<T: Sample>(
+    tile: &Tile,
+    neighbor_tiles: &[PathBuf],
+    tif_filename_without_extension: &str,
+    resolution: f64,
+) -> Result<Grid<T>> {
+    let tif_filename = format!("{}.tif", tif_filename_without_extension);
 
-    let mut raster_with_buffer: Option<Grid<T>> = None;
-    for raster_path in &rasters_paths {
-        let source = Grid::<T>::read_geotiff(raster_path)?;
-        let output = match &mut raster_with_buffer {
-            Some(output) => output,
-            None => raster_with_buffer.insert(empty_buffered_grid(
-                tile,
-                buffer,
-                resolution,
-                &source,
-                raster_path,
-            )?),
-        };
-        paste_nearest(&source, output);
+    let tile_raster_path = tile.lidar_dir_path.join(&tif_filename);
+    let tile_raster = Grid::<T>::read_geotiff(&tile_raster_path)?;
+    let mut raster_with_buffer =
+        empty_buffered_grid(tile, resolution, &tile_raster, &tile_raster_path)?;
+    paste_nearest(&tile_raster, &mut raster_with_buffer);
+    drop(tile_raster);
+
+    for neighbor_tile in neighbor_tiles {
+        let neighbor_raster_path = neighbor_tile.join(&tif_filename);
+        if !neighbor_raster_path.exists() {
+            warn!(
+                "Tile {}. Neighbor raster `{}` does not exist, skipping it",
+                TileId::from(tile),
+                neighbor_raster_path.display()
+            );
+            continue;
+        }
+        let neighbor_raster = Grid::<T>::read_geotiff(&neighbor_raster_path)?;
+        paste_nearest(&neighbor_raster, &mut raster_with_buffer);
     }
 
-    raster_with_buffer
-        .expect("the tile raster is always read")
-        .write_geotiff(&raster_with_buffer_path, Compression::None)
+    Ok(raster_with_buffer)
 }
 
 /// A grid of the buffered tile extent at `resolution`, filled with the nodata
 /// value of the tile raster `source`.
 fn empty_buffered_grid<T: Sample>(
     tile: &Tile,
-    buffer: i64,
     resolution: f64,
     source: &Grid<T>,
     source_path: &Path,
@@ -67,6 +82,7 @@ fn empty_buffered_grid<T: Sample>(
         path: source_path.to_path_buf(),
         message: "expected a nodata value".to_owned(),
     })?;
+    let buffer = BUFFER as i64;
     let size = |min: i64, max: i64| ((max - min + 2 * buffer) as f64 / resolution).round() as usize;
     Ok(Grid::new(
         (tile.min_x - buffer) as f64,
@@ -82,43 +98,40 @@ fn empty_buffered_grid<T: Sample>(
 /// Copies the data cells of `source` to the `output` cells whose centre they
 /// contain.
 fn paste_nearest<T: Sample>(source: &Grid<T>, output: &mut Grid<T>) {
-    // The source cell index along one axis for each output cell, if inside.
-    let source_indices =
-        |output_count: usize, output_center: &dyn Fn(usize) -> f64, source_count: usize| {
-            (0..output_count)
-                .map(|index| {
-                    let source_index = (output_center(index) / source.resolution).floor();
-                    (0.0..source_count as f64)
-                        .contains(&source_index)
-                        .then_some(source_index as usize)
-                })
-                .collect::<Vec<_>>()
-        };
-    let source_cols = source_indices(
-        output.width,
-        &|col| output.cell_center(col, 0).0 - source.min_x,
-        source.width,
-    );
-    let source_rows = source_indices(
-        output.height,
-        &|row| source.max_y - output.cell_center(0, row).1,
-        source.height,
-    );
+    let cols = overlapping_indices(output.width, source.width, |col| {
+        (output.cell_center(col, 0).0 - source.min_x) / source.resolution
+    });
+    let rows = overlapping_indices(output.height, source.height, |row| {
+        (source.max_y - output.cell_center(0, row).1) / source.resolution
+    });
 
-    for (row, source_row) in source_rows.iter().enumerate() {
-        let Some(source_row) = *source_row else {
-            continue;
-        };
-        for (col, source_col) in source_cols.iter().enumerate() {
-            let Some(source_col) = *source_col else {
-                continue;
-            };
+    for &(row, source_row) in &rows {
+        for &(col, source_col) in &cols {
             let value = source.get(source_col, source_row);
             if source.has_data(value) {
                 output.set(col, row, value);
             }
         }
     }
+}
+
+/// The (output, source) index pairs along one axis, for the `output_count`
+/// output cells whose centre is inside one of the `source_count` source cells.
+/// `source_offset` is the distance from the source edge to the centre of an
+/// output cell, in source cells.
+fn overlapping_indices(
+    output_count: usize,
+    source_count: usize,
+    source_offset: impl Fn(usize) -> f64,
+) -> Vec<(usize, usize)> {
+    (0..output_count)
+        .filter_map(|index| {
+            let source_index = source_offset(index).floor();
+            (0.0..source_count as f64)
+                .contains(&source_index)
+                .then_some((index, source_index as usize))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -171,5 +184,54 @@ mod tests {
             -9999.0, 7.0, 4.0, 8.0,
             -9999.0, -9999.0, -9999.0, -9999.0,
         ]);
+    }
+
+    #[test]
+    fn mosaics_the_tile_with_its_neighbors_skipping_missing_ones() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("cassini-buffer-{unique}"));
+        let tile_dir = root.join("tile");
+        let east_dir = root.join("east");
+        // A neighbor whose LiDAR step left no raster.
+        let west_dir = root.join("west");
+        for dir in [&tile_dir, &east_dir, &west_dir] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        let raster = |min_x: f64, value: f32| {
+            Grid::new(min_x, 1000.0, 100.0, 10, 10, Some(-9999.0), value)
+        };
+        raster(0.0, 1.0)
+            .write_geotiff(&tile_dir.join("dem.tif"), Compression::None)
+            .unwrap();
+        raster(1000.0, 2.0)
+            .write_geotiff(&east_dir.join("dem.tif"), Compression::None)
+            .unwrap();
+        let tile = Tile {
+            lidar_dir_path: tile_dir.clone(),
+            render_dir_path: tile_dir.clone(),
+            min_x: 0,
+            min_y: 0,
+            max_x: 1000,
+            max_y: 1000,
+        };
+
+        let mosaic =
+            create_tif_with_buffer::<f32>(&tile, &[west_dir, east_dir], "dem", 100.0).unwrap();
+        let written = Grid::<f32>::read_geotiff(&tile_dir.join("dem_with_buffer.tif")).unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+
+        assert_eq!(written, mosaic);
+        assert_eq!((mosaic.width, mosaic.height), (14, 14));
+        assert_eq!((mosaic.min_x, mosaic.max_y), (-200.0, 1200.0));
+        // The row through the tile: west buffer, tile, east neighbor.
+        #[rustfmt::skip]
+        assert_eq!(&mosaic.values[5 * 14..6 * 14], [
+            -9999.0, -9999.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 2.0, 2.0,
+        ]);
+        // The north buffer has no data.
+        assert!(mosaic.values[..2 * 14].iter().all(|&value| value == -9999.0));
     }
 }
