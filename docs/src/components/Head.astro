@@ -8,3 +8,32 @@ import bannerImage from "../assets/facebook-og.png";
 
 <meta property="og:image" content={bannerImage.src} />
 <meta name="twitter:image" content={bannerImage.src} />
+
+{/*
+  Preselects the visitor's OS in the tabs synced on the "os" key (the install
+  command and the installation guide), unless they already picked one: their
+  choice is stored under the same localStorage key by Starlight's Tabs.
+*/}
+<script is:inline>
+  (() => {
+    try {
+      const key = "starlight-synced-tabs__os";
+      if (localStorage.getItem(key)) return;
+      const platform = (
+        navigator.userAgentData?.platform ||
+        navigator.platform ||
+        navigator.userAgent
+      ).toLowerCase();
+      const os = platform.includes("win")
+        ? "Windows"
+        : platform.includes("mac")
+          ? "macOS"
+          : platform.includes("linux")
+            ? "Linux"
+            : null;
+      if (os) localStorage.setItem(key, os);
+    } catch {
+      // localStorage can be unavailable (private mode, blocked storage).
+    }
+  })();
+</script>

@@ -3,7 +3,7 @@ use crate::{
     download::download_osm_file,
     error::{CassiniError, Result, ResultContext, Stage, TileId},
     helpers::remove_if_exists,
-    lidar::generate_dem_and_vegetation_density_tiff_images_from_laz_file,
+    lidar::{generate_dem_and_vegetation_density_tiff_images_from_laz_file, read_tile_id},
     merge::merge_maps,
     ocad_export::{
         get_batch_georeferencing, prepare_tile_for_merge, write_merged_ocd_file,
@@ -14,11 +14,10 @@ use crate::{
     render::{cleanup_render_step_files, render_tile_map, RenderOptions},
     tile::{Tile, TileWithNeighbors},
 };
-use las::raw::Header;
 use log::info;
 use std::{
     collections::HashMap,
-    fs::{read_dir, File},
+    fs::read_dir,
     path::{Path, PathBuf},
     sync::Arc,
     thread::{spawn, JoinHandle},
@@ -103,6 +102,7 @@ pub fn batch(
                             &tile.laz_path,
                             &tile.tile.lidar_dir_path,
                         )
+                        .map(|_| ())
                     })
                     .collect()
             });
@@ -276,22 +276,8 @@ pub fn get_tiles_with_neighbors(
                     continue;
                 }
 
-                let mut file = File::open(&path)
-                    .context(format!("could not open LiDAR file `{}`", path.display()))?;
-                let header = Header::read_from(&mut file)
-                    .context(format!("could not read LiDAR header `{}`", path.display()))?;
-
-                let extent = (
-                    header.min_x.round() as i64,
-                    header.min_y.round() as i64,
-                    header.max_x.round() as i64,
-                    header.max_y.round() as i64,
-                );
-                if extent.0 >= extent.2 || extent.1 >= extent.3 {
-                    return Err(CassiniError::InvalidInput {
-                        message: format!("LiDAR file `{}` has an invalid extent", path.display()),
-                    });
-                }
+                let tile = read_tile_id(&path)?;
+                let extent = (tile.min_x, tile.min_y, tile.max_x, tile.max_y);
 
                 if let Some(previous) = tiles_map.insert(extent, path.clone()) {
                     return Err(CassiniError::InvalidInput {

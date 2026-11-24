@@ -2,6 +2,7 @@ use shapefile::{Point, Polygon, PolygonRing, Polyline};
 
 /// A classified map feature, in projected coordinates (EPSG:2154 metres).
 /// The PNG renderer draws these and the OCAD exporter serializes them.
+#[derive(Debug, PartialEq)]
 pub enum MapFeature {
     Point(PointSymbol, Point),
     Line(LineSymbol, Polyline),

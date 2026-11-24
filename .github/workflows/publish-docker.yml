@@ -1,0 +1,43 @@
+# Builds the Docker image from the Linux release binary and pushes it to
+# Docker Hub, once release.yml has published the GitHub Release. Called by
+# release.yml (`publish-jobs` in dist-workspace.toml), which skips it for
+# prereleases.
+name: Publish Docker image
+
+on:
+  workflow_call:
+    inputs:
+      plan:
+        required: true
+        type: string
+
+jobs:
+  publish-docker:
+    runs-on: ubuntu-22.04
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ fromJson(inputs.plan).announcement_tag }}
+      IMAGE: ${{ secrets.DOCKER_USERNAME }}/cassini
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Fetch the Linux binary from the release
+        run: |
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern cassini-x86_64-unknown-linux-gnu.tar.xz --dir "$RUNNER_TEMP"
+          mkdir docker-context
+          tar -xf "$RUNNER_TEMP/cassini-x86_64-unknown-linux-gnu.tar.xz" \
+            --strip-components=1 -C docker-context
+          ls -l docker-context/cassini
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Build and push the image
+        run: |
+          docker build -f Dockerfile -t "$IMAGE:$TAG" -t "$IMAGE:latest" docker-context
+          docker run --rm "$IMAGE:$TAG" --version
+          docker push "$IMAGE:$TAG"
+          docker push "$IMAGE:latest"

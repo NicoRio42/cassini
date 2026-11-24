@@ -9,14 +9,14 @@ use crate::{
         BLACK, BUFFER, CLIFF_THICKNESS_1, CLIFF_THICKNESS_2, DEM_BLOCK_SIZE, INCH, TRANSPARENT,
     },
     error::{Result, ResultContext},
-    raster::F32Raster,
+    grid::Grid,
     tile::Tile,
 };
 
 /// Renders `slopes`, the tile's `slopes.tif`, to `cliffs.png`.
 pub fn render_cliffs(
     tile: &Tile,
-    slopes: &F32Raster,
+    slopes: &Grid<f32>,
     image_width: u32,
     image_height: u32,
     config: &Config,
@@ -28,7 +28,7 @@ pub fn render_cliffs(
 
     let start = Instant::now();
 
-    let dem_block_size_pixel = DEM_BLOCK_SIZE * config.dpi_resolution / INCH;
+    let dem_block_size_pixel = DEM_BLOCK_SIZE as f32 * config.dpi_resolution / INCH;
 
     let mut cliffs_layer_canvas = RgbaImage::from_pixel(image_width, image_height, TRANSPARENT);
 
@@ -36,9 +36,9 @@ pub fn render_cliffs(
         let x = index % slopes.width;
         let y = index / slopes.width;
 
-        let x_pixel = ((x as i64 - (BUFFER as f32 / DEM_BLOCK_SIZE) as i64) as f32
+        let x_pixel = ((x as i64 - (BUFFER as f64 / DEM_BLOCK_SIZE) as i64) as f32
             * dem_block_size_pixel) as i32;
-        let y_pixel = ((y as i64 - (BUFFER as f32 / DEM_BLOCK_SIZE) as i64) as f32
+        let y_pixel = ((y as i64 - (BUFFER as f64 / DEM_BLOCK_SIZE) as i64) as f32
             * dem_block_size_pixel) as i32;
 
         if x_pixel < 0

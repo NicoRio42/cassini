@@ -1,0 +1,43 @@
+[workspace]
+members = ["cargo:."]
+
+# Config for 'dist'. After editing it, run `dist generate` to update
+# .github/workflows/release.yml, which must not be edited by hand.
+[dist]
+# The preferred dist version to use in CI (Cargo.toml SemVer syntax)
+cargo-dist-version = "0.34.0"
+# CI backends to support
+ci = "github"
+# The installers to generate for each app
+installers = ["shell", "powershell"]
+# Target platforms to build apps for (Rust target-triple syntax)
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
+# Path that installers should place binaries in
+install-path = ["$XDG_BIN_HOME/", "$XDG_DATA_HOME/../bin", "~/.local/bin"]
+# Where to host releases
+hosting = "github"
+# release.yml is started with the tag to create, by release-on-version-bump.yml
+# when the version in Cargo.toml changes on main, or by hand from the Actions
+# tab. Pushing a tag doesn't start a release.
+dispatch-releases = true
+# Whether to install an updater program
+install-updater = false
+# skia-binaries has no prebuilt Skia for the static MSVC runtime, so the
+# Windows binary links the Visual C++ runtime dynamically, as cargo does by
+# default.
+msvc-crt-static = false
+# Fails the build if Cargo.lock is out of date, as `--locked` would: dist
+# has no option to pass it to `cargo build`.
+github-build-setup = "../build-setup.yml"
+# Pushes the Docker image once the release is published (not for prereleases).
+publish-jobs = ["./publish-docker"]
+
+[dist.github-custom-runners]
+# The oldest supported Ubuntu runner, for the widest glibc compatibility
+# (glibc 2.35).
+x86_64-unknown-linux-gnu = "ubuntu-22.04"
+aarch64-apple-darwin = "macos-15"
+# The last Intel macOS image GitHub provides.
+x86_64-apple-darwin = "macos-15-intel"
+x86_64-pc-windows-msvc = "windows-2022"
+global = "ubuntu-22.04"

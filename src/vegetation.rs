@@ -5,6 +5,7 @@ use crate::{
         BUFFER, GREEN_1, GREEN_2, GREEN_3, INCH, TRANSPARENT, VEGETATION_BLOCK_SIZE, WHITE, YELLOW,
     },
     error::{CassiniError, Result, ResultContext},
+    grid::Grid,
     tile::Tile,
 };
 use image::{imageops, RgbaImage};
@@ -15,11 +16,9 @@ use imageproc::{
 use log::info;
 use std::{
     f32::consts::E,
-    fs::File,
-    path::{Path, PathBuf},
+    path::PathBuf,
     time::Instant,
 };
-use tiff::decoder::{Decoder, DecodingResult};
 
 /// Blur radii, in 1 m cells, of the medium and low vegetation densities.
 pub(crate) const MEDIUM_DENSITY_BLUR_RADIUS: usize = 2;
@@ -201,41 +200,13 @@ pub fn render_vegetation(
     let casted_base_vegetation_block_size_pixel = (vegetation_block_size_pixel * 2.).ceil() as i32;
     let casted_green_block_size_pixel = (vegetation_block_size_pixel).ceil() as u32;
 
-    create_tif_with_buffer(
-        tile,
-        neighbor_tiles,
-        BUFFER as i64,
-        "high_vegetation",
-        1.0,
-        None,
-    )?;
-    create_tif_with_buffer(
-        tile,
-        neighbor_tiles,
-        BUFFER as i64,
-        "medium_vegetation",
-        1.0,
-        None,
-    )?;
-    create_tif_with_buffer(
-        tile,
-        neighbor_tiles,
-        BUFFER as i64,
-        "low_vegetation",
-        1.0,
-        None,
-    )?;
-
+    let buffered = |name: &str| {
+        create_tif_with_buffer::<u8>(tile, neighbor_tiles, name, 1.0).map(TifImage::from)
+    };
     let rasters = VegetationRasters {
-        high: get_image_data_from_tif(
-            &tile.render_dir_path.join("high_vegetation_with_buffer.tif"),
-        )?,
-        medium: get_image_data_from_tif(
-            &tile
-                .render_dir_path
-                .join("medium_vegetation_with_buffer.tif"),
-        )?,
-        low: get_image_data_from_tif(&tile.render_dir_path.join("low_vegetation_with_buffer.tif"))?,
+        high: buffered("high_vegetation")?,
+        medium: buffered("medium_vegetation")?,
+        low: buffered("low_vegetation")?,
     };
 
     let mut base_vegetation_img = RgbaImage::from_pixel(image_width, image_height, YELLOW);
@@ -544,47 +515,16 @@ struct TifImage {
     height: u32,
 }
 
-fn get_image_data_from_tif(path: &Path) -> Result<TifImage> {
-    let tif_file = File::open(path).context(format!("could not open `{}`", path.display()))?;
-    let mut img_decoder = Decoder::new(tif_file)
-        .context(format!("could not create decoder for `{}`", path.display()))?;
-    img_decoder = img_decoder.with_limits(tiff::decoder::Limits::unlimited());
-    let (width, height) = img_decoder.dimensions().context(format!(
-        "could not read dimensions from `{}`",
-        path.display()
-    ))?;
-
-    let decoded = img_decoder
-        .read_image()
-        .context(format!("could not decode `{}`", path.display()))?;
-    let DecodingResult::U8(image_data) = decoded else {
-        return Err(CassiniError::InvalidArtifact {
-            path: path.to_path_buf(),
-            message: "expected an 8-bit TIFF band".to_owned(),
-        });
-    };
-
-    let expected_len = (width as usize)
-        .checked_mul(height as usize)
-        .ok_or_else(|| CassiniError::InvalidArtifact {
-            path: path.to_path_buf(),
-            message: "TIFF dimensions overflow addressable memory".to_owned(),
-        })?;
-    if image_data.len() != expected_len {
-        return Err(CassiniError::InvalidArtifact {
-            path: path.to_path_buf(),
-            message: format!(
-                "TIFF contains {} pixels but its dimensions require {expected_len}",
-                image_data.len()
-            ),
-        });
+impl From<Grid<u8>> for TifImage {
+    /// The grid's size must fit in `u32`, as for any grid written to a TIFF
+    /// file.
+    fn from(grid: Grid<u8>) -> Self {
+        Self {
+            width: grid.width as u32,
+            height: grid.height as u32,
+            pixels: grid.values,
+        }
     }
-
-    Ok(TifImage {
-        pixels: image_data,
-        width,
-        height,
-    })
 }
 
 #[cfg(test)]
