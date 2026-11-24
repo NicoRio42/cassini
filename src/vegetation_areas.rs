@@ -211,19 +211,19 @@ pub fn get_vegetation_features(
 }
 
 /// A shape is an outer ring followed by its holes, without closing points.
-type Shapes = Vec<Vec<Vec<[f64; 2]>>>;
+pub type Shapes = Vec<Vec<Vec<[f64; 2]>>>;
 
 fn difference(subject: &Shapes, clip: &Shapes) -> Shapes {
     subject.overlay(clip, OverlayRule::Difference, FillRule::EvenOdd)
 }
 
-struct FeatureSink {
-    features: Vec<MapFeature>,
+pub struct FeatureSink {
+    pub features: Vec<MapFeature>,
     /// The vectorized window. The shapes reaching its border may continue
     /// beyond it.
-    window: Extent,
+    pub window: Extent,
     /// The tile the shapes are clipped to.
-    tile: Extent,
+    pub tile: Extent,
 }
 
 impl FeatureSink {
@@ -232,7 +232,7 @@ impl FeatureSink {
     /// slivers. The shapes are measured whole, before they are clipped, so
     /// that neighbouring tiles keep or drop the shapes crossing their common
     /// edge alike.
-    fn push(&mut self, symbol: AreaSymbol, shapes: Shapes, min_area: f64) {
+    pub fn push(&mut self, symbol: AreaSymbol, shapes: Shapes, min_area: f64) {
         let to_points =
             |ring: Vec<[f64; 2]>| ring.into_iter().map(|[x, y]| Point::new(x, y)).collect();
         let tile_rectangle = rectangle(&self.tile);
@@ -289,13 +289,13 @@ fn ring_area(ring: &[[f64; 2]]) -> f64 {
     doubled.abs() / 2.0
 }
 
-struct Tracer {
-    builder: ContourBuilder,
+pub struct Tracer {
+    pub builder: ContourBuilder,
     /// The lines simplification keeps the crossings of.
-    pinned_lines: PinnedLines,
+    pub pinned_lines: PinnedLines,
     /// The vectorized window, holding every traced ring.
-    window: Extent,
-    simplify_tolerance: f64,
+    pub window: Extent,
+    pub simplify_tolerance: f64,
 }
 
 impl Tracer {
@@ -305,7 +305,7 @@ impl Tracer {
     /// and simplification keeps them. A neighbouring tile pins the same lines
     /// along the common edge, so that the areas clipped to either tile cross
     /// that edge at the same points, and batch mode can join them.
-    fn trace(&self, field: &[f32]) -> Result<Shapes> {
+    pub fn trace(&self, field: &[f32]) -> Result<Shapes> {
         let values: Vec<f64> = field
             .iter()
             .map(|value| {
@@ -320,7 +320,7 @@ impl Tracer {
         let lines = self
             .builder
             .lines(&values, &[0.0])
-            .context("could not trace vegetation areas")?;
+            .context("could not trace areas")?;
 
         let rings: Vec<Vec<[f64; 2]>> = lines
             .iter()
@@ -370,7 +370,7 @@ fn rectangle(extent: &Extent) -> Vec<[f64; 2]> {
 
 /// Axis-aligned lines, as their axis (0 for x = the coordinate, 1 for
 /// y = the coordinate) and coordinate.
-struct PinnedLines(Vec<(usize, f64)>);
+pub struct PinnedLines(Vec<(usize, f64)>);
 
 impl PinnedLines {
     /// The lines of the edges of `tile`, and lines `band` on either side of
@@ -378,7 +378,7 @@ impl PinnedLines {
     /// edge. Simplification keeps the iso-lines within the cells these lines
     /// form, so both tiles simplify the iso-lines within `band` of that edge
     /// alike, whatever they do beyond.
-    fn around_tile_edges(tile: &Extent, band: f64) -> Self {
+    pub fn around_tile_edges(tile: &Extent, band: f64) -> Self {
         let mut lines = vec![];
         for (axis, edge) in [
             (0, tile.min_x),
@@ -436,7 +436,7 @@ impl PinnedLines {
 
 /// Douglas–Peucker simplification of a ring without closing point, keeping
 /// the vertices for which `is_pinned` holds.
-fn simplify_ring(
+pub fn simplify_ring(
     ring: &[[f64; 2]],
     tolerance: f64,
     is_pinned: impl Fn([f64; 2]) -> bool,
@@ -518,7 +518,7 @@ fn squared_distance(a: [f64; 2], b: [f64; 2]) -> f64 {
     (a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)
 }
 
-fn squared_segment_distance(point: [f64; 2], start: [f64; 2], end: [f64; 2]) -> f64 {
+pub fn squared_segment_distance(point: [f64; 2], start: [f64; 2], end: [f64; 2]) -> f64 {
     let dx = end[0] - start[0];
     let dy = end[1] - start[1];
     let squared_length = dx * dx + dy * dy;
@@ -1127,7 +1127,7 @@ mod tests {
                             )
                         })
                         .collect::<Vec<_>>(),
-                    MapFeature::Line(..) => vec![],
+                    MapFeature::Point(..) | MapFeature::Line(..) => vec![],
                 })
                 .collect();
             points.sort();
@@ -1206,7 +1206,7 @@ mod tests {
         assert_eq!(sink.features.len(), 2);
         assert!(sink.features.iter().all(|feature| match feature {
             MapFeature::Area(_, polygon) => polygon.bbox().max.x <= 7.0,
-            MapFeature::Line(..) => false,
+            MapFeature::Point(..) | MapFeature::Line(..) => false,
         }));
     }
 
@@ -1274,7 +1274,7 @@ mod tests {
                     let bbox = polygon.bbox();
                     (bbox.max.x - bbox.min.x) * (bbox.max.y - bbox.min.y)
                 }
-                MapFeature::Line(..) => unreachable!(),
+                MapFeature::Point(..) | MapFeature::Line(..) => unreachable!(),
             })
             .collect();
         assert_eq!(areas.len(), 2);
@@ -1305,7 +1305,7 @@ mod tests {
             .iter()
             .map(|feature| match feature {
                 MapFeature::Area(_, polygon) => polygon.bbox().max.x - polygon.bbox().min.x,
-                MapFeature::Line(..) => unreachable!(),
+                MapFeature::Point(..) | MapFeature::Line(..) => unreachable!(),
             })
             .collect();
         assert_eq!(widths, vec![5.0, 20.0]);

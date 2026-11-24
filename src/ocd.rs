@@ -68,11 +68,18 @@ const MAX_FILE_SIZE: u64 = i32::MAX as u64;
 /// The limit the OCD 12 format documents for the object index.
 const MAX_OBJECTS: usize = 65_536 * INDEX_BLOCK_ENTRIES;
 
+/// Margin added around point objects in the object index, in 0.01 mm of
+/// paper. OCAD looks objects up by this bounding box, which should hold the
+/// whole symbol, and a point symbol extends around its coordinate. 1 mm holds
+/// the boulder symbols of the ISOM sets.
+const POINT_BOUNDS_MARGIN: i32 = 100;
+
 /// Marks the first point of a hole in an area object (set in the y coordinate).
 pub const FLAG_HOLE: i32 = 0x02;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ObjectKind {
+    Point = 1,
     Line = 2,
     Area = 3,
 }
@@ -441,10 +448,14 @@ impl OcdTemplate {
             let data = encode_object(object);
             let pos = writer.append(&data)?;
 
-            let min_x = object.points.iter().map(|point| point.x).min().unwrap_or(0);
-            let min_y = object.points.iter().map(|point| point.y).min().unwrap_or(0);
-            let max_x = object.points.iter().map(|point| point.x).max().unwrap_or(0);
-            let max_y = object.points.iter().map(|point| point.y).max().unwrap_or(0);
+            let margin = match object.kind {
+                ObjectKind::Point => POINT_BOUNDS_MARGIN,
+                ObjectKind::Line | ObjectKind::Area => 0,
+            };
+            let min_x = object.points.iter().map(|point| point.x).min().unwrap_or(0) - margin;
+            let min_y = object.points.iter().map(|point| point.y).min().unwrap_or(0) - margin;
+            let max_x = object.points.iter().map(|point| point.x).max().unwrap_or(0) + margin;
+            let max_y = object.points.iter().map(|point| point.y).max().unwrap_or(0) + margin;
 
             let entry = 4 + (count % INDEX_BLOCK_ENTRIES) * OBJECT_ENTRY_SIZE;
             put_i32(&mut block, entry, min_x << 8);
@@ -531,6 +542,7 @@ pub fn read_object_record(input: &mut impl Read) -> std::io::Result<Option<OcdOb
     let read_i32 =
         |bytes: &[u8], pos: usize| i32::from_le_bytes(bytes[pos..pos + 4].try_into().unwrap());
     let kind = match header[4] {
+        1 => ObjectKind::Point,
         2 => ObjectKind::Line,
         3 => ObjectKind::Area,
         other => {
@@ -783,6 +795,7 @@ pub(crate) mod tests {
                 object: OcdObject {
                     symbol: reader.i32(pos).unwrap(),
                     kind: match bytes[pos + 4] {
+                        1 => ObjectKind::Point,
                         2 => ObjectKind::Line,
                         3 => ObjectKind::Area,
                         other => panic!("unexpected object type {other}"),
@@ -915,8 +928,17 @@ pub(crate) mod tests {
             ],
         };
 
+        let boulder = OcdObject {
+            symbol: 205000,
+            kind: ObjectKind::Point,
+            points: vec![point(500, -700)],
+        };
+
         let bytes = template
-            .write(&georeferencing, &[line.clone(), area.clone()])
+            .write(
+                &georeferencing,
+                &[line.clone(), area.clone(), boulder.clone()],
+            )
             .unwrap();
         let written = OcdTemplate::parse(&bytes, Path::new("test.ocd")).unwrap();
 
@@ -937,7 +959,7 @@ pub(crate) mod tests {
         );
 
         let objects = read_objects(&bytes);
-        assert_eq!(objects.len(), 2);
+        assert_eq!(objects.len(), 3);
         assert_eq!(objects[0].object, line);
         assert_eq!(objects[0].bounds, [-5_000, -200, 300, 5_000]);
         assert_eq!(objects[0].size, OBJECT_HEADER_SIZE + 3 * 8);
@@ -945,6 +967,9 @@ pub(crate) mod tests {
         // Brown 100%
         assert_eq!(objects[0].color, 7);
         assert_eq!(objects[1].object, area);
+        assert_eq!(objects[2].object, boulder);
+        // Point objects are indexed with room for their symbol
+        assert_eq!(objects[2].bounds, [400, -800, 600, -600]);
     }
 
     #[test]
@@ -989,6 +1014,11 @@ pub(crate) mod tests {
                     point(200, 100),
                     point(100, 200),
                 ],
+            },
+            OcdObject {
+                symbol: 205000,
+                kind: ObjectKind::Point,
+                points: vec![point(50, 60)],
             },
         ];
 

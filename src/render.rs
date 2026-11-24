@@ -12,6 +12,7 @@ use crate::vectors::{get_map_features_from_osm_shapes, render_map_with_osm_vecto
 use crate::vegetation_areas::get_vegetation_features;
 use crate::world_file::create_world_file;
 use crate::{
+    cliff_features::get_cliff_features,
     cliffs::render_cliffs,
     dem::create_dem_with_buffer_and_slopes_tiff,
     tile::Tile,
@@ -99,6 +100,10 @@ pub fn render_tile_map(
     let contour_features =
         generate_contours_with_pullautin_algorithme(&tile, image_width, image_height, config)?;
     render_cliffs(&tile, image_width, image_height, config)?;
+    let cliff_features = match &options.ocad {
+        Some(ocad) => get_cliff_features(&tile, config, ocad.simplify_tolerance)?,
+        None => vec![],
+    };
 
     info!(
         "Tile min_x={} min_y={} max_x={} max_y={}. Rendering map to PNG",
@@ -229,6 +234,7 @@ pub fn render_tile_map(
     }
 
     let mut features = vegetation_features;
+    features.extend(cliff_features);
     features.extend(contour_features);
     features.extend(osm_features);
     Ok(Some(features))
