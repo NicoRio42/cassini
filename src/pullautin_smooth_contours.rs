@@ -1,20 +1,23 @@
 use core::f64;
 use log::info;
-use shapefile::dbase::{FieldValue, Record};
 use shapefile::record::polyline::GenericPolyline;
-use shapefile::{Point, Polyline, Reader};
-use std::fs::{create_dir_all, File};
-use std::io::BufReader;
+use shapefile::Point;
+use std::fs::create_dir_all;
 use std::time::Instant;
 
 use crate::constants::BUFFER;
-use crate::error::{CassiniError, Result, ResultContext};
+use crate::contour_shapefile::{contour_table, ContourRecord};
+use crate::error::{Result, ResultContext};
 use crate::grid::Grid;
+use crate::marching_squares::ContourLine;
 use crate::tile::Tile;
 
+/// Smooths `raw_contours`, the lines of `contours-raw.shp` in the same order,
+/// and writes them to `contours/contours.shp` with the IDs of the raw lines.
 pub fn pullautin_smooth_contours(
     tile: &Tile,
     avg_alt: &[Vec<f64>],
+    raw_contours: Vec<ContourLine>,
 ) -> Result<Vec<(Vec<f64>, Vec<f64>, f64)>> {
     info!(
         "Tile min_x={} min_y={} max_x={} max_y={}. Smoothing contours",
@@ -57,27 +60,6 @@ pub fn pullautin_smooth_contours(
         }
     }
 
-    let contours_polylines_path = tile
-        .render_dir_path
-        .join("contours-raw")
-        .join("contours-raw.shp");
-
-    let mut contours_polylines_reader: shapefile::Reader<BufReader<File>, BufReader<File>> =
-        Reader::from_path(&contours_polylines_path).context(format!(
-            "could not open contour shapefile `{}`",
-            contours_polylines_path.display()
-        ))?;
-
-    let contours_polylines_reader_for_table_info: shapefile::Reader<
-        BufReader<File>,
-        BufReader<File>,
-    > = Reader::from_path(&contours_polylines_path).context(format!(
-        "could not read contour table metadata `{}`",
-        contours_polylines_path.display()
-    ))?;
-
-    let table_info = contours_polylines_reader_for_table_info.into_table_info();
-
     let contours_dir = tile.render_dir_path.join("contours");
     create_dir_all(&contours_dir).context(format!(
         "could not create contour directory `{}`",
@@ -85,37 +67,18 @@ pub fn pullautin_smooth_contours(
     ))?;
 
     let contours_output_path = contours_dir.join("contours.shp");
-    let mut writer = shapefile::Writer::from_path_with_info(&contours_output_path, table_info)
-        .context(format!(
+    let mut writer =
+        shapefile::Writer::from_path(&contours_output_path, contour_table()).context(format!(
             "could not create contour shapefile `{}`",
             contours_output_path.display()
         ))?;
 
-    for shape_record in contours_polylines_reader.iter_shapes_and_records_as::<Polyline, Record>() {
-        let (line, record) = shape_record.context(format!(
-            "could not read a contour from `{}`",
-            contours_polylines_path.display()
-        ))?;
-        let mut x_array = Vec::<f64>::new();
-        let mut y_array = Vec::<f64>::new();
-
-        // Assuming line.parts().len() == 1
-        for part in line.parts() {
-            for point in part {
-                x_array.push(point.x);
-                y_array.push(point.y);
-            }
-        }
-
-        let elevation = match record.get("elev") {
-            Some(FieldValue::Numeric(Some(x))) => x,
-            Some(_) => &f64::NAN,
-            None => {
-                return Err(CassiniError::InvalidArtifact {
-                    path: contours_polylines_path.clone(),
-                    message: "required `elev` field is missing".to_owned(),
-                });
-            }
+    for (id, raw_contour) in raw_contours.into_iter().enumerate() {
+        let (mut x_array, mut y_array): (Vec<f64>, Vec<f64>) =
+            raw_contour.points.into_iter().unzip();
+        let record = ContourRecord {
+            id: id as f64,
+            elevation: raw_contour.elevation,
         };
 
         let mut el_x_len = x_array.len();
@@ -124,7 +87,7 @@ pub fn pullautin_smooth_contours(
             continue;
         }
 
-        let height = *elevation;
+        let height = raw_contour.elevation;
 
         if el_x_len > 101 {
             let mut newx: Vec<f64> = vec![];

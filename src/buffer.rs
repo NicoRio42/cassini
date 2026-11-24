@@ -8,7 +8,34 @@ use log::warn;
 use std::path::{Path, PathBuf};
 
 /// Writes and returns `<name>_with_buffer.tif` in the tile's render directory:
-/// the `<name>.tif` rasters of the tile and its neighbors, mosaicked and
+/// the mosaic of [`mosaic_with_buffer`].
+pub fn create_tif_with_buffer<T: Sample>(
+    tile: &Tile,
+    neighbor_tiles: &[PathBuf],
+    tif_filename_without_extension: &str,
+    resolution: f64,
+) -> Result<Grid<T>> {
+    let raster_with_buffer = mosaic_with_buffer(
+        tile,
+        neighbor_tiles,
+        tif_filename_without_extension,
+        resolution,
+    )?;
+    let raster_with_buffer_path = tile.render_dir_path.join(format!(
+        "{}_with_buffer.tif",
+        tif_filename_without_extension
+    ));
+    raster_with_buffer
+        .write_geotiff(&raster_with_buffer_path, Compression::None)
+        .context(format!(
+            "could not create `{}` for tile {}",
+            raster_with_buffer_path.display(),
+            TileId::from(tile)
+        ))?;
+    Ok(raster_with_buffer)
+}
+
+/// The `<name>.tif` rasters of the tile and its neighbors, mosaicked and
 /// cropped to the tile extended by `BUFFER` metres, at `resolution`, as `T`.
 ///
 /// This does what `gdalbuildvrt` then `gdal_translate -projwin … -tr … -ot …`
@@ -16,29 +43,26 @@ use std::path::{Path, PathBuf};
 /// a source's nodata cells are transparent, a later source wins where two
 /// have data, and cells no source covers are nodata. A missing neighbor
 /// raster is skipped with a warning, as `gdalbuildvrt` skips it.
-pub fn create_tif_with_buffer<T: Sample>(
+pub fn mosaic_with_buffer<T: Sample>(
     tile: &Tile,
     neighbor_tiles: &[PathBuf],
     tif_filename_without_extension: &str,
     resolution: f64,
 ) -> Result<Grid<T>> {
-    let raster_with_buffer_path = tile.render_dir_path.join(format!(
-        "{}_with_buffer.tif",
-        tif_filename_without_extension
-    ));
-    mosaic_with_buffer(tile, neighbor_tiles, tif_filename_without_extension, resolution)
-        .and_then(|raster_with_buffer| {
-            raster_with_buffer.write_geotiff(&raster_with_buffer_path, Compression::None)?;
-            Ok(raster_with_buffer)
-        })
-        .context(format!(
-            "could not create `{}` for tile {}",
-            raster_with_buffer_path.display(),
-            TileId::from(tile)
-        ))
+    mosaic(
+        tile,
+        neighbor_tiles,
+        tif_filename_without_extension,
+        resolution,
+    )
+    .context(format!(
+        "could not mosaic the `{}.tif` rasters for tile {}",
+        tif_filename_without_extension,
+        TileId::from(tile)
+    ))
 }
 
-fn mosaic_with_buffer<T: Sample>(
+fn mosaic<T: Sample>(
     tile: &Tile,
     neighbor_tiles: &[PathBuf],
     tif_filename_without_extension: &str,

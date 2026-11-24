@@ -15,7 +15,7 @@ use crate::world_file::create_world_file;
 use crate::{
     cliff_features::get_cliff_features,
     cliffs::render_cliffs,
-    dem::create_dem_with_buffer_and_slopes_tiff,
+    dem::create_dem_contours_and_slopes,
     tile::Tile,
     vegetation::{render_vegetation, UndergrowthMode},
 };
@@ -97,9 +97,14 @@ pub fn render_tile_map(
     };
     drop(vegetation_rasters);
 
-    create_dem_with_buffer_and_slopes_tiff(&tile, &neighbor_tiles)?;
-    let contour_features =
-        generate_contours_with_pullautin_algorithme(&tile, image_width, image_height, config)?;
+    let raw_contours = create_dem_contours_and_slopes(&tile, &neighbor_tiles)?;
+    let contour_features = generate_contours_with_pullautin_algorithme(
+        &tile,
+        raw_contours,
+        image_width,
+        image_height,
+        config,
+    )?;
     let slopes = Grid::<f32>::read_geotiff(&tile.render_dir_path.join("slopes.tif"))?;
     render_cliffs(&tile, &slopes, image_width, image_height, config)?;
     let cliff_features = match &options.ocad {

@@ -1,13 +1,18 @@
 use crate::{
-    buffer::create_tif_with_buffer,
+    buffer::mosaic_with_buffer,
     constants::DEM_BLOCK_SIZE,
-    error::{Result, ResultContext, Stage, TileId},
+    contour_shapefile::write_contour_shapefile,
+    error::{Result, ResultContext},
+    fill_nodata::{fill_nodata, DEFAULT_MAX_SEARCH_DISTANCE},
     grid::{Compression, Grid},
-    process::{checked_output, ensure_file},
+    marching_squares::{contour_lines, ContourLine},
     tile::Tile,
 };
 use log::info;
-use std::{fs::create_dir_all, path::PathBuf, process::Command, time::Instant};
+use std::{fs::create_dir_all, path::PathBuf, time::Instant};
+
+/// The elevation interval between contours, in metres.
+const CONTOUR_INTERVAL: f64 = 2.5;
 
 /// The cell size of the DEM contours are extracted from, in metres.
 const CONTOUR_DEM_RESOLUTION: f64 = 2.0;
@@ -22,10 +27,14 @@ const _: () = assert!(
 /// The nodata value of `slopes.tif`, as `gdaldem slope` writes it.
 const SLOPE_NODATA: f32 = -9999.0;
 
-pub fn create_dem_with_buffer_and_slopes_tiff(
+/// Writes the filled DEM of the buffered tile (`dem_with_buffer.tif`), its
+/// 2 m version (`dem_2m_with_buffer.tif`), the contours extracted from it
+/// (`contours-raw/contours-raw.shp`) and the slopes (`slopes.tif`), and
+/// returns the contours.
+pub fn create_dem_contours_and_slopes(
     tile: &Tile,
     neighbor_tiles: &[PathBuf],
-) -> Result<()> {
+) -> Result<Vec<ContourLine>> {
     info!(
         "Tile min_x={} min_y={} max_x={} max_y={}. Generating dem with buffer",
         tile.min_x, tile.min_y, tile.max_x, tile.max_y
@@ -34,20 +43,12 @@ pub fn create_dem_with_buffer_and_slopes_tiff(
     let start = Instant::now();
 
     let dem_with_buffer_path = tile.render_dir_path.join("dem_with_buffer.tif");
-    // `gdal_fillnodata` fills the file in place, so the returned grid is not
-    // the filled DEM.
-    create_tif_with_buffer::<f32>(tile, neighbor_tiles, "dem", DEM_BLOCK_SIZE)?;
-    let tile_id = Some(TileId::from(tile));
+    let mut dem_with_buffer =
+        mosaic_with_buffer::<f32>(tile, neighbor_tiles, "dem", DEM_BLOCK_SIZE)?;
 
     // Filling holes
-    checked_output(
-        Command::new("gdal_fillnodata")
-            .arg(&dem_with_buffer_path)
-            .arg(&dem_with_buffer_path),
-        Stage::Dem,
-        tile_id,
-    )?;
-    ensure_file(&dem_with_buffer_path)?;
+    fill_nodata(&mut dem_with_buffer, DEFAULT_MAX_SEARCH_DISTANCE);
+    dem_with_buffer.write_geotiff(&dem_with_buffer_path, Compression::None)?;
 
     let duration = start.elapsed();
 
@@ -71,20 +72,11 @@ pub fn create_dem_with_buffer_and_slopes_tiff(
     let contours_raw_path = contours_raw_dir.join("contours-raw.shp");
     let dem_2m_with_buffer_path = tile.render_dir_path.join("dem_2m_with_buffer.tif");
 
-    let dem_with_buffer = Grid::<f32>::read_geotiff(&dem_with_buffer_path)?;
-    downsample_average(&dem_with_buffer, CONTOUR_DEM_FACTOR)
-        .write_geotiff(&dem_2m_with_buffer_path, Compression::None)?;
+    let dem_2m_with_buffer = downsample_average(&dem_with_buffer, CONTOUR_DEM_FACTOR);
+    dem_2m_with_buffer.write_geotiff(&dem_2m_with_buffer_path, Compression::None)?;
 
-    checked_output(
-        Command::new("gdal_contour")
-            .args(["-a", "elev"])
-            .arg(&dem_2m_with_buffer_path)
-            .arg(&contours_raw_path)
-            .args(["-i", "2.5"]),
-        Stage::Contours,
-        tile_id,
-    )?;
-    ensure_file(&contours_raw_path)?;
+    let contours = contour_lines(&dem_2m_with_buffer, CONTOUR_INTERVAL);
+    write_contour_shapefile(&contours_raw_path, &contours)?;
 
     let duration = start.elapsed();
 
@@ -111,7 +103,7 @@ pub fn create_dem_with_buffer_and_slopes_tiff(
         tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
     );
 
-    Ok(())
+    Ok(contours)
 }
 
 /// `grid` with cells `factor` times larger, each the mean of the data cells of
