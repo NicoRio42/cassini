@@ -1,13 +1,12 @@
 use crate::config::Config;
 use crate::constants::INCH;
 use crate::contours::generate_contours_with_pullautin_algorithme;
-use crate::error::{CassiniError, Result, ResultContext, Stage, TileId};
+use crate::error::{CassiniError, Result, ResultContext, TileId};
+use crate::grid::Grid;
 use crate::helpers::{remove_dir_content, remove_if_exists};
 use crate::map_features::MapFeature;
 use crate::ocad_export::{SPILLED_OBJECTS_FILE_NAME, TILE_OCD_FILE_NAME};
 use crate::ocd::OcdTemplate;
-use crate::process::{checked_output, ensure_file};
-use crate::grid::Grid;
 use crate::tile::TileWithNeighbors;
 use crate::vectors::{get_map_features_from_osm_shapes, render_map_with_osm_vector_shapes};
 use crate::vegetation_areas::get_vegetation_features;
@@ -19,9 +18,9 @@ use crate::{
     tile::Tile,
     vegetation::{render_vegetation, UndergrowthMode},
 };
+use cassini::osm_import::convert_osm_file_to_shapefiles;
 use log::info;
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -145,55 +144,7 @@ pub fn render_tile_map(
             tile.min_x, tile.min_y, tile.max_x, tile.max_y
         );
 
-        checked_output(
-            Command::new("ogr2ogr")
-                .args([
-                    "--config",
-                    "OSM_USE_CUSTOM_INDEXING",
-                    "NO",
-                    "-f",
-                    "ESRI Shapefile",
-                ])
-                .arg(&shapes_output_path)
-                .arg(&osm_path)
-                .args([
-                    "-t_srs",
-                    "EPSG:2154",
-                    "-nlt",
-                    "MULTIPOLYGON",
-                    "-sql",
-                    "SELECT * FROM multipolygons",
-                ])
-                .arg("--quiet"),
-            Stage::Vectors,
-            Some(TileId::from(&tile)),
-        )?;
-        ensure_file(&shapes_output_path.join("multipolygons.shp"))?;
-
-        checked_output(
-            Command::new("ogr2ogr")
-                .args([
-                    "--config",
-                    "OSM_USE_CUSTOM_INDEXING",
-                    "NO",
-                    "-f",
-                    "ESRI Shapefile",
-                ])
-                .arg(&shapes_output_path)
-                .arg(&osm_path)
-                .args([
-                    "-t_srs",
-                    "EPSG:2154",
-                    "-nlt",
-                    "LINESTRING",
-                    "-sql",
-                    "SELECT * FROM lines",
-                ])
-                .arg("--quiet"),
-            Stage::Vectors,
-            Some(TileId::from(&tile)),
-        )?;
-        ensure_file(&shapes_output_path.join("lines.shp"))?;
+        convert_osm_file_to_shapefiles(&osm_path, &shapes_output_path)?;
 
         Some(shapes_output_path)
     } else {

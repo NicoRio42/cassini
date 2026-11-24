@@ -3,4 +3,6 @@
 
 pub mod error;
 pub mod grid;
+pub mod osm_import;
 pub mod projection;
+pub mod shapefile_output;
