@@ -29,7 +29,7 @@ mod vegetation_areas;
 mod world_file;
 
 use batch::batch;
-use cassini::{error, grid};
+use cassini::{error, grid, projection};
 use clap::{CommandFactory, Parser, Subcommand};
 use config::{default_config, get_config, Config};
 use download::download_osm_file;

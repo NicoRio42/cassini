@@ -5,15 +5,14 @@ use std::{
     fs::File,
     io::{copy, BufRead, BufReader, BufWriter, Write},
     path::Path,
-    process::Command,
     thread::sleep,
     time::{Duration, Instant, SystemTime},
 };
 
 use crate::{
     constants::BUFFER,
-    error::{CassiniError, Result, ResultContext, Stage, TileId},
-    process::checked_output_with_input,
+    error::{CassiniError, Result, ResultContext, TileId},
+    projection::lambert93_to_wgs84,
 };
 
 const OVERPASS_API_URL: &str = "https://overpass-api.de/api/interpreter";
@@ -52,17 +51,14 @@ pub fn download_osm_file(
         max_y,
     };
 
-    let (min_lon, min_lat) = convert_coords_from_lambert_93_to_gps(
+    let (min_lon, min_lat) = lambert93_to_wgs84(
         (min_x - BUFFER as i64) as f64,
         (min_y - BUFFER as i64) as f64,
-        tile_id,
-    )?;
-
-    let (max_lon, max_lat) = convert_coords_from_lambert_93_to_gps(
+    );
+    let (max_lon, max_lat) = lambert93_to_wgs84(
         (max_x + BUFFER as i64) as f64,
         (max_y + BUFFER as i64) as f64,
-        tile_id,
-    )?;
+    );
 
     // Overpass Query
     let query = r#"
@@ -93,7 +89,7 @@ out skel qt;
 "#;
 
     // Replace {{bbox}} with your bounding box (south, west, north, east)
-    let bbox = format!("{},{},{},{}", min_lat, min_lon, max_lat, max_lon);
+    let bbox = format!("{min_lat:.8},{min_lon:.8},{max_lat:.8},{max_lon:.8}");
     let formatted_query = query.replace("{{bbox}}", &bbox);
     let client = Client::builder()
         .connect_timeout(Duration::from_secs(10))
@@ -200,35 +196,6 @@ fn parse_retry_after(value: &str) -> Option<Duration> {
         date.duration_since(SystemTime::now())
             .unwrap_or(Duration::ZERO)
     })
-}
-
-fn convert_coords_from_lambert_93_to_gps(x: f64, y: f64, tile: TileId) -> Result<(f64, f64)> {
-    let input = format!("{x:.1} {y:.1}\n");
-    let output = checked_output_with_input(
-        Command::new("cs2cs").args(["+init=epsg:2154", "+to", "+init=epsg:4326", "-f", "%.8f"]),
-        input.as_bytes(),
-        Stage::Download,
-        Some(tile),
-    )?;
-
-    let result = String::from_utf8(output.stdout)
-        .context("`cs2cs` returned output that was not valid UTF-8")?;
-    let coords: Vec<&str> = result.split_whitespace().collect();
-
-    if coords.len() < 2 {
-        return Err(CassiniError::InvalidInput {
-            message: format!("`cs2cs` returned malformed coordinates for tile {tile}"),
-        });
-    }
-
-    let lon: f64 = coords[0]
-        .parse()
-        .context("could not parse longitude returned by `cs2cs`")?;
-    let lat: f64 = coords[1]
-        .parse()
-        .context("could not parse latitude returned by `cs2cs`")?;
-
-    Ok((lon, lat))
 }
 
 fn fix_osm_file(input: &Path, output: &Path) -> Result<()> {

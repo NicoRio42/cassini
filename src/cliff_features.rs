@@ -47,7 +47,7 @@ use std::{
     time::Instant,
 };
 
-const CELL_SIZE: f64 = DEM_BLOCK_SIZE as f64;
+const CELL_SIZE: f64 = DEM_BLOCK_SIZE;
 /// Metres vectorized around the tile, so that the components crossing the
 /// tile edge are vectorized whole.
 const MARGIN: usize = 100;

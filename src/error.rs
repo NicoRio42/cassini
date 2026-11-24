@@ -5,11 +5,9 @@ pub type Result<T> = std::result::Result<T, CassiniError>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stage {
     Lidar,
-    Buffer,
     Dem,
     Contours,
     Vectors,
-    Download,
     Render,
 }
 
@@ -17,11 +15,9 @@ impl fmt::Display for Stage {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::Lidar => "LiDAR processing",
-            Self::Buffer => "raster buffering",
             Self::Dem => "DEM processing",
             Self::Contours => "contour generation",
             Self::Vectors => "vector rendering",
-            Self::Download => "vector download",
             Self::Render => "map rendering",
         })
     }
