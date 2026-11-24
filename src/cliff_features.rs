@@ -15,15 +15,21 @@
 //!   205 symbol is not steep, so the line closes around it.
 //!
 //! Neighbouring tiles find the same components around their common edge,
-//! from the same cells, so that they classify and vectorize them alike.
+//! from the same cells, so that they classify and vectorize them alike. The
+//! lines and areas are simplified alike on either side of that edge.
+//!
+//! The sizes below are ISOM 2017-2 sizes on the ground, at 1:15 000. The
+//! enlarged 1:10 000 symbol set keeps the same sizes on the ground, and so do
+//! they whatever the scale of the OCAD template.
 
 use crate::{
     config::Config,
-    constants::{BUFFER, CLIFF_THICKNESS_2, DEM_BLOCK_SIZE},
-    error::{CassiniError, Result, ResultContext},
+    constants::{BUFFER, CLIFF_THICKNESS_1, CLIFF_THICKNESS_2, DEM_BLOCK_SIZE},
+    error::{CassiniError, Result},
     map_features::{AreaSymbol, Extent, LineSymbol, MapFeature, PointSymbol},
+    raster::F32Raster,
     tile::Tile,
-    vegetation_areas::{simplify_ring, squared_segment_distance, FeatureSink, PinnedLines, Tracer},
+    vectorization::{simplify_line, simplify_ring, FeatureSink, PinnedLines, Tracer, SLIVER_AREA},
 };
 use contour::ContourBuilder;
 use image::{GrayImage, Luma};
@@ -37,11 +43,9 @@ use log::info;
 use shapefile::{Point, Polyline};
 use std::{
     collections::{BTreeMap, HashSet},
-    fs::File,
     path::Path,
     time::Instant,
 };
-use tiff::decoder::{Decoder, DecodingResult};
 
 const CELL_SIZE: f64 = DEM_BLOCK_SIZE as f64;
 /// Metres vectorized around the tile, so that the components crossing the
@@ -50,11 +54,11 @@ const MARGIN: usize = 100;
 const _: () = assert!(MARGIN < BUFFER);
 /// Components of fewer cells are noise.
 const MIN_COMPONENT_CELLS: usize = 4;
-/// Diameter of the 205 large boulder symbol on the ground, 0.6 mm at
-/// 1:15 000. A component that fits in it is drawn as the symbol.
+/// Diameter of the 205 large boulder symbol, 0.6 mm at 1:15 000. A component
+/// that fits in it is drawn as the symbol.
 const LARGE_BOULDER_SIZE: f64 = 9.0;
-/// Width of the 202 cliff line on the ground, 0.25 mm at 1:15 000. A steep
-/// band wider than the line is drawn as a 206 area.
+/// Width of the 202 cliff line, 0.25 mm at 1:15 000. A steep band wider than
+/// the line is drawn as a 206 area.
 const CLIFF_LINE_WIDTH: f64 = 3.75;
 /// A boulder stands this many metres above the ground around it at least...
 const BOULDER_MIN_HEIGHT: f32 = 1.0;
@@ -87,25 +91,24 @@ const JOIN_DIRECTION_CELLS: usize = 4;
 /// Cliff lines are smoothed with a moving average over this many cells on
 /// either side, which removes the staircase of the cells.
 const SMOOTHING_RADIUS: usize = 2;
-/// The PNG renderer draws each steep cell as a dot of `CLIFF_THICKNESS_2`
-/// x 10 m across on the ground. The 206 areas are found where these dots
-/// merge, which gives them the same outline: a minimum width, and no notches
-/// narrower than the dots.
-const AREA_GROWTH: f64 = CLIFF_THICKNESS_2 as f64 * 10.0 / 2.0;
+/// The PNG renderer draws each cell steeper than `cliff_threshold_2` as a
+/// dot of `CLIFF_THICKNESS_2` x 10 m across on the ground, and the other
+/// steep cells as dots of `CLIFF_THICKNESS_1` x 10 m. The 206 areas are found
+/// where these dots merge, which gives them the same outline: a minimum
+/// width, and no notches narrower than the dots.
+const LARGE_DOT_RADIUS: f64 = CLIFF_THICKNESS_2 as f64 * 10.0 / 2.0;
+const SMALL_DOT_RADIUS: f64 = CLIFF_THICKNESS_1 as f64 * 10.0 / 2.0;
 /// The 206 areas are simplified with this many times the tolerance of the
 /// lines.
 const AREA_SIMPLIFY_FACTOR: f64 = 2.0;
-/// 206 areas and holes smaller than this, in m², are slivers.
-const SLIVER_AREA: f64 = 1.0;
-/// The DEM value of the cells without data, as PDAL writes it.
-const DEM_NO_DATA: f32 = -9999.0;
 
-/// Returns the cliffs of the tile: 205 boulders and 202 cliff lines around
-/// it, which the OCAD export clips to it, and 206 areas clipped to it. Their
-/// lines and boundaries are simplified with `simplify_tolerance` metres (0
-/// to keep every vertex).
+/// Returns the cliffs of the tile, from `slopes`, its `slopes.tif`: 205
+/// boulders and 202 cliff lines around it, which the OCAD export clips to it,
+/// and 206 areas clipped to it. Their lines and boundaries are simplified
+/// with `simplify_tolerance` metres (0 to keep every vertex).
 pub fn get_cliff_features(
     tile: &Tile,
+    slopes: &F32Raster,
     config: &Config,
     simplify_tolerance: f64,
 ) -> Result<Vec<MapFeature>> {
@@ -123,19 +126,21 @@ pub fn get_cliff_features(
         max_y: tile.max_y as f64,
     };
     let grid = Grid::around(&tile_extent);
-    let slopes = read_window(&tile.render_dir_path.join("slopes.tif"), &tile_extent, grid)?;
-    let dem = read_window(
-        &tile.render_dir_path.join("dem_with_buffer.tif"),
+    let slopes = read_window(
+        slopes,
+        &tile.render_dir_path.join("slopes.tif"),
         &tile_extent,
         grid,
     )?;
+    let dem_path = tile.render_dir_path.join("dem_with_buffer.tif");
+    let dem = read_window(&F32Raster::read(&dem_path)?, &dem_path, &tile_extent, grid)?;
 
     let features = vectorize_cliffs(
         grid,
         &tile_extent,
         &slopes,
         &dem,
-        config.cliff_threshold_1,
+        [config.cliff_threshold_1, config.cliff_threshold_2],
         simplify_tolerance,
     )?;
 
@@ -154,45 +159,35 @@ pub fn get_cliff_features(
     Ok(features)
 }
 
-/// Reads the window of `grid` out of a 0.5 m raster covering the tile and
-/// its buffer.
-fn read_window(path: &Path, tile: &Extent, grid: Grid) -> Result<Vec<f32>> {
-    let file = File::open(path).context(format!("could not open `{}`", path.display()))?;
-    let mut decoder = Decoder::new(file)
-        .context(format!("could not create decoder for `{}`", path.display()))?
-        .with_limits(tiff::decoder::Limits::unlimited());
-
-    let (width, height) = decoder.dimensions().context(format!(
-        "could not read dimensions from `{}`",
-        path.display()
-    ))?;
+/// The window of `grid` in `raster`, read from `path`, a 0.5 m raster
+/// covering the tile and its buffer. The cells without data are NaN.
+fn read_window(raster: &F32Raster, path: &Path, tile: &Extent, grid: Grid) -> Result<Vec<f32>> {
     let buffer = 2.0 * BUFFER as f64;
     let expected_width = ((tile.max_x - tile.min_x + buffer) / CELL_SIZE) as usize;
     let expected_height = ((tile.max_y - tile.min_y + buffer) / CELL_SIZE) as usize;
-    if (width as usize, height as usize) != (expected_width, expected_height) {
+    if (raster.width, raster.height) != (expected_width, expected_height) {
         return Err(CassiniError::InvalidArtifact {
             path: path.to_path_buf(),
             message: format!(
-                "expected {expected_width} x {expected_height} cells, found {width} x {height}"
+                "expected {expected_width} x {expected_height} cells, found {} x {}",
+                raster.width, raster.height
             ),
         });
     }
 
-    let DecodingResult::F32(values) = decoder
-        .read_image()
-        .context(format!("could not decode `{}`", path.display()))?
-    else {
-        return Err(CassiniError::InvalidArtifact {
-            path: path.to_path_buf(),
-            message: "expected a 32-bit floating-point TIFF band".to_owned(),
-        });
-    };
-
     let offset = ((BUFFER - MARGIN) as f64 / CELL_SIZE) as usize;
     Ok((0..grid.height)
         .flat_map(|y| {
-            let start = (y + offset) * expected_width + offset;
-            values[start..start + grid.width].iter().copied()
+            let start = (y + offset) * raster.width + offset;
+            raster.values[start..start + grid.width]
+                .iter()
+                .map(|value| {
+                    if raster.has_data(*value) {
+                        *value
+                    } else {
+                        f32::NAN
+                    }
+                })
         })
         .collect())
 }
@@ -250,6 +245,31 @@ impl Grid {
 
         components
     }
+
+    /// Whether `cliffs.png` draws each cell black: whether it is under the
+    /// dot of a `steep` cell, a large one when the cell is steeper than
+    /// `threshold_2`.
+    fn dots(self, steep: &[bool], slopes: &[f32], threshold_2: f32) -> Vec<bool> {
+        let is_dot = |large: bool, radius: f64| -> Vec<bool> {
+            let centers: Vec<bool> = (0..self.len())
+                .map(|cell| steep[cell] && (slopes[cell] > threshold_2) == large)
+                .collect();
+            if !centers.contains(&true) {
+                return vec![false; self.len()];
+            }
+            let squared_radius = (radius / CELL_SIZE).powi(2);
+            squared_distances(self.width, self.height, centers.into_iter())
+                .into_iter()
+                .map(|squared_distance| squared_distance <= squared_radius)
+                .collect()
+        };
+
+        is_dot(true, LARGE_DOT_RADIUS)
+            .into_iter()
+            .zip(is_dot(false, SMALL_DOT_RADIUS))
+            .map(|(large, small)| large || small)
+            .collect()
+    }
 }
 
 fn mask_image(width: usize, height: usize, mask: impl Iterator<Item = bool>) -> GrayImage {
@@ -266,25 +286,28 @@ fn squared_distances(width: usize, height: usize, mask: impl Iterator<Item = boo
     euclidean_squared_distance_transform(&mask_image(width, height, mask)).into_raw()
 }
 
+/// Vectorizes the cells steeper than the first of `thresholds`, the
+/// `cliff_threshold_1` and `cliff_threshold_2` of the configuration.
 fn vectorize_cliffs(
     grid: Grid,
     tile: &Extent,
     slopes: &[f32],
     dem: &[f32],
-    threshold: f32,
+    [threshold_1, threshold_2]: [f32; 2],
     simplify_tolerance: f64,
 ) -> Result<Vec<MapFeature>> {
-    let mut steep: Vec<bool> = slopes.iter().map(|slope| *slope > threshold).collect();
+    let mut steep: Vec<bool> = slopes.iter().map(|slope| *slope > threshold_1).collect();
     let mut features: Vec<MapFeature> = vec![];
 
-    // 205 boulders, and noise. The small components away from the tile are
-    // left in, they give no area, and no line crossing the tile.
+    // 205 boulders, and noise. The components away from the tile are
+    // classified too, so that neighbouring tiles remove the same boulders
+    // before finding the 206 areas
     for cells in grid.components(&steep) {
         let boulder = if cells.len() < MIN_COMPONENT_CELLS {
             None
         } else {
             let component = Component::new(grid, &cells);
-            if !component.overlaps(tile) || component.diameter() > LARGE_BOULDER_SIZE {
+            if component.diameter() > LARGE_BOULDER_SIZE {
                 continue;
             }
             let Some(center) = component.free_standing_center(dem) else {
@@ -305,19 +328,16 @@ fn vectorize_cliffs(
     }
 
     // 206 areas: where the dots of `cliffs.png` merge into black wider than
-    // a 202 line drawn over dots, the union of the discs of that width that
-    // fit in it, when it is larger than the 205 symbol
-    let squared_distances_to_steep =
-        squared_distances(grid.width, grid.height, steep.iter().copied());
-    let squared_growth = (AREA_GROWTH / CELL_SIZE).powi(2);
+    // a 202 line drawn over the large dots, the union of the discs of that
+    // width that fit in it, when it is larger than the 205 symbol
     let squared_distances_to_dotless = squared_distances(
         grid.width,
         grid.height,
-        squared_distances_to_steep
-            .iter()
-            .map(|squared_distance| *squared_distance > squared_growth),
+        grid.dots(&steep, slopes, threshold_2)
+            .into_iter()
+            .map(|is_dot| !is_dot),
     );
-    let squared_radius = ((CLIFF_LINE_WIDTH / 2.0 + AREA_GROWTH) / CELL_SIZE).powi(2);
+    let squared_radius = ((CLIFF_LINE_WIDTH / 2.0 + LARGE_DOT_RADIUS) / CELL_SIZE).powi(2);
     let is_center: Vec<bool> = squared_distances_to_dotless
         .iter()
         .map(|squared_distance| *squared_distance > squared_radius)
@@ -352,6 +372,7 @@ fn vectorize_cliffs(
     let thin: Vec<bool> = (0..grid.len())
         .map(|cell| steep[cell] && area_field[cell] < CELL_SIZE as f32)
         .collect();
+    let pinned_lines = PinnedLines::around_tile_edges(tile, &grid.extent, simplify_tolerance);
 
     for cells in grid.components(&thin) {
         if cells.len() < MIN_COMPONENT_CELLS {
@@ -364,7 +385,7 @@ fn vectorize_cliffs(
 
         features.extend(
             component
-                .cliff_lines(simplify_tolerance)
+                .cliff_lines(simplify_tolerance, &pinned_lines)
                 .into_iter()
                 .map(|line| {
                     MapFeature::Line(
@@ -376,32 +397,24 @@ fn vectorize_cliffs(
     }
 
     if has_areas {
-        let area_tolerance = AREA_SIMPLIFY_FACTOR * simplify_tolerance;
-        let tracer = Tracer {
+        let tracer = Tracer::new(
             // Values at the cell centres
-            builder: ContourBuilder::new(grid.width, grid.height, true)
+            ContourBuilder::new(grid.width, grid.height, true)
                 .x_origin(grid.extent.min_x + CELL_SIZE / 2.0)
                 .y_origin(grid.extent.max_y - CELL_SIZE / 2.0)
                 .x_step(CELL_SIZE)
                 .y_step(-CELL_SIZE),
-            pinned_lines: PinnedLines::around_tile_edges(
-                tile,
-                area_tolerance.min(MARGIN as f64 / 2.0),
-            ),
-            window: grid.extent,
-            simplify_tolerance: area_tolerance,
-        };
-        let mut sink = FeatureSink {
-            features,
-            window: grid.extent,
-            tile: *tile,
-        };
+            grid.extent,
+            tile,
+            AREA_SIMPLIFY_FACTOR * simplify_tolerance,
+        );
+        let mut sink = FeatureSink::new(grid.extent, *tile);
         sink.push(
             AreaSymbol::GiganticBoulderOrRockPillar206,
-            tracer.trace(&area_field)?,
+            tracer.trace(&area_field, "cliff areas")?,
             SLIVER_AREA,
         );
-        features = sink.features;
+        features.extend(sink.into_features());
     }
 
     Ok(features)
@@ -417,16 +430,23 @@ struct Component {
     height: usize,
     /// Whether each cell of the patch, row-major, is in the component.
     cells: Vec<bool>,
+    /// The north-west and south-east cells of the component's bounding box
+    /// in the grid.
+    bounds: [(usize, usize); 2],
 }
 
 impl Component {
     fn new(grid: Grid, cells: &[usize]) -> Self {
         let xs = || cells.iter().map(|cell| cell % grid.width);
         let ys = || cells.iter().map(|cell| cell / grid.width);
-        let x0 = xs().min().unwrap().saturating_sub(PATCH_PADDING);
-        let y0 = ys().min().unwrap().saturating_sub(PATCH_PADDING);
-        let width = (xs().max().unwrap() + PATCH_PADDING + 1).min(grid.width) - x0;
-        let height = (ys().max().unwrap() + PATCH_PADDING + 1).min(grid.height) - y0;
+        let bounds = [
+            (xs().min().unwrap(), ys().min().unwrap()),
+            (xs().max().unwrap(), ys().max().unwrap()),
+        ];
+        let x0 = bounds[0].0.saturating_sub(PATCH_PADDING);
+        let y0 = bounds[0].1.saturating_sub(PATCH_PADDING);
+        let width = (bounds[1].0 + PATCH_PADDING + 1).min(grid.width) - x0;
+        let height = (bounds[1].1 + PATCH_PADDING + 1).min(grid.height) - y0;
 
         let mut patch = vec![false; width * height];
         for cell in cells {
@@ -441,6 +461,7 @@ impl Component {
             width,
             height,
             cells: patch,
+            bounds,
         }
     }
 
@@ -458,11 +479,25 @@ impl Component {
         (0..self.cells.len()).filter(|index| self.cells[*index])
     }
 
+    /// The patch cells beside `index`.
+    fn neighbors(&self, index: usize) -> impl Iterator<Item = usize> {
+        let (x, y) = (index % self.width, index / self.width);
+        [
+            (x > 0).then(|| index - 1),
+            (x + 1 < self.width).then(|| index + 1),
+            (y > 0).then(|| index - self.width),
+            (y + 1 < self.height).then(|| index + self.width),
+        ]
+        .into_iter()
+        .flatten()
+    }
+
+    /// Whether the bounding box of the centres of the cells overlaps
+    /// `extent`. The component's lines run between these centres.
     fn overlaps(&self, extent: &Extent) -> bool {
-        let [min_x, max_y] = self.grid.center(self.x0, self.y0);
-        let [max_x, min_y] = self
-            .grid
-            .center(self.x0 + self.width - 1, self.y0 + self.height - 1);
+        let [(west, north), (east, south)] = self.bounds;
+        let [min_x, max_y] = self.grid.center(west, north);
+        let [max_x, min_y] = self.grid.center(east, south);
         min_x <= extent.max_x
             && max_x >= extent.min_x
             && min_y <= extent.max_y
@@ -509,7 +544,7 @@ impl Component {
         let surroundings: Vec<f32> = (0..squared_distances.len())
             .filter(|index| squared_distances[*index] > min && squared_distances[*index] <= max)
             .map(|index| dem[self.grid_index(index)])
-            .filter(|height| *height > DEM_NO_DATA)
+            .filter(|height| !height.is_nan())
             .collect();
         if surroundings.is_empty() {
             return None;
@@ -547,16 +582,7 @@ impl Component {
         }
 
         while let Some(index) = stack.pop() {
-            let (x, y) = (index % self.width, index / self.width);
-            for neighbor in [
-                (x > 0).then(|| index - 1),
-                (x + 1 < self.width).then(|| index + 1),
-                (y > 0).then(|| index - self.width),
-                (y + 1 < self.height).then(|| index + self.width),
-            ]
-            .into_iter()
-            .flatten()
-            {
+            for neighbor in self.neighbors(index) {
                 if !self.cells[neighbor] && !outside[neighbor] {
                     outside[neighbor] = true;
                     stack.push(neighbor);
@@ -583,16 +609,7 @@ impl Component {
             let mut stack = vec![start];
             while let Some(index) = stack.pop() {
                 hole.push(index);
-                let (x, y) = (index % self.width, index / self.width);
-                for neighbor in [
-                    (x > 0).then(|| index - 1),
-                    (x + 1 < self.width).then(|| index + 1),
-                    (y > 0).then(|| index - self.width),
-                    (y + 1 < self.height).then(|| index + self.width),
-                ]
-                .into_iter()
-                .flatten()
-                {
+                for neighbor in self.neighbors(index) {
                     if !self.cells[neighbor] && !visited[neighbor] {
                         visited[neighbor] = true;
                         stack.push(neighbor);
@@ -611,8 +628,13 @@ impl Component {
     }
 
     /// The lines along the middle of the steep band, smoothed and simplified
-    /// with `simplify_tolerance` metres, or none when they are too short.
-    fn cliff_lines(&self, simplify_tolerance: f64) -> Vec<Vec<[f64; 2]>> {
+    /// with `simplify_tolerance` metres keeping the crossings of
+    /// `pinned_lines`, or none when they are too short.
+    fn cliff_lines(
+        &self,
+        simplify_tolerance: f64,
+        pinned_lines: &PinnedLines,
+    ) -> Vec<Vec<[f64; 2]>> {
         let mut skeleton = Skeleton::thin(self.width, self.height, &self.without_small_holes());
         let chains = skeleton.prune_spurs();
         let chains = skeleton.join_at_junctions(chains);
@@ -622,7 +644,7 @@ impl Component {
             return vec![];
         }
 
-        chains
+        let mut lines: Vec<Vec<[f64; 2]>> = chains
             .iter()
             .map(|chain| {
                 let points: Vec<[f64; 2]> = chain
@@ -630,13 +652,31 @@ impl Component {
                     .iter()
                     .map(|index| self.center(*index))
                     .collect();
-                let smoothed = smooth(&points, chain.closed);
+                smooth(&points, chain.closed)
+            })
+            .collect();
+        let junction_points = skeleton.meet_at_junctions(&chains, &mut lines);
+
+        let is_pinned =
+            |point: [f64; 2]| pinned_lines.contains(point) || junction_points.contains(&point);
+        chains
+            .iter()
+            .zip(lines)
+            .map(|(chain, line)| {
                 if chain.closed {
-                    let mut ring = simplify_ring(&smoothed, simplify_tolerance, |_| false);
+                    let mut ring = simplify_ring(
+                        &pinned_lines.insert_ring_crossings(&line),
+                        simplify_tolerance,
+                        is_pinned,
+                    );
                     ring.push(ring[0]);
                     ring
                 } else {
-                    simplify_line(&smoothed, simplify_tolerance)
+                    simplify_line(
+                        &pinned_lines.insert_line_crossings(&line),
+                        simplify_tolerance,
+                        is_pinned,
+                    )
                 }
             })
             .collect()
@@ -660,7 +700,10 @@ struct Chain {
 
 impl Skeleton {
     /// Thins `cells` with the Zhang–Suen algorithm, which keeps its
-    /// topology: a band becomes a line, and a ring a loop.
+    /// topology: a band becomes a line, and a ring a loop. It keeps the cells
+    /// with two neighbours, as Lü and Wang do, else it erodes the bands two
+    /// cells wide along a diagonal from their ends until they vanish. These
+    /// bands may stay two cells wide, as a staircase that `links` follows.
     fn thin(width: usize, height: usize, cells: &[bool]) -> Self {
         let mut skeleton = Self {
             width,
@@ -718,7 +761,7 @@ impl Skeleton {
             !(north && east && west) && !(north && south && west)
         };
 
-        (2..=6).contains(&count) && transitions == 1 && condition
+        (3..=6).contains(&count) && transitions == 1 && condition
     }
 
     /// The skeleton cells linked to `index`: the cells beside it, and those
@@ -964,6 +1007,41 @@ impl Skeleton {
         joined
     }
 
+    /// Moves the ends of `lines`, the smoothed `chains`, that meet at a
+    /// junction to one point: where a line passes through the junction, else
+    /// the first end there, as smoothing moves the cells. Returns these
+    /// points, which simplification must keep.
+    fn meet_at_junctions(&self, chains: &[Chain], lines: &mut [Vec<[f64; 2]>]) -> Vec<[f64; 2]> {
+        let junctions = self.junctions();
+        let mut points: BTreeMap<usize, [f64; 2]> = BTreeMap::new();
+
+        for (chain, line) in chains.iter().zip(lines.iter()) {
+            let interior = if chain.closed {
+                0..chain.cells.len()
+            } else {
+                1..chain.cells.len() - 1
+            };
+            for index in interior {
+                if let Some(junction) = junctions[chain.cells[index]] {
+                    points.entry(junction).or_insert(line[index]);
+                }
+            }
+        }
+
+        for (chain, line) in chains.iter().zip(lines.iter_mut()) {
+            if chain.closed {
+                continue;
+            }
+            for end in [0, line.len() - 1] {
+                if let Some(junction) = junctions[chain.cells[end]] {
+                    line[end] = *points.entry(junction).or_insert(line[end]);
+                }
+            }
+        }
+
+        points.into_values().collect()
+    }
+
     /// The junction each cell is part of, as the first cell of the junction:
     /// the cells with three links or more, grouped with those next to them.
     fn junctions(&self) -> Vec<Option<usize>> {
@@ -999,22 +1077,36 @@ impl Skeleton {
         junctions
     }
 
-    /// The length of `chain` in metres.
+    /// The length of `chain` in metres, cutting the corners of its
+    /// staircases: a band two cells wide along a diagonal thins into a
+    /// staircase, as long as the diagonal.
     fn length(&self, chain: &Chain) -> f64 {
-        let step = |a: usize, b: usize| {
-            let (dx, dy) = (
+        let offset = |a: usize, b: usize| {
+            (
                 (a % self.width).abs_diff(b % self.width),
                 (a / self.width).abs_diff(b / self.width),
-            );
+            )
+        };
+        let step = |a: usize, b: usize| {
+            let (dx, dy) = offset(a, b);
             ((dx * dx + dy * dy) as f64).sqrt()
         };
-        let mut length: f64 = chain
-            .cells
-            .windows(2)
-            .map(|pair| step(pair[0], pair[1]))
-            .sum();
+
+        // Every other corner between two diagonal cells
+        let cells = &chain.cells;
+        let mut corners: Vec<usize> = vec![cells[0]];
+        for index in 1..cells.len() {
+            let is_corner = index + 1 < cells.len()
+                && offset(cells[index - 1], cells[index + 1]) == (1, 1)
+                && corners.last() == Some(&cells[index - 1]);
+            if !is_corner {
+                corners.push(cells[index]);
+            }
+        }
+
+        let mut length: f64 = corners.windows(2).map(|pair| step(pair[0], pair[1])).sum();
         if chain.closed {
-            length += step(chain.cells[0], chain.cells[chain.cells.len() - 1]);
+            length += step(corners[0], corners[corners.len() - 1]);
         }
         length * CELL_SIZE
     }
@@ -1042,44 +1134,6 @@ fn smooth(points: &[[f64; 2]], closed: bool) -> Vec<[f64; 2]> {
             let count = (2 * radius + 1) as f64;
             [sum_x / count, sum_y / count]
         })
-        .collect()
-}
-
-/// Douglas–Peucker simplification of an open line, keeping its ends.
-fn simplify_line(line: &[[f64; 2]], tolerance: f64) -> Vec<[f64; 2]> {
-    if tolerance <= 0.0 || line.len() < 3 {
-        return line.to_vec();
-    }
-
-    let mut kept = vec![false; line.len()];
-    kept[0] = true;
-    kept[line.len() - 1] = true;
-
-    let squared_tolerance = tolerance * tolerance;
-    let mut chains = vec![(0, line.len() - 1)];
-    while let Some((first, last)) = chains.pop() {
-        let farthest_from_chord = (first + 1..last)
-            .map(|index| {
-                (
-                    index,
-                    squared_segment_distance(line[index], line[first], line[last]),
-                )
-            })
-            .max_by(|(_, a), (_, b)| a.total_cmp(b));
-
-        if let Some((index, squared_distance)) = farthest_from_chord {
-            if squared_distance > squared_tolerance {
-                kept[index] = true;
-                chains.push((first, index));
-                chains.push((index, last));
-            }
-        }
-    }
-
-    line.iter()
-        .zip(kept)
-        .filter(|(_, kept)| *kept)
-        .map(|(point, _)| *point)
         .collect()
 }
 
@@ -1115,7 +1169,7 @@ mod tests {
             }
         }
 
-        let mut slopes = vec![DEM_NO_DATA; grid.len()];
+        let mut slopes = vec![f32::NAN; grid.len()];
         for y in 1..grid.height - 1 {
             for x in 1..grid.width - 1 {
                 let z = |dx: isize, dy: isize| {
@@ -1135,9 +1189,30 @@ mod tests {
     }
 
     fn vectorize(tile: &Extent, height: impl Fn(f64, f64) -> f64) -> Vec<MapFeature> {
+        vectorize_with(tile, height, [60.0, 60.0], 0.5)
+    }
+
+    fn vectorize_with(
+        tile: &Extent,
+        height: impl Fn(f64, f64) -> f64,
+        thresholds: [f32; 2],
+        simplify_tolerance: f64,
+    ) -> Vec<MapFeature> {
         let grid = Grid::around(tile);
         let (dem, slopes) = rasters(grid, height);
-        vectorize_cliffs(grid, tile, &slopes, &dem, 60.0, 0.5).unwrap()
+        vectorize_cliffs(grid, tile, &slopes, &dem, thresholds, simplify_tolerance).unwrap()
+    }
+
+    fn areas(features: &[MapFeature]) -> Vec<&shapefile::Polygon> {
+        features
+            .iter()
+            .filter_map(|feature| match feature {
+                MapFeature::Area(AreaSymbol::GiganticBoulderOrRockPillar206, polygon) => {
+                    Some(polygon)
+                }
+                _ => None,
+            })
+            .collect()
     }
 
     fn lines(features: &[MapFeature]) -> Vec<Vec<Point>> {
@@ -1355,16 +1430,6 @@ mod tests {
     }
 
     #[test]
-    fn simplifies_lines_keeping_their_ends() {
-        let line = [[0.0, 0.0], [1.0, 0.1], [2.0, -0.1], [3.0, 2.0], [4.0, 0.0]];
-
-        assert_eq!(
-            simplify_line(&line, 0.5),
-            vec![[0.0, 0.0], [2.0, -0.1], [3.0, 2.0], [4.0, 0.0]]
-        );
-    }
-
-    #[test]
     fn smooths_lines_keeping_their_ends() {
         let line: Vec<[f64; 2]> = (0..7).map(|x| [x as f64, (x % 2) as f64]).collect();
 
@@ -1373,5 +1438,171 @@ mod tests {
         assert_eq!(smoothed[0], line[0]);
         assert_eq!(smoothed[6], line[6]);
         assert_eq!(smoothed[3], [3.0, 0.6]);
+    }
+
+    #[test]
+    fn draws_a_diagonal_step_as_a_line_across_the_tile() {
+        // Thinning keeps the steep band, two cells wide along the diagonal
+        for diagonal in [|x: f64, y: f64| y > x, |x: f64, y: f64| y > 40.0 - x] {
+            let features = vectorize(&TILE, |x, y| if diagonal(x, y) { 3.0 } else { 0.0 });
+
+            let lines = lines(&features);
+            assert_eq!(features.len(), lines.len());
+            let clipped: Vec<Vec<Point>> = lines
+                .iter()
+                .flat_map(|line| clip_line_part(line, &TILE))
+                .collect();
+            assert_eq!(clipped.len(), 1);
+            let length = length(&clipped[0]);
+            assert!((length - 40.0 * 2.0_f64.sqrt()).abs() < 0.5, "{length}");
+        }
+    }
+
+    #[test]
+    fn thins_bands_two_cells_wide_along_a_diagonal_into_lines() {
+        let size = 30;
+        let mut cells = vec![false; size * size];
+        for index in 2..28 {
+            cells[index * size + index] = true;
+            cells[index * size + index + 1] = true;
+        }
+
+        let mut skeleton = Skeleton::thin(size, size, &cells);
+        let chains = skeleton.prune_spurs();
+
+        assert_eq!(chains.len(), 1);
+        assert!(skeleton.length(&chains[0]) > 12.0);
+    }
+
+    #[test]
+    fn keeps_closed_lines_closed_with_a_large_tolerance() {
+        let features = vectorize_with(&TILE, block(20.0, 20.0, 14.0, 3.0), [60.0, 60.0], 10.0);
+
+        let lines = lines(&features);
+        assert_eq!(lines.len(), 1);
+        let line = &lines[0];
+        assert_eq!(line.first(), line.last());
+        // A triangle at least, not a line there and back
+        assert!(line.len() >= 4, "{line:?}");
+        let distinct: HashSet<(u64, u64)> = line
+            .iter()
+            .map(|point| (point.x.to_bits(), point.y.to_bits()))
+            .collect();
+        assert!(distinct.len() >= 3, "{line:?}");
+    }
+
+    #[test]
+    fn classifies_the_boulders_beyond_the_tile_edge() {
+        // 5 m east of the tile, which the export leaves to the east tile
+        let features = vectorize(&TILE, block(45.0, 20.0, 3.0, 2.5));
+
+        assert_eq!(features.len(), 1);
+        let MapFeature::Point(PointSymbol::LargeBoulder205, point) = &features[0] else {
+            panic!("expected a 205 large boulder");
+        };
+        assert!((point.x - 45.0).abs() < 0.5 && (point.y - 20.0).abs() < 0.5);
+    }
+
+    #[test]
+    fn grows_the_areas_as_the_dots_of_cliffs_png() {
+        // The band of `draws_a_wide_steep_band_as_a_gigantic_boulder_area`,
+        // whose cells are drawn as small dots below `cliff_threshold_2`
+        let band = |_: f64, y: f64| ((y - 10.0) * 2.75).clamp(0.0, 27.5);
+        let bounds = |thresholds: [f32; 2]| {
+            let features = vectorize_with(&TILE, band, thresholds, 0.5);
+            let areas = areas(&features);
+            assert!(!areas.is_empty());
+            areas
+                .iter()
+                .fold((f64::MAX, f64::MIN), |(min, max), polygon| {
+                    let bbox = polygon.bbox();
+                    (min.min(bbox.min.y), max.max(bbox.max.y))
+                })
+        };
+
+        let large = bounds([60.0, 60.0]);
+        let small = bounds([60.0, 80.0]);
+        let shrink = SMALL_DOT_RADIUS - LARGE_DOT_RADIUS;
+        assert!(
+            (small.0 - large.0 + shrink).abs() < 0.3,
+            "{large:?} {small:?}"
+        );
+        assert!(
+            (small.1 - large.1 - shrink).abs() < 0.3,
+            "{large:?} {small:?}"
+        );
+    }
+
+    #[test]
+    fn ends_the_branches_on_the_line_they_leave() {
+        // A T of two steps three cells wide: a long one along y = 20, and a
+        // branch along x = 20 north of it
+        let grid = Grid::around(&TILE);
+        let cells: Vec<usize> = (0..grid.len())
+            .filter(|cell| {
+                let [x, y] = grid.center(cell % grid.width, cell / grid.width);
+                let row = (5.0..35.0).contains(&x) && (y - 20.0).abs() < 0.8;
+                let branch = (20.0..32.0).contains(&y) && (x - 20.0).abs() < 0.8;
+                row || branch
+            })
+            .collect();
+        let component = Component::new(grid, &cells);
+
+        let pinned_lines = PinnedLines::around_tile_edges(&TILE, &grid.extent, 0.5);
+        let lines = component.cliff_lines(0.5, &pinned_lines);
+
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        let length = |line: &[[f64; 2]]| -> f64 {
+            line.windows(2)
+                .map(|pair| (pair[1][0] - pair[0][0]).hypot(pair[1][1] - pair[0][1]))
+                .sum()
+        };
+        let (branch, row) = if length(&lines[0]) < length(&lines[1]) {
+            (&lines[0], &lines[1])
+        } else {
+            (&lines[1], &lines[0])
+        };
+        let junction = [branch[0], branch[branch.len() - 1]]
+            .into_iter()
+            .min_by(|a, b| a[1].total_cmp(&b[1]))
+            .unwrap();
+        assert!(row.contains(&junction), "{junction:?} not on {row:?}");
+    }
+
+    #[test]
+    fn keeps_the_crossings_of_the_pinned_lines_on_cliff_lines() {
+        let features = vectorize(&TILE, |_, y| if y > 20.0 { 3.0 } else { 0.0 });
+
+        let lines = lines(&features);
+        for x in [-0.5, 0.0, 0.5, 39.5, 40.0, 40.5] {
+            assert!(
+                lines.iter().flatten().any(|point| point.x == x),
+                "no vertex at x = {x}"
+            );
+        }
+    }
+
+    #[test]
+    fn measures_staircases_as_diagonals() {
+        let size = 30;
+        // Two cells wide along the diagonal, as thinning leaves it
+        let cells: Vec<usize> = (2..12)
+            .flat_map(|index| [index * size + index, index * size + index + 1])
+            .collect();
+        let skeleton = Skeleton {
+            width: size,
+            height: size,
+            cells: vec![false; size * size],
+        };
+        let chain = Chain {
+            cells,
+            closed: false,
+        };
+
+        let length = skeleton.length(&chain);
+
+        // From (2, 2) to (12, 11)
+        let diagonal = 10.0_f64.hypot(9.0) * CELL_SIZE;
+        assert!((length - diagonal).abs() < 0.2, "{length} {diagonal}");
     }
 }

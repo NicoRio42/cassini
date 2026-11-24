@@ -93,28 +93,31 @@ fn get_area_symbol_numbers(symbol: AreaSymbol) -> AreaSymbolNumbers {
     AreaSymbolNumbers { fill, border }
 }
 
-/// Every OCD symbol number the exporter can emit, sorted.
-fn get_exported_symbols() -> Vec<i32> {
-    let mut numbers: Vec<i32> = PointSymbol::ALL
+/// Every OCD symbol number the exporter can emit, with the kind of the
+/// objects it draws, sorted.
+fn get_exported_symbols() -> Vec<(i32, ObjectKind)> {
+    let mut symbols: Vec<(i32, ObjectKind)> = PointSymbol::ALL
         .iter()
-        .map(|symbol| get_point_symbol_number(*symbol))
-        .chain(
-            LineSymbol::ALL
+        .map(|symbol| (get_point_symbol_number(*symbol), ObjectKind::Point))
+        .chain(LineSymbol::ALL.iter().flat_map(|symbol| {
+            get_line_symbol_numbers(*symbol)
                 .iter()
-                .flat_map(|symbol| get_line_symbol_numbers(*symbol).iter().copied()),
-        )
+                .map(|number| (*number, ObjectKind::Line))
+        }))
         .chain(AreaSymbol::ALL.iter().flat_map(|symbol| {
             let numbers = get_area_symbol_numbers(*symbol);
-            once(numbers.fill).chain(numbers.border)
+            once((numbers.fill, ObjectKind::Area))
+                .chain(numbers.border.map(|border| (border, ObjectKind::Line)))
         }))
         .collect();
 
-    numbers.sort();
-    numbers.dedup();
-    numbers
+    symbols.sort_by_key(|(number, _)| *number);
+    symbols.dedup();
+    symbols
 }
 
-/// Fails when the template lacks a symbol the exporter can emit, and warns
+/// Fails when the template lacks a symbol the exporter can emit, or defines
+/// it with another type than the objects it draws, and warns
 /// when a fill symbol has a border, which would be drawn along the tile edge.
 pub fn check_template(template: &OcdTemplate) -> Result<()> {
     template.check_symbols(&get_exported_symbols())?;
@@ -521,14 +524,30 @@ mod tests {
 
     #[test]
     fn exports_the_symbols_of_every_variant() {
-        let numbers = get_exported_symbols();
+        let symbols = get_exported_symbols();
+        let numbers: Vec<i32> = symbols.iter().map(|(number, _)| *number).collect();
 
-        for number in [
-            101000, 202000, 205000, 206000, 301001, 301004, 403000, 406000, 408000, 409000, 410000,
-            502002, 512000, 521003, 521004,
+        for symbol in [
+            (101000, ObjectKind::Line),
+            (202000, ObjectKind::Line),
+            (205000, ObjectKind::Point),
+            (206000, ObjectKind::Area),
+            (301001, ObjectKind::Area),
+            (301004, ObjectKind::Line),
+            (403000, ObjectKind::Area),
+            (406000, ObjectKind::Area),
+            (408000, ObjectKind::Area),
+            (409000, ObjectKind::Area),
+            (410000, ObjectKind::Area),
+            (502002, ObjectKind::Line),
+            (512000, ObjectKind::Line),
+            (521003, ObjectKind::Area),
+            (521004, ObjectKind::Line),
         ] {
-            assert!(numbers.contains(&number), "{number} is not exported");
+            assert!(symbols.contains(&symbol), "{symbol:?} is not exported");
         }
+        // Each number once, with one kind
+        assert!(numbers.windows(2).all(|pair| pair[0] < pair[1]));
         // Lakes and buildings are exported without their bordered symbols
         assert!(!numbers.contains(&301000));
         assert!(!numbers.contains(&521002));

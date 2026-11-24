@@ -41,6 +41,7 @@ const SYMBOL_TYPE: usize = 8;
 const SYMBOL_NUM_COLORS: usize = 26;
 const SYMBOL_COLORS: usize = 28;
 
+const SYMBOL_TYPE_POINT: u8 = 1;
 const SYMBOL_TYPE_LINE: u8 = 2;
 const SYMBOL_TYPE_AREA: u8 = 3;
 
@@ -140,6 +141,9 @@ struct ParameterString {
 
 struct TemplateSymbol {
     number: i32,
+    /// The OCD symbol type: 1 for point symbols, 2 for lines, 3 for areas,
+    /// and others.
+    symbol_type: u8,
     data: Vec<u8>,
     dominant_color: i16,
     has_border: bool,
@@ -175,6 +179,7 @@ impl TemplateSymbol {
 
         Ok(Self {
             number: symbol.i32(4)?,
+            symbol_type: symbol_type.unwrap_or(0),
             dominant_color: main_color.map_or(-1, |color| color as i16),
             has_border: is_area
                 && data[AREA_BORDER_ON] != 0
@@ -305,22 +310,45 @@ impl OcdTemplate {
         }
     }
 
-    /// Fails with the list of `numbers` that are not defined in the template.
-    pub fn check_symbols(&self, numbers: &[i32]) -> Result<()> {
-        let missing: Vec<String> = numbers
-            .iter()
-            .filter(|number| self.symbol(**number).is_none())
-            .map(|number| format_symbol_number(*number))
-            .collect();
+    /// Fails with the list of `symbols` that are not defined in the
+    /// template, or that cannot draw objects of their kind.
+    pub fn check_symbols(&self, symbols: &[(i32, ObjectKind)]) -> Result<()> {
+        let type_name = |symbol_type: u8| match symbol_type {
+            SYMBOL_TYPE_POINT => "point",
+            SYMBOL_TYPE_LINE => "line",
+            SYMBOL_TYPE_AREA => "area",
+            _ => "other",
+        };
+        let mut missing: Vec<String> = vec![];
+        let mut mistyped: Vec<String> = vec![];
+        for (number, kind) in symbols {
+            let expected_type = match kind {
+                ObjectKind::Point => SYMBOL_TYPE_POINT,
+                ObjectKind::Line => SYMBOL_TYPE_LINE,
+                ObjectKind::Area => SYMBOL_TYPE_AREA,
+            };
+            match self.symbol(*number) {
+                None => missing.push(format_symbol_number(*number)),
+                Some(symbol) if symbol.symbol_type != expected_type => mistyped.push(format!(
+                    "{} is a {} symbol instead of a {} symbol",
+                    format_symbol_number(*number),
+                    type_name(symbol.symbol_type),
+                    type_name(expected_type)
+                )),
+                Some(_) => {}
+            }
+        }
 
-        if missing.is_empty() {
+        let mut problems = vec![];
+        if !missing.is_empty() {
+            problems.push(format!("is missing symbols {}", missing.join(", ")));
+        }
+        problems.extend(mistyped);
+        if problems.is_empty() {
             Ok(())
         } else {
             Err(CassiniError::InvalidInput {
-                message: format!(
-                    "the OCAD template is missing symbols {}",
-                    missing.join(", ")
-                ),
+                message: format!("the OCAD template {}", problems.join(", and ")),
             })
         }
     }
@@ -822,7 +850,13 @@ pub(crate) mod tests {
 
         assert_eq!(template.scale, 10_000.0);
         assert_eq!(template.symbols.len(), 170);
-        template.check_symbols(&[101000, 403000, 521002]).unwrap();
+        template
+            .check_symbols(&[
+                (101000, ObjectKind::Line),
+                (205000, ObjectKind::Point),
+                (403000, ObjectKind::Area),
+            ])
+            .unwrap();
     }
 
     #[test]
@@ -849,10 +883,30 @@ pub(crate) mod tests {
         let template = OcdTemplate::load(None).unwrap();
 
         let error = template
-            .check_symbols(&[101000, 123456, 999999])
+            .check_symbols(&[
+                (101000, ObjectKind::Line),
+                (123456, ObjectKind::Line),
+                (999999, ObjectKind::Area),
+            ])
             .unwrap_err();
 
         assert!(error.to_string().contains("123.456, 999.999"), "{error}");
+    }
+
+    #[test]
+    fn reports_symbols_of_the_wrong_type() {
+        let template = OcdTemplate::load(None).unwrap();
+
+        let error = template
+            .check_symbols(&[(205000, ObjectKind::Line), (202000, ObjectKind::Line)])
+            .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .ends_with("the OCAD template 205.000 is a point symbol instead of a line symbol"),
+            "{error}"
+        );
     }
 
     #[test]
