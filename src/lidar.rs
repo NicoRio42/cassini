@@ -19,7 +19,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use crate::{
-    error::{Result, ResultContext, TileId},
+    error::{CassiniError, Result, ResultContext, TileId},
     grid::{Compression, Grid, Sample},
     helpers::remove_dir_content_except,
     process::ensure_file,
@@ -42,24 +42,31 @@ const NO_DATA_COUNT: u8 = 255;
 /// The edge of the cubic voxels the points are thinned with, in metres.
 const VOXEL_SIZE: f64 = 0.5;
 
+/// The largest tile side accepted, in metres. LiDAR HD tiles are 1 km, and
+/// other national grids a few kilometres. A larger extent most likely comes
+/// from outlier points in the header bounds, and its rasters would not fit
+/// in memory.
+const MAX_TILE_SIDE: i64 = 10_000;
+
 /// The number of points decompressed at a time. A batch spans many LAZ
 /// chunks, which are decompressed in parallel.
 const POINTS_PER_BATCH: u64 = 1 << 21;
 
+/// Writes the DEM and vegetation density rasters of the LiDAR file at
+/// `laz_path` to `output_dir_path`, returning the tile's extent.
 pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
     laz_path: &Path,
     output_dir_path: &Path,
-) -> Result<()> {
+) -> Result<TileId> {
     let start = Instant::now();
 
     let mut reader = open_reader(laz_path)?;
     let bounds = reader.header().bounds();
-    let tile = TileId {
-        min_x: bounds.min.x.round() as i64,
-        min_y: bounds.min.y.round() as i64,
-        max_x: bounds.max.x.round() as i64,
-        max_y: bounds.max.y.round() as i64,
-    };
+    let tile = tile_id(
+        laz_path,
+        [bounds.min.x, bounds.min.y],
+        [bounds.max.x, bounds.max.y],
+    )?;
     let TileId {
         min_x,
         min_y,
@@ -87,19 +94,20 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
         ))?;
     }
 
-    let mut rasters = TileRasters::new(&tile, bounds);
     let mut points = PointDataBuilder::new().for_header(reader.header()).build();
-    loop {
-        let count = reader
-            .fill_points(POINTS_PER_BATCH, &mut points)
-            .context(format!(
-                "could not read LiDAR points `{}`",
-                laz_path.display()
-            ))?;
-        if count == 0 {
-            break;
-        }
+    let mut count = fill_points(&mut reader, &mut points, laz_path)?;
+    // A file without points has no voxel to thin, so any origin will do.
+    let first_point = points
+        .x()
+        .zip(points.y())
+        .zip(points.z())
+        .map(|((x, y), z)| [x, y, z])
+        .next()
+        .unwrap_or_default();
+    let mut rasters = TileRasters::new(&tile, VoxelSet::new(first_point, &bounds));
+    while count > 0 {
         rasters.add_points(&points);
+        count = fill_points(&mut reader, &mut points, laz_path)?;
     }
     let (dem, [low, medium, high]) = rasters.into_grids();
 
@@ -137,7 +145,65 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
         min_x, min_y, max_x, max_y, duration
     );
 
-    Ok(())
+    Ok(tile)
+}
+
+/// The extent of the LiDAR file at `laz_path`: its header bounds, rounded to
+/// the metre.
+pub fn read_tile_id(laz_path: &Path) -> Result<TileId> {
+    let mut file = File::open(laz_path).context(format!(
+        "could not open LiDAR file `{}`",
+        laz_path.display()
+    ))?;
+    let header = las::raw::Header::read_from(&mut file).context(format!(
+        "could not read LiDAR header `{}`",
+        laz_path.display()
+    ))?;
+    tile_id(
+        laz_path,
+        [header.min_x, header.min_y],
+        [header.max_x, header.max_y],
+    )
+}
+
+/// The tile of the LiDAR file at `laz_path`, whose header bounds are `min`
+/// and `max`, rejecting an empty extent or one too large to allocate the
+/// rasters of.
+fn tile_id(laz_path: &Path, min: [f64; 2], max: [f64; 2]) -> Result<TileId> {
+    if !min.iter().chain(&max).all(|bound| bound.is_finite()) {
+        return Err(CassiniError::InvalidInput {
+            message: format!(
+                "LiDAR file `{}` has non-finite header bounds",
+                laz_path.display()
+            ),
+        });
+    }
+    let tile = TileId {
+        min_x: min[0].round() as i64,
+        min_y: min[1].round() as i64,
+        max_x: max[0].round() as i64,
+        max_y: max[1].round() as i64,
+    };
+    let width = tile.max_x - tile.min_x;
+    let height = tile.max_y - tile.min_y;
+    if width <= 0 || height <= 0 {
+        return Err(CassiniError::InvalidInput {
+            message: format!(
+                "LiDAR file `{}` has an invalid extent {tile}",
+                laz_path.display()
+            ),
+        });
+    }
+    if width > MAX_TILE_SIDE || height > MAX_TILE_SIDE {
+        return Err(CassiniError::InvalidInput {
+            message: format!(
+                "LiDAR file `{}` covers {width} m x {height} m, more than the {MAX_TILE_SIDE} m \
+                 per side Cassini accepts; its header bounds may include outlier points",
+                laz_path.display()
+            ),
+        });
+    }
+    Ok(tile)
 }
 
 /// A reader of the LAS or LAZ file at `laz_path`. LAZ chunks are decompressed
@@ -154,6 +220,17 @@ fn open_reader(laz_path: &Path) -> Result<Reader> {
     ))
 }
 
+/// Replaces `points` with the next points of `reader`, returning how many
+/// were read, 0 at the end of the file.
+fn fill_points(reader: &mut Reader, points: &mut PointData, laz_path: &Path) -> Result<u64> {
+    reader
+        .fill_points(POINTS_PER_BATCH, points)
+        .context(format!(
+            "could not read LiDAR points `{}`",
+            laz_path.display()
+        ))
+}
+
 /// The 1 m rasters of a tile, accumulated point by point.
 struct TileRasters {
     tile: TileId,
@@ -165,14 +242,12 @@ struct TileRasters {
     ground_counts: Vec<u32>,
     /// The number of low, medium and high vegetation points of each cell.
     vegetation_counts: [Vec<u8>; 3],
-    bounds: Bounds,
-    /// Created from the first point.
-    voxels: Option<VoxelSet>,
+    voxels: VoxelSet,
 }
 
 impl TileRasters {
-    /// The empty rasters of `tile`, whose points are within `bounds`.
-    fn new(tile: &TileId, bounds: Bounds) -> Self {
+    /// The empty rasters of `tile`, whose points are thinned with `voxels`.
+    fn new(tile: &TileId, voxels: VoxelSet) -> Self {
         let width = (tile.max_x - tile.min_x) as usize;
         let height = (tile.max_y - tile.min_y) as usize;
         Self {
@@ -182,12 +257,13 @@ impl TileRasters {
             elevations: vec![0.0; width * height],
             ground_counts: vec![0; width * height],
             vegetation_counts: [(); 3].map(|_| vec![0; width * height]),
-            bounds,
-            voxels: None,
+            voxels,
         }
     }
 
-    /// Adds `points`, which must come in file order, as PDAL read them.
+    /// Adds `points`, which must come in file order. PDAL read LiDAR HD's
+    /// COPC files in octree order instead, which only changes the voxel
+    /// origin and the rounding of the DEM mean.
     fn add_points(&mut self, points: &PointData) {
         let columns = points
             .x()
@@ -210,11 +286,7 @@ impl TileRasters {
             }
         }
 
-        let bounds = &self.bounds;
-        let voxels = self
-            .voxels
-            .get_or_insert_with(|| VoxelSet::new([x, y, z], bounds));
-        if !voxels.insert(x, y, z) {
+        if !self.voxels.insert(x, y, z) {
             return;
         }
 
@@ -282,21 +354,45 @@ fn tile_grid<T: Sample>(tile: &TileId, values: Vec<T>, nodata: T) -> Grid<T> {
 /// `COLUMN_VOXELS` voxels centred on the voxel of its first point, and the
 /// voxels out of it go to a hash set. That is far smaller than a hash set of
 /// the tens of millions of voxels of a tile.
+///
+/// The column bitsets are allocated by blocks of `BLOCK_SIDE` x `BLOCK_SIDE`
+/// columns, when a point first falls in the block, so their memory follows
+/// the area the points cover (about 80 MB per km²) rather than the header
+/// bounds.
 struct VoxelSet {
     origin: [f64; 3],
     min_col: i32,
     min_row: i32,
-    width: usize,
-    height: usize,
-    /// The voxel `z` of the lowest bit of each column, row-major from the
-    /// south-west, valid once the column has a bit set.
-    bases: Vec<i32>,
-    bits: Vec<u128>,
+    /// The number of blocks across and down the header bounds.
+    blocks_width: usize,
+    blocks_height: usize,
+    /// Row-major from the south-west.
+    blocks: Vec<Option<ColumnBlock>>,
     others: HashSet<[i32; 3]>,
 }
 
 /// The number of voxels of a column bitset, 64 m.
 const COLUMN_VOXELS: i32 = u128::BITS as i32;
+
+/// The number of columns along the side of a block, 32 m.
+const BLOCK_SIDE: usize = 64;
+
+/// The bitsets of a block of columns, row-major from the south-west.
+struct ColumnBlock {
+    /// The voxel `z` of the lowest bit of each column, valid once the
+    /// column has a bit set.
+    bases: Box<[i32]>,
+    bits: Box<[u128]>,
+}
+
+impl ColumnBlock {
+    fn new() -> Self {
+        Self {
+            bases: vec![0; BLOCK_SIDE * BLOCK_SIDE].into_boxed_slice(),
+            bits: vec![0; BLOCK_SIDE * BLOCK_SIDE].into_boxed_slice(),
+        }
+    }
+}
 
 impl VoxelSet {
     fn new(first_point: [f64; 3], bounds: &Bounds) -> Self {
@@ -305,14 +401,15 @@ impl VoxelSet {
         let min_row = voxel_index(bounds.min.y, origin[1]);
         let width = (voxel_index(bounds.max.x, origin[0]) - min_col + 1).max(0) as usize;
         let height = (voxel_index(bounds.max.y, origin[1]) - min_row + 1).max(0) as usize;
+        let blocks_width = width.div_ceil(BLOCK_SIDE);
+        let blocks_height = height.div_ceil(BLOCK_SIDE);
         Self {
             origin,
             min_col,
             min_row,
-            width,
-            height,
-            bases: vec![0; width * height],
-            bits: vec![0; width * height],
+            blocks_width,
+            blocks_height,
+            blocks: (0..blocks_width * blocks_height).map(|_| None).collect(),
             others: HashSet::new(),
         }
     }
@@ -325,26 +422,33 @@ impl VoxelSet {
             voxel_index(y, self.origin[1]),
             voxel_index(z, self.origin[2]),
         ];
-        if let Some(column) = self.column(voxel) {
-            if self.bits[column] == 0 {
-                self.bases[column] = voxel[2].saturating_sub(COLUMN_VOXELS / 2);
+        if let Some((block, column)) = self.column(voxel) {
+            let block = self.blocks[block].get_or_insert_with(ColumnBlock::new);
+            let bits = &mut block.bits[column];
+            if *bits == 0 {
+                block.bases[column] = voxel[2].saturating_sub(COLUMN_VOXELS / 2);
             }
-            let offset = i64::from(voxel[2]) - i64::from(self.bases[column]);
+            let offset = i64::from(voxel[2]) - i64::from(block.bases[column]);
             if (0..i64::from(COLUMN_VOXELS)).contains(&offset) {
                 let mask = 1 << offset;
-                let inserted = self.bits[column] & mask == 0;
-                self.bits[column] |= mask;
+                let inserted = *bits & mask == 0;
+                *bits |= mask;
                 return inserted;
             }
         }
         self.others.insert(voxel)
     }
 
-    /// The index of the column of `voxel`, if within the header bounds.
-    fn column(&self, voxel: [i32; 3]) -> Option<usize> {
+    /// The index of the block of `voxel` and of its column in the block, if
+    /// within the blocks covering the header bounds.
+    fn column(&self, voxel: [i32; 3]) -> Option<(usize, usize)> {
         let col = usize::try_from(i64::from(voxel[0]) - i64::from(self.min_col)).ok()?;
         let row = usize::try_from(i64::from(voxel[1]) - i64::from(self.min_row)).ok()?;
-        (col < self.width && row < self.height).then_some(row * self.width + col)
+        let (block_col, block_row) = (col / BLOCK_SIDE, row / BLOCK_SIDE);
+        (block_col < self.blocks_width && block_row < self.blocks_height).then_some((
+            block_row * self.blocks_width + block_col,
+            (row % BLOCK_SIDE) * BLOCK_SIDE + col % BLOCK_SIDE,
+        ))
     }
 }
 
@@ -373,7 +477,33 @@ mod tests {
             max_x: 1003,
             max_y: 2002,
         };
-        TileRasters::new(&tile, bounds([1000.0, 2000.0, 0.0], [1003.0, 2002.0, 50.0]))
+        let bounds = bounds([1000.0, 2000.0, 0.0], [1003.0, 2002.0, 50.0]);
+        // The first point of `dem_is_the_mean_of_ground_points_and_vegetation_the_class_counts`.
+        TileRasters::new(&tile, VoxelSet::new([1000.2, 2001.5, 10.0], &bounds))
+    }
+
+    #[test]
+    fn tile_id_rounds_the_header_bounds_and_rejects_bad_extents() {
+        let path = Path::new("tile.laz");
+        assert_eq!(
+            tile_id(path, [906999.6, 6454000.01], [908000.4, 6454999.5]).unwrap(),
+            TileId {
+                min_x: 907000,
+                min_y: 6454000,
+                max_x: 908000,
+                max_y: 6455000,
+            }
+        );
+        // An empty file's header, inverted bounds, NaN and an outlier point.
+        for (min, max) in [
+            ([0.0, 0.0], [0.0, 0.0]),
+            ([1000.0, 2000.0], [900.0, 3000.0]),
+            ([f64::NAN, 2000.0], [1000.0, 3000.0]),
+            ([1000.0, 2000.0], [11001.0, 3000.0]),
+        ] {
+            assert!(tile_id(path, min, max).is_err(), "{min:?} {max:?}");
+        }
+        assert!(tile_id(path, [0.0, 0.0], [10_000.0, 10_000.0]).is_ok());
     }
 
     #[test]
@@ -427,8 +557,8 @@ mod tests {
             [0.0, 0.0, 0.0],
             [1.0, 1.0, 40.0],
             [1.0, 1.0, 40.2],
-            [5.0, 1.0, 1.0],
-            [5.1, 1.0, 1.0],
+            [100.0, 1.0, 1.0],
+            [100.1, 1.0, 1.0],
             [1.0, 1.0, 0.76],
         ];
         let mut voxels = VoxelSet::new(points[0], &bounds([0.0; 3], [2.0; 3]));
@@ -440,6 +570,20 @@ mod tests {
             inserted,
             [true, false, true, true, true, false, true, false, false]
         );
+        // The voxel 39 m above its column's first, and the one out of the
+        // blocks covering the bounds.
         assert_eq!(voxels.others.len(), 2);
+        assert_eq!(voxels.blocks.iter().flatten().count(), 1);
+    }
+
+    #[test]
+    fn voxel_set_allocates_only_the_blocks_holding_points() {
+        let mut voxels = VoxelSet::new([0.25; 3], &bounds([0.0; 3], [1000.0; 3]));
+        assert_eq!((voxels.blocks_width, voxels.blocks_height), (32, 32));
+        for [x, y] in [[0.0, 0.0], [31.9, 31.9], [32.0, 0.0], [999.9, 999.9]] {
+            assert!(voxels.insert(x, y, 0.0));
+        }
+        assert_eq!(voxels.blocks.iter().flatten().count(), 3);
+        assert!(voxels.others.is_empty());
     }
 }
