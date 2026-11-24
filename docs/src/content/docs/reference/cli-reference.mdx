@@ -231,7 +231,7 @@ The path to the configuration file to use. If omitted, Cassini uses `./config.js
 
 </p>
 
-In batch mode, you can specify the number of <GlossaryLink slug="thread" label="threads" /> used by Cassini to parallelize the work.
+In batch mode, you can specify the number of <GlossaryLink slug="thread" label="threads" /> used by Cassini to parallelize the work: each thread processes one tile at a time. The decompression of the LiDAR files is shared between all CPU cores whatever this number, so even `--threads 1` keeps every core busy during the LiDAR step. More threads mostly speed up the render step, and use more memory (about 250 MB per thread for the LiDAR step on 1 km tiles).
 
 ```sh frame="none"
 cassini batch --threads 6

@@ -23,7 +23,7 @@ We are replacing these with plain Rust rather than embedding GDAL through the `g
 
 - **One step per Claude Code session.** Start a session with: *"Implement step N of `specs/plans/2026-11-24-pdal-gdal-rust-rewrite.md`."*
 - **Branches:** each step works on its own branch from `develop` (`rust-pipeline/step-N-<slug>`) and is merged before any step that depends on it.
-- **Order:** steps 1 → 2 are sequential. After step 2, steps 3, 4 and 5 touch different files and can be done in any order, or in parallel. Step 6 needs 3, 4 and 5. Step 7 needs 6.
+- **Order:** steps 1 → 2 are sequential. After step 2, steps 3, 4 and 5 touch different files and can be done in any order, or in parallel. Step 6 needs 3, 4 and 5. Steps 7 and 8 need 6 and are independent of each other.
 - **At the end of each session:**
   - Update the status table below.
   - Append any finding the next steps need to "Notes from completed steps" at the bottom: semantic surprises, tolerances chosen, parity numbers.
@@ -37,10 +37,11 @@ We are replacing these with plain Rust rather than embedding GDAL through the `g
 | 1 | Foundations: GeoTIFF I/O, comparison tool, reference outputs | – | Done |
 | 2 | Simple raster ops and coordinate conversion | 1 | Done |
 | 3 | DEM hole filling and contour extraction | 1, 2 | Done |
-| 4 | LiDAR pipeline (PDAL replacement) | 1 | Not started |
+| 4 | LiDAR pipeline (PDAL replacement) | 1 | Done |
 | 5 | OSM import (ogr2ogr replacement) | 2 | Not started |
 | 6 | Cleanup, docs and end-to-end verification without external tools | 3, 4, 5 | Not started |
 | 7 | Packaging and release builds for the three platforms | 6 | Not started |
+| 8 | Vegetation layers from height above ground | 6 | Not started |
 
 ## Shared context
 
@@ -305,6 +306,37 @@ Each step section states its acceptance threshold. "Exact" means bit-identical v
 
 ---
 
+## Step 8 — Vegetation layers from height above ground
+
+**Goal:** classify vegetation by height above ground, as the PDAL pipeline meant to and never did (see the step 4 notes), and keep the current class-based layers as an option. This changes the default render, which is why it comes after the parity checks of step 6.
+
+**Tasks**
+
+1. **Option** `--vegetation-layers <height|lidar-class>` on `batch`, `process` and `lidar`, default `height`, a clap `ValueEnum` like `--undergrowth`. `lidar-class` is the step 4 behaviour. Not in `config.json` for now.
+2. **Batch order** (both modes, so `render` sees the same files):
+   - For all tiles, in parallel: pass 1, `dem.tif`. In `lidar-class` mode the single step 4 pass also computes the vegetation rasters here.
+   - For each tile with its neighbours: mosaic, buffer and fill the DEM, and write `dem_with_buffer.tif`. This is the first stage of today's render step, moved earlier.
+   - For all tiles, in `height` mode: pass 2, the vegetation rasters, with heights from the tile's filled `dem_with_buffer.tif`.
+   - `render` reads `dem_with_buffer.tif` instead of rebuilding it. Split [dem.rs](../../src/dem.rs) into "prepare the filled DEM" and "2 m DEM, contours and slopes from it". `--skip-lidar` needs the file from a previous full run, with a clear error if it is missing.
+3. **Single-tile commands** (`lidar`, `process`) have no neighbours: fill the tile's own DEM without a buffer and take heights from it. Cells near the tile edge can differ from a batch run; say so in the docs. `lidar` is only used by mapant-fr-worker, which will later switch to IGN's DEM.
+4. **`height` mode semantics:**
+   - Voxel thinning first, on every point, as in step 4.
+   - Only classes 1, 3, 4 and 5 (unclassified and vegetation) can be vegetation. Ground, buildings (6), water (9), bridges (17) and the other LiDAR HD classes never are.
+   - Height above ground = Z − filled DEM at the cell the point is binned into, with the same rule as the DEM and vegetation rasters (`TileRasters::bin_index`: a point on a cell edge goes to the east or north cell). Not `Grid::cell_at`, which sends edge points south: LiDAR HD coordinates are on a 1 cm grid, so about 1% of points lie on a y edge and would read the ground of the cell south of the one they are counted in. Layers: (0, 1] low, (1, 4] medium, (4, 30] high.
+   - A point outside 0–30 m, or on a cell still nodata after filling, is dropped: it does not keep its LAS class.
+5. **Faster decompression:** LiDAR HD uses LAS 1.4 layered point formats. Decode only X, Y, Z and classification with `laz`'s `DecompressionSelection`, calling `laz` directly since `las` does not expose it. Use it in both passes and in `lidar-class` mode; record the gain. Two full passes would otherwise roughly double the LiDAR time (10.9 s vs 5.4 s on tile 907000_6454000).
+6. **Thresholds:** leave the default vegetation thresholds unchanged, one set for both modes, with no per-mode defaults. The user retunes them for `height` mode later, outside this step. To help with that, record the mean points per cell per layer in both modes. On tile 907000_6454000 they go from 1.01 / 0.68 / 12.7 (low / medium / high) to about 1.2 / 2.8 / 10.4, measured with PDAL's broader class rule.
+7. **Release:** changelog entry, minor version bump, CLI reference docs.
+
+**Acceptance:**
+- `--vegetation-layers lidar-class` gives vegetation rasters and final renders identical to the step 6 output.
+- In `height` mode, `dem.tif`, `dem_with_buffer.tif`, contours and cliffs are identical to `lidar-class` mode.
+- `height` mode renders on poussebout and at least one other dataset are shown to the user, with the per-layer densities of both modes, so they can retune the thresholds later. They are not expected to match `lidar-class` renders.
+- LiDAR stage time per tile recorded for both modes, before and after selective decompression.
+- `cargo test` is green.
+
+---
+
 ## Notes from completed steps
 
 _Each session appends findings here: decisions, tolerances, measured parity, timings, surprises._
@@ -359,3 +391,46 @@ _Each session appends findings here: decisions, tolerances, measured parity, tim
   - The shapefile output moved to [contour_shapefile.rs](../../src/contour_shapefile.rs). The `shapefile` and `dbase` writers write their headers in `Drop` and discard the errors, so the raw contours are written to memory first, then to disk, where every error surfaces. An empty layer is patched to a polyline header with a zero extent, as OGR writes it.
   - `create_dem_contours_and_slopes` returns the contour lines, which go in memory to the smoothing and form-line steps. `contours-raw.shp` is no longer read back: it is only an output to inspect. `contours.shp` and `formlines.shp` take their fields from `contour_table()` instead of copying the raw file's table info, and are unchanged (byte-identical to `cassini-reference`).
   - `merged-map.ocd` differs between two runs of the same binary, so it can't be compared byte for byte.
+
+### Step 4 (branch `rust-pipeline/step-4-lidar`, cut from `remove-pdal-gdal` after the step 3 merge)
+
+- **The PDAL pipeline never used height above ground.** All its stages can stream, so `pdal pipeline` ran it in stream mode, which readies every stage before any point flows. `filters.hag_dem` then opened `dem.tif` before `writers.gdal` had written it (the output directory is cleaned first). PDAL ≤ 2.9 ignores that open error (`ready()` doesn't check it), every DEM read fails, `HeightAboveGround` stays 0, and no `filters.assign` matches. The vegetation rasters therefore count LiDAR HD's own classes 3/4/5 after voxel thinning. PDAL ≥ 2.10 checks the open and would fail on this pipeline. Confirmed on tile 907000_6454000, mean count per cell (low / medium / high):
+  - reference: 1.014 / 0.680 / 12.720
+  - classes only: 1.014 / 0.677 / 12.722
+  - height bands as the pipeline intended: 1.227 / 2.846 / 10.350 (medium ×4)
+
+  [lidar.rs](../../src/lidar.rs) reproduces the reference, so there is no height-above-ground code. Classifying by height bands would be a deliberate render change, to try separately, like the DEM quality work.
+- **One pass, not two:** without HAG the vegetation doesn't need the DEM, so `dem.tif` and the three counts are accumulated in a single streaming pass (`TileRasters`).
+- **Semantics reproduced from PDAL's source:**
+  - `writers.gdal` binmode: `floor(x - min_x)`, `floor(y - min_y)`, so edge points go east/north, and points on the tile's east/north edge are dropped.
+  - The DEM mean uses PDAL's running mean `mean += (z - mean) / count`, in `f64`.
+  - `filters.voxeldownsize` applies to every point, ground included. Its origin is the first point read minus half a voxel, and it uses `floor((c - origin) / 0.5)`.
+  - Cells without points are 0, not nodata. Counts saturate at 254, so they never become the nodata 255 (counts never go above ~100 here).
+- **Voxel set:** a `u128` bitset per 0.5 m voxel column over the header bounds, centred on the column's first point (±32 m), plus a hash set for voxels outside it. About 80 MB, against several hundred MB for a hash set of ~15 M voxels. Peak RSS for `cassini lidar` is ~225 MB.
+  - The bitsets are allocated by blocks of 64×64 columns (32 m) when a point first falls in them, so their memory follows the area the points cover (~80 MB per km²), not the header bounds. Same outputs (byte-identical on three tiles) and same time.
+- **`las` 0.8 → 0.11.2** (`laz` 0.13), feature `laz-parallel`. `las::raw::Header::read_from` in `batch.rs`/`main.rs` is unchanged. Points are read 2 M at a time with `Reader::fill_points` and the `PointData` column iterators. LAZ chunks decompress on rayon's global pool, which all batch threads share, so there is no oversubscription.
+- **`dem.tif`** is now 1000×1000, exactly the tile (the extent bug is fixed), Float64, Deflate without predictor, nodata -9999.
+- **Compression:** PDAL wrote `dem.tif` with the floating-point predictor and every raster at ZLEVEL=9. The `tiff` crate has no floating-point predictor, and `Grid::write_geotiff` uses its `Balanced` Deflate level (the vegetation rasters keep the horizontal predictor), so the files are bigger. Values are unchanged.
+- **Tile extent:** `lidar::read_tile_id` is the one place that turns header bounds into a `TileId` (rounded to the metre), for `batch`, `process` and `lidar`. It rejects non-finite bounds, an empty or inverted extent, and a side over 10 km (likely outlier points; the rasters would not fit in memory). Before, only `batch` checked, and the single-tile commands panicked on such a file. `generate_dem_and_vegetation_density_tiff_images_from_laz_file` returns the tile, so `process` no longer re-reads the header.
+- **`--threads`** sets how many tiles are processed at once. LAZ decompression uses rayon's global pool, so even `--threads 1` uses every core during the LiDAR step. The help text and the CLI reference say so.
+- **Parity on all four tiles:**
+  - `dem.tif` (cropped reference): identical nodata mask, max |Δ| 1.4e-12 m. Only the point order differs, which changes the running-mean rounding.
+  - Vegetation sum per layer: within 0.44% (most within 0.1%).
+  - Vegetation per cell, identical cells / mean |Δ|:
+    - low: 66–87% / 0.17–0.43
+    - medium: 85–96% / 0.05–0.19
+    - high: 20–38% / 1.5–2.1, on means of 11–16
+  - These per-cell differences come entirely from the voxel origin. PDAL's first point (COPC octree read order) differs from the file's first point, and shifting our own origin by a quarter voxel gives the same noise (high mean |Δ| 1.89).
+- **Final renders** (full batch with `--ocad` vs `out-reference-poussebout`):
+  - `contours.png` and `cliffs.png`: identical.
+  - `vegetation.png`: 2.2–8.0% of pixels differ.
+  - `full-map.png`: 1.4–4.6% differ.
+  - `merged-map.png`: 2.6% differs.
+  - The differences are isolated light-green pixels at density-threshold edges, spread evenly; the maps are visually indistinguishable.
+- **Timings** (12 threads, warm page cache; PDAL can't be timed here):
+  - `cassini lidar` alone: 5.1–6.9 s per tile.
+  - Batch with `--threads 1`: 4.1–4.9 s per tile. With 2 threads: 6.3–7.5 s per tile, ~14 s for the 4 tiles. With 4 threads: ~13 s.
+  - Default full batch with `--ocad`: 22.6 s in total.
+  - A cold page cache can triple the LiDAR time (17 s per tile seen once).
+- **Removed:** the `pdal` call and `process::checked_output_with_input`. Remaining external call: `ogr2ogr` (step 5). The CLI `about` text still mentions PDAL (step 6).
+

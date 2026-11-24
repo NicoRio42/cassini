@@ -37,14 +37,13 @@ use clap::{CommandFactory, Parser, Subcommand};
 use config::{default_config, get_config, Config};
 use download::download_osm_file;
 use error::{CassiniError, Result, ResultContext};
-use las::raw::Header;
 use lidar::generate_dem_and_vegetation_density_tiff_images_from_laz_file;
 use log::info;
 use ocad_export::{check_template, write_ocd_file};
 use ocd::OcdTemplate;
 use render::{render_tile_map, OcadOptions, RenderOptions};
 use std::{
-    fs::{create_dir_all, File},
+    fs::create_dir_all,
     num::NonZeroUsize,
     path::{Path, PathBuf},
     process::ExitCode,
@@ -199,7 +198,7 @@ enum Commands {
         #[arg(
             long,
             short,
-            help = "Number of threads used by Cassini to parallelize the work in batch mode",
+            help = "Number of tiles processed in parallel in batch mode. LiDAR decompression also uses every CPU core, whatever this number",
             default_value = "3"
         )]
         threads: Option<NonZeroUsize>,
@@ -276,24 +275,15 @@ fn process_single_tile(
 ) -> Result<()> {
     let config = get_config(None)?;
 
-    generate_dem_and_vegetation_density_tiff_images_from_laz_file(file_path, output_dir_path)?;
-
-    let mut file = File::open(file_path).context(format!(
-        "could not open LiDAR file `{}`",
-        file_path.display()
-    ))?;
-    let header = Header::read_from(&mut file).context(format!(
-        "could not read LiDAR header `{}`",
-        file_path.display()
-    ))?;
-
+    let extent =
+        generate_dem_and_vegetation_density_tiff_images_from_laz_file(file_path, output_dir_path)?;
     let tile = Tile {
         lidar_dir_path: output_dir_path.to_path_buf(),
         render_dir_path: output_dir_path.to_path_buf(),
-        min_x: header.min_x.round() as i64,
-        min_y: header.min_y.round() as i64,
-        max_x: header.max_x.round() as i64,
-        max_y: header.max_y.round() as i64,
+        min_x: extent.min_x,
+        min_y: extent.min_y,
+        max_x: extent.max_x,
+        max_y: extent.max_y,
     };
 
     if options.shapefiles_dir.is_none() && !options.skip_vector {
@@ -313,6 +303,7 @@ fn process_single_tile_lidar_step(
     }
 
     generate_dem_and_vegetation_density_tiff_images_from_laz_file(file_path, output_dir_path)
+        .map(|_| ())
 }
 
 fn process_single_tile_render_step(
