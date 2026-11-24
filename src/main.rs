@@ -6,6 +6,7 @@ mod cliffs;
 mod coastlines;
 mod config;
 mod constants;
+mod contour_shapefile;
 mod contours;
 mod dem;
 mod download;

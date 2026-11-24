@@ -20,27 +20,13 @@
 
 use std::{
     collections::{BTreeMap, VecDeque},
-    fs,
-    io::Write,
     ops::Range,
-    path::Path,
 };
 
-use shapefile::{
-    dbase::{FieldIOError, FieldName, FieldWriter, TableWriterBuilder, WritableRecord},
-    Point as ShapefilePoint, Polyline,
-};
-
-use crate::{
-    error::{Result, ResultContext},
-    grid::Grid,
-};
-
-/// The `.prj` OGR writes for EPSG:2154.
-const LAMBERT_93_ESRI_WKT: &str = r#"PROJCS["RGF_1993_Lambert_93",GEOGCS["GCS_RGF_1993",DATUM["D_RGF_1993",SPHEROID["GRS_1980",6378137.0,298.257222101]],PRIMEM["Greenwich",0.0],UNIT["Degree",0.0174532925199433]],PROJECTION["Lambert_Conformal_Conic"],PARAMETER["False_Easting",700000.0],PARAMETER["False_Northing",6600000.0],PARAMETER["Central_Meridian",3.0],PARAMETER["Standard_Parallel_1",49.0],PARAMETER["Standard_Parallel_2",44.0],PARAMETER["Latitude_Of_Origin",46.5],UNIT["Meter",1.0]]"#;
+use crate::grid::Grid;
 
 /// A contour line, in projected coordinates.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 pub struct ContourLine {
     pub elevation: f64,
     pub points: Vec<(f64, f64)>,
@@ -49,6 +35,7 @@ pub struct ContourLine {
 /// The contour lines of `grid` at every multiple of `interval`, in the order
 /// `gdal_contour` writes them.
 pub fn contour_lines(grid: &Grid<f32>, interval: f64) -> Vec<ContourLine> {
+    assert!(interval > 0.0, "the contour interval must be positive");
     let values: Vec<f64> = grid
         .values
         .iter()
@@ -117,56 +104,6 @@ pub fn contour_lines(grid: &Grid<f32>, interval: f64) -> Vec<ContourLine> {
         .collect()
 }
 
-/// Writes `lines` to the shapefile at `path`, as `gdal_contour -a elev`
-/// does: a `LineString` layer with fields `ID` (from 0) and `elev`, and an
-/// EPSG:2154 `.prj`.
-pub fn write_contour_shapefile(path: &Path, lines: &[ContourLine]) -> Result<()> {
-    let context = || format!("could not write contour shapefile `{}`", path.display());
-    let table = TableWriterBuilder::new()
-        .add_numeric_field(FieldName::try_from("ID").expect("valid field name"), 8, 0)
-        .add_numeric_field(
-            FieldName::try_from("elev").expect("valid field name"),
-            24,
-            15,
-        );
-    let mut writer = shapefile::Writer::from_path(path, table).context(context())?;
-    for (id, line) in lines.iter().enumerate() {
-        let points = line
-            .points
-            .iter()
-            .map(|&(x, y)| ShapefilePoint::new(x, y))
-            .collect();
-        let record = ContourRecord {
-            id: id as f64,
-            elevation: line.elevation,
-        };
-        writer
-            .write_shape_and_record(&Polyline::new(points), &record)
-            .context(context())?;
-    }
-    drop(writer);
-    let prj_path = path.with_extension("prj");
-    fs::write(&prj_path, LAMBERT_93_ESRI_WKT).context(format!(
-        "could not write projection file `{}`",
-        prj_path.display()
-    ))
-}
-
-struct ContourRecord {
-    id: f64,
-    elevation: f64,
-}
-
-impl WritableRecord for ContourRecord {
-    fn write_using<W: Write>(
-        &self,
-        field_writer: &mut FieldWriter<'_, W>,
-    ) -> std::result::Result<(), FieldIOError> {
-        field_writer.write_next_field_value(&self.id)?;
-        field_writer.write_next_field_value(&self.elevation)
-    }
-}
-
 /// The contour levels: the multiples of `interval` between the minimum and
 /// maximum of `values`, ignoring NaN, or `None` if there are no levels.
 fn levels(values: &[f64], interval: f64) -> Option<Vec<f64>> {
@@ -200,19 +137,17 @@ fn levels(values: &[f64], interval: f64) -> Option<Vec<f64>> {
 
 /// The indices of the levels a square with values from `min` to `max`
 /// crosses.
+///
+/// The levels are sorted, and both conditions hold for the levels below a
+/// point and not after it, as a value is only fudged up past a level within
+/// the tolerance of it.
 fn level_range(levels: &[f64], min: f64, max: f64) -> Range<usize> {
     let (min, max) = if min > max { (max, min) } else { (min, max) };
-    let first = levels
-        .iter()
-        .position(|&level| level >= fudge(min, level))
-        .unwrap_or(levels.len());
+    let first = levels.partition_point(|&level| level < fudge(min, level));
     if min == max {
         return first..first;
     }
-    let end = levels[first..]
-        .iter()
-        .position(|&level| level > fudge(max, level))
-        .map_or(levels.len(), |offset| first + offset);
+    let end = first + levels[first..].partition_point(|&level| level <= fudge(max, level));
     first..end
 }
 
@@ -568,15 +503,13 @@ impl SegmentMerger {
     /// Emits the lines no segment of the row was added to: none will be.
     fn end_of_line(&mut self) {
         for (&level, lines) in &mut self.open_lines {
-            let mut index = 0;
-            while index < lines.len() {
-                if lines[index].merged {
-                    index += 1;
-                } else {
-                    let line = lines.remove(index);
-                    self.lines.push((level, line.points.into()));
+            lines.retain_mut(|line| {
+                if !line.merged {
+                    let points = std::mem::take(&mut line.points);
+                    self.lines.push((level, points.into()));
                 }
-            }
+                line.merged
+            });
         }
     }
 
@@ -695,6 +628,21 @@ mod tests {
         assert_eq!(levels(&[3.0, 4.0], 2.5), None);
         assert_eq!(levels(&[3.0, 3.0], 2.5), None);
         assert_eq!(levels(&[f64::NAN], 2.5), None);
+    }
+
+    #[test]
+    fn finds_the_levels_a_square_crosses() {
+        let levels = [2.5, 5.0, 7.5, 10.0];
+        assert_eq!(level_range(&levels, 3.0, 8.0), 1..3);
+        assert_eq!(level_range(&levels, 8.0, 3.0), 1..3);
+        // On a level: out at the minimum, in at the maximum, as values on a
+        // level are moved up.
+        assert_eq!(level_range(&levels, 5.0, 7.5), 2..3);
+        assert_eq!(level_range(&levels, 5.0 - 5e-7, 7.5 - 5e-7), 2..3);
+        assert_eq!(level_range(&levels, 0.0, 20.0), 0..4);
+        assert_eq!(level_range(&levels, 11.0, 12.0), 4..4);
+        assert_eq!(level_range(&levels, 0.0, 1.0), 0..0);
+        assert_eq!(level_range(&levels, 6.0, 6.0), 2..2);
     }
 
     /// A 9 x 7 DEM with a peak, a pit, a saddle, values on a level and a

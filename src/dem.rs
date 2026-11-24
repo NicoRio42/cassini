@@ -1,10 +1,11 @@
 use crate::{
-    buffer::create_tif_with_buffer,
+    buffer::mosaic_with_buffer,
     constants::DEM_BLOCK_SIZE,
+    contour_shapefile::write_contour_shapefile,
     error::{Result, ResultContext},
     fill_nodata::{fill_nodata, DEFAULT_MAX_SEARCH_DISTANCE},
     grid::{Compression, Grid},
-    marching_squares::{contour_lines, write_contour_shapefile},
+    marching_squares::{contour_lines, ContourLine},
     tile::Tile,
 };
 use log::info;
@@ -26,10 +27,14 @@ const _: () = assert!(
 /// The nodata value of `slopes.tif`, as `gdaldem slope` writes it.
 const SLOPE_NODATA: f32 = -9999.0;
 
-pub fn create_dem_with_buffer_and_slopes_tiff(
+/// Writes the filled DEM of the buffered tile (`dem_with_buffer.tif`), its
+/// 2 m version (`dem_2m_with_buffer.tif`), the contours extracted from it
+/// (`contours-raw/contours-raw.shp`) and the slopes (`slopes.tif`), and
+/// returns the contours.
+pub fn create_dem_contours_and_slopes(
     tile: &Tile,
     neighbor_tiles: &[PathBuf],
-) -> Result<()> {
+) -> Result<Vec<ContourLine>> {
     info!(
         "Tile min_x={} min_y={} max_x={} max_y={}. Generating dem with buffer",
         tile.min_x, tile.min_y, tile.max_x, tile.max_y
@@ -39,10 +44,9 @@ pub fn create_dem_with_buffer_and_slopes_tiff(
 
     let dem_with_buffer_path = tile.render_dir_path.join("dem_with_buffer.tif");
     let mut dem_with_buffer =
-        create_tif_with_buffer::<f32>(tile, neighbor_tiles, "dem", DEM_BLOCK_SIZE)?;
+        mosaic_with_buffer::<f32>(tile, neighbor_tiles, "dem", DEM_BLOCK_SIZE)?;
 
-    // Filling holes, then overwriting the unfilled DEM, as `gdal_fillnodata`
-    // did.
+    // Filling holes
     fill_nodata(&mut dem_with_buffer, DEFAULT_MAX_SEARCH_DISTANCE);
     dem_with_buffer.write_geotiff(&dem_with_buffer_path, Compression::None)?;
 
@@ -99,7 +103,7 @@ pub fn create_dem_with_buffer_and_slopes_tiff(
         tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
     );
 
-    Ok(())
+    Ok(contours)
 }
 
 /// `grid` with cells `factor` times larger, each the mean of the data cells of

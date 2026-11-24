@@ -15,9 +15,13 @@ use crate::grid::Grid;
 /// The search distance of `gdal_fillnodata`, in cells.
 pub const DEFAULT_MAX_SEARCH_DISTANCE: f64 = 100.0;
 
-/// The nearest data cell of a column, above or below a cell: its row and
-/// value.
-type ColumnNeighbor = Option<(u32, f32)>;
+/// The row of the nearest data cell of a column, above or below a cell, or
+/// [`NONE`]. Its value is read from the grid: data cells are never
+/// overwritten.
+type ColumnNeighbor = u32;
+
+/// No data cell within the search distance.
+const NONE: ColumnNeighbor = u32::MAX;
 
 /// Fills the nodata cells of `grid` that have a data cell within
 /// `max_search_distance` cells.
@@ -32,55 +36,68 @@ type ColumnNeighbor = Option<(u32, f32)>;
 /// are not used to fill others.
 pub fn fill_nodata(grid: &mut Grid<f32>, max_search_distance: f64) {
     let (width, height) = (grid.width, grid.height);
+    assert!(
+        u32::try_from(height).is_ok_and(|height| height < NONE),
+        "too many rows"
+    );
     let max_steps = max_search_distance.floor() as usize;
-    let is_data: Vec<bool> = grid
-        .values
-        .iter()
-        .map(|&value| grid.has_data(value))
-        .collect();
 
     // Top-down pass: the nearest data cell at or above each cell, within the
     // search distance.
-    let mut above: Vec<ColumnNeighbor> = vec![None; width * height];
+    let mut above: Vec<ColumnNeighbor> = vec![NONE; width * height];
     for row in 0..height {
         for col in 0..width {
             let index = row * width + col;
-            above[index] = if is_data[index] {
-                Some((row as u32, grid.values[index]))
+            above[index] = if grid.has_data(grid.values[index]) {
+                row as u32
             } else if row == 0 {
-                None
+                NONE
             } else {
-                above[index - width]
-                    .filter(|&(data_row, _)| row as f64 <= max_search_distance + data_row as f64)
+                match above[index - width] {
+                    data_row
+                        if data_row != NONE
+                            && row as f64 <= max_search_distance + data_row as f64 =>
+                    {
+                        data_row
+                    }
+                    _ => NONE,
+                }
             };
         }
     }
 
     // Bottom-up pass. `below` is the nearest data cell strictly below the
-    // current row in each column, from the previous iteration.
-    let mut below: Vec<ColumnNeighbor> = vec![None; width];
-    let mut next_below: Vec<ColumnNeighbor> = vec![None; width];
+    // current row in each column, from the previous iteration. A cell of the
+    // current row is still nodata when it is read: only the cell being filled
+    // changes.
+    let mut below: Vec<ColumnNeighbor> = vec![NONE; width];
+    let mut next_below: Vec<ColumnNeighbor> = vec![NONE; width];
     // How many columns up to each column have a candidate above or below,
     // to skip the cells with none within the search distance, which GDAL
     // scans without finding anything.
     let mut candidates_before = vec![0usize; width + 1];
     for row in (0..height).rev() {
         let row_start = row * width;
-        let row_above = &above[row_start..row_start + width];
         for col in 0..width {
-            let index = row_start + col;
-            next_below[col] = if is_data[index] {
-                Some((row as u32, grid.values[index]))
+            next_below[col] = if grid.has_data(grid.values[row_start + col]) {
+                row as u32
             } else {
-                below[col]
-                    .filter(|&(data_row, _)| (data_row - row as u32) as f64 <= max_search_distance)
+                match below[col] {
+                    data_row
+                        if data_row != NONE
+                            && (data_row - row as u32) as f64 <= max_search_distance =>
+                    {
+                        data_row
+                    }
+                    _ => NONE,
+                }
             };
             candidates_before[col + 1] = candidates_before[col]
-                + usize::from(row_above[col].is_some() || below[col].is_some());
+                + usize::from(above[row_start + col] != NONE || below[col] != NONE);
         }
 
         for col in 0..width {
-            if is_data[row_start + col] {
+            if grid.has_data(grid.values[row_start + col]) {
                 continue;
             }
             let first = col.saturating_sub(max_steps);
@@ -88,9 +105,13 @@ pub fn fill_nodata(grid: &mut Grid<f32>, max_search_distance: f64) {
             if candidates_before[last + 1] == candidates_before[first] {
                 continue;
             }
-            if let Some(value) =
-                interpolate(col, row, row_above, &below, max_search_distance, max_steps)
-            {
+            let neighbors = Neighbors {
+                values: &grid.values,
+                width,
+                above: &above[row_start..row_start + width],
+                below: &below,
+            };
+            if let Some(value) = neighbors.interpolate(col, row, max_search_distance, max_steps) {
                 grid.values[row_start + col] = value;
             }
         }
@@ -99,75 +120,89 @@ pub fn fill_nodata(grid: &mut Grid<f32>, max_search_distance: f64) {
     }
 }
 
-/// The value interpolated at nodata cell (`col`, `row`) from the nearest data
-/// cells above (`row_above[c]` for column `c`, including the cell's row) and
-/// below, or `None` if there are none within the search distance.
-fn interpolate(
-    col: usize,
-    row: usize,
-    row_above: &[ColumnNeighbor],
-    below: &[ColumnNeighbor],
-    max_search_distance: f64,
-    max_steps: usize,
-) -> Option<f32> {
-    const TOP_LEFT: usize = 0;
-    const BOTTOM_LEFT: usize = 1;
-    const TOP_RIGHT: usize = 2;
-    const BOTTOM_RIGHT: usize = 3;
+/// The nearest data cells above and below the cells of a row, per column.
+struct Neighbors<'a> {
+    /// The grid values, to read the data cells from.
+    values: &'a [f32],
+    width: usize,
+    /// The nearest data cell at or above the row.
+    above: &'a [ColumnNeighbor],
+    /// The nearest data cell strictly below the row.
+    below: &'a [ColumnNeighbor],
+}
 
-    let width = row_above.len();
-    let mut distances = [max_search_distance + 1.0; 4];
-    let mut values = [0.0f32; 4];
-    // Keeps `neighbor` for `quadrant` if it is nearer than the current one.
-    let mut check =
-        |distances: &mut [f64; 4], quadrant: usize, target_col: usize, neighbor: ColumnNeighbor| {
-            if let Some((target_row, value)) = neighbor {
+impl Neighbors<'_> {
+    /// The value interpolated at nodata cell (`col`, `row`), or `None` if
+    /// there are no data cells within the search distance.
+    fn interpolate(
+        &self,
+        col: usize,
+        row: usize,
+        max_search_distance: f64,
+        max_steps: usize,
+    ) -> Option<f32> {
+        const TOP_LEFT: usize = 0;
+        const BOTTOM_LEFT: usize = 1;
+        const TOP_RIGHT: usize = 2;
+        const BOTTOM_RIGHT: usize = 3;
+
+        let mut distances = [max_search_distance + 1.0; 4];
+        let mut values = [0.0f32; 4];
+        // Keeps the data cell at `target_row` of `target_col` for `quadrant`
+        // if it is nearer than the current one.
+        let mut check = |distances: &mut [f64; 4],
+                         quadrant: usize,
+                         target_col: usize,
+                         target_row: ColumnNeighbor| {
+            if target_row != NONE {
                 let dx = target_col as f64 - col as f64;
                 let dy = target_row as f64 - row as f64;
                 let squared_distance = dx * dx + dy * dy;
                 if squared_distance < distances[quadrant] * distances[quadrant] {
                     distances[quadrant] = squared_distance.sqrt();
-                    values[quadrant] = value;
+                    values[quadrant] = self.values[target_row as usize * self.width + target_col];
                 }
             }
         };
 
-    // Steps left and right one column at a time, looking for the nearest
-    // data cell of each quadrant. GDAL clamps the columns to the grid, so the
-    // edge column is checked again, with no effect.
-    let mut steps = max_steps;
-    let mut step = 0;
-    while step <= steps {
-        let left = col.saturating_sub(step);
-        let right = (col + step).min(width - 1);
+        // Steps left and right one column at a time, looking for the nearest
+        // data cell of each quadrant. GDAL clamps the columns to the grid, so
+        // the edge column is checked again, with no effect.
+        let mut steps = max_steps;
+        let mut step = 0;
+        while step <= steps {
+            let left = col.saturating_sub(step);
+            let right = (col + step).min(self.width - 1);
 
-        // The left quadrants include the cell's column, and the top ones its
-        // row.
-        check(&mut distances, TOP_LEFT, left, row_above[left]);
-        check(&mut distances, BOTTOM_LEFT, left, below[left]);
+            // The left quadrants include the cell's column, and the top ones
+            // its row.
+            check(&mut distances, TOP_LEFT, left, self.above[left]);
+            check(&mut distances, BOTTOM_LEFT, left, self.below[left]);
 
-        if step > 0 {
-            check(&mut distances, TOP_RIGHT, right, row_above[right]);
-            check(&mut distances, BOTTOM_RIGHT, right, below[right]);
+            if step > 0 {
+                check(&mut distances, TOP_RIGHT, right, self.above[right]);
+                check(&mut distances, BOTTOM_RIGHT, right, self.below[right]);
 
-            // Every four steps, stop at the farthest distance found so far.
-            if step % 4 == 0 {
-                steps = distances.iter().copied().fold(0.0, f64::max).floor() as usize;
+                // Every four steps, stop at the farthest distance found so
+                // far.
+                if step % 4 == 0 {
+                    steps = distances.iter().copied().fold(0.0, f64::max).floor() as usize;
+                }
+            }
+            step += 1;
+        }
+
+        let mut weight_sum = 0.0f64;
+        let mut value_sum = 0.0f64;
+        for (&distance, &value) in distances.iter().zip(&values) {
+            if distance <= max_search_distance {
+                let weight = 1.0 / distance;
+                weight_sum += weight;
+                value_sum += value as f64 * weight;
             }
         }
-        step += 1;
+        (weight_sum > 0.0).then(|| (value_sum / weight_sum) as f32)
     }
-
-    let mut weight_sum = 0.0f64;
-    let mut value_sum = 0.0f64;
-    for (&distance, &value) in distances.iter().zip(&values) {
-        if distance <= max_search_distance {
-            let weight = 1.0 / distance;
-            weight_sum += weight;
-            value_sum += value as f64 * weight;
-        }
-    }
-    (weight_sum > 0.0).then(|| (value_sum / weight_sum) as f32)
 }
 
 #[cfg(test)]

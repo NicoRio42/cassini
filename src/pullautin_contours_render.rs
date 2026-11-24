@@ -1,34 +1,14 @@
 use image::RgbaImage;
 use imageproc::drawing::draw_line_segment_mut;
 use log::info;
-use shapefile::dbase::{FieldIOError, FieldWriter, WritableRecord};
 use shapefile::record::polyline::GenericPolyline;
-use shapefile::{Point, Polyline, Reader, Writer};
+use shapefile::{Point, Polyline, Writer};
 use std::fs::{create_dir_all, File};
-use std::io::{BufReader, Write};
 use std::time::Instant;
-
-struct FormLineRecord {
-    id: f64,
-    elev: f64,
-}
-
-impl WritableRecord for FormLineRecord {
-    fn write_using<'a, W>(
-        &self,
-        field_writer: &mut FieldWriter<'a, W>,
-    ) -> std::result::Result<(), FieldIOError>
-    where
-        W: Write,
-    {
-        field_writer.write_next_field_value(&self.id)?;
-        field_writer.write_next_field_value(&self.elev)?;
-        Ok(())
-    }
-}
 
 use crate::config::Config;
 use crate::constants::{BUFFER, INCH, PURPLE};
+use crate::contour_shapefile::{contour_table, ContourRecord};
 use crate::map_features::{LineSymbol, MapFeature};
 use crate::{
     constants::{BROWN, TRANSPARENT},
@@ -180,19 +160,6 @@ pub fn pullautin_cull_formlines_render_contours(
     }
 
     let mut id: i32 = 0;
-    let contours_polylines_path = tile
-        .render_dir_path
-        .join("contours-raw")
-        .join("contours-raw.shp");
-
-    let contours_polylines_reader: shapefile::Reader<BufReader<File>, BufReader<File>> =
-        Reader::from_path(&contours_polylines_path).context(format!(
-            "could not open contour shapefile `{}`",
-            contours_polylines_path.display()
-        ))?;
-
-    let table_info = contours_polylines_reader.into_table_info();
-
     let formlines_dir = tile.render_dir_path.join("formlines");
     create_dir_all(&formlines_dir).context(format!(
         "could not create formline directory `{}`",
@@ -200,7 +167,7 @@ pub fn pullautin_cull_formlines_render_contours(
     ))?;
 
     let formlines_path = formlines_dir.join("formlines.shp");
-    let mut writer = Writer::from_path_with_info(&formlines_path, table_info).context(format!(
+    let mut writer = Writer::from_path(&formlines_path, contour_table()).context(format!(
         "could not create formline shapefile `{}`",
         formlines_path.display()
     ))?;
@@ -566,11 +533,11 @@ fn write_formline_shape_to_shapefile(
         points.push(Point { x: *x, y: *y });
     }
 
-    let record = FormLineRecord {
+    let record = ContourRecord {
         // dBase Numeric fields are serialized from f64, even when they have
         // zero decimal places and represent an integer identifier.
         id: f64::from(id),
-        elev: elevation,
+        elevation,
     };
 
     let smoothed_polyline = GenericPolyline::new(points);
@@ -808,9 +775,7 @@ fn get_point_elevation_from_dem_bilinear_interpolation(
 
 #[cfg(test)]
 mod tests {
-    use super::{find_interior_point, point_in_polygon, FormLineRecord};
-    use shapefile::dbase::{FieldName, TableWriterBuilder};
-    use std::io::Cursor;
+    use super::{find_interior_point, point_in_polygon};
 
     #[test]
     fn finds_interior_point_for_large_contour_without_scanning_its_area() {
@@ -830,20 +795,5 @@ mod tests {
         let (point_x, point_y) = find_interior_point(&x, &y).unwrap();
 
         assert!(point_in_polygon(point_x, point_y, &x, &y));
-    }
-
-    #[test]
-    fn writes_formline_record_to_numeric_contour_schema() {
-        let mut writer = TableWriterBuilder::new()
-            .add_numeric_field(FieldName::try_from("ID").unwrap(), 8, 0)
-            .add_numeric_field(FieldName::try_from("elev").unwrap(), 12, 3)
-            .build_with_dest(Cursor::new(Vec::<u8>::new()));
-
-        writer
-            .write_record(&FormLineRecord {
-                id: 0.0,
-                elev: 123.5,
-            })
-            .unwrap();
     }
 }
