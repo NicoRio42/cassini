@@ -5,19 +5,13 @@
 //!     [--crop min_x,min_y,max_x,max_y] [--diff-png diff.png]
 //! ```
 //!
-//! The rasters must have the same resolution. The comparison covers the cells
-//! of `a` whose centres fall in both extents and in the crop window. Exits with
-//! status 1 if any compared cell differs.
+//! The rasters must have the same resolution and aligned cells. The comparison
+//! covers the cells of `a` whose centres fall in both extents and in the crop
+//! window. Exits with status 1 if any compared cell differs, or if the stored
+//! types, the nodata values or, without `--crop`, the extents differ.
 
-#[path = "../src/error.rs"]
-#[allow(dead_code)]
-mod error;
-#[path = "../src/grid.rs"]
-#[allow(dead_code)]
-mod grid;
-
+use cassini::grid::{Grid, SampleType};
 use clap::Parser;
-use grid::Grid;
 use image::{Rgb, RgbImage};
 use std::{path::PathBuf, process::ExitCode};
 
@@ -59,9 +53,9 @@ enum Cell {
     Valid(f64),
 }
 
-fn describe(name: &str, grid: &Grid<f64>, path: &std::path::Path) {
+fn describe(name: &str, grid: &Grid<f64>, sample_type: SampleType, path: &std::path::Path) {
     println!(
-        "{name}: {}\n   {} x {} cells of {} m, extent [{}, {}, {}, {}], nodata {}",
+        "{name}: {}\n   {sample_type}, {} x {} cells of {} m, extent [{}, {}, {}, {}], nodata {}",
         path.display(),
         grid.width,
         grid.height,
@@ -89,10 +83,11 @@ fn main() -> ExitCode {
 
 /// Prints the comparison and returns whether the compared cells are equal.
 fn compare(args: &Args) -> Result<bool, String> {
-    let a = Grid::<f64>::read_geotiff(&args.a).map_err(|error| error.to_string())?;
-    let b = Grid::<f64>::read_geotiff(&args.b).map_err(|error| error.to_string())?;
-    describe("a", &a, &args.a);
-    describe("b", &b, &args.b);
+    let read = |path| Grid::<f64>::read_geotiff_with_type(path).map_err(|error| error.to_string());
+    let (a, a_type) = read(&args.a)?;
+    let (b, b_type) = read(&args.b)?;
+    describe("a", &a, a_type, &args.a);
+    describe("b", &b, b_type, &args.b);
 
     if a.resolution != b.resolution {
         return Err(format!(
@@ -100,21 +95,32 @@ fn compare(args: &Args) -> Result<bool, String> {
             a.resolution, b.resolution
         ));
     }
-    let same_grid = (a.min_x, a.max_y, a.width, a.height) == (b.min_x, b.max_y, b.width, b.height);
-    println!(
-        "extent and size: {}",
-        if same_grid { "identical" } else { "DIFFERENT" }
-    );
     let offset = (
         (a.min_x - b.min_x) / a.resolution,
         (a.max_y - b.max_y) / a.resolution,
     );
     if offset.0.fract() != 0.0 || offset.1.fract() != 0.0 {
-        println!(
-            "warning: the cells are not aligned, offset by ({}, {}) cells",
+        return Err(format!(
+            "the cells are not aligned, offset by ({}, {}) cells",
             offset.0, offset.1
-        );
+        ));
     }
+    let same_type = a_type == b_type;
+    println!("type: {}", if same_type { "identical" } else { "DIFFERENT" });
+    let same_nodata = a.nodata.map(f64::to_bits) == b.nodata.map(f64::to_bits);
+    println!(
+        "nodata value: {}",
+        if same_nodata { "identical" } else { "DIFFERENT" }
+    );
+    let same_grid = (a.min_x, a.max_y, a.width, a.height) == (b.min_x, b.max_y, b.width, b.height);
+    println!(
+        "extent and size: {}",
+        match (same_grid, args.crop.is_some()) {
+            (true, _) => "identical",
+            (false, false) => "DIFFERENT",
+            (false, true) => "different, ignored with --crop",
+        }
+    );
 
     let [crop_min_x, crop_min_y, crop_max_x, crop_max_y] = args.crop.unwrap_or([
         f64::NEG_INFINITY,
@@ -122,16 +128,18 @@ fn compare(args: &Args) -> Result<bool, String> {
         f64::INFINITY,
         f64::INFINITY,
     ]);
+    // Any point inside b, to test one coordinate at a time with `cell_at`.
+    let (b_x, b_y) = b.cell_center(0, 0);
     let cols: Vec<usize> = (0..a.width)
         .filter(|&col| {
             let (x, _) = a.cell_center(col, 0);
-            (crop_min_x..crop_max_x).contains(&x) && (b.min_x..b.max_x()).contains(&x)
+            (crop_min_x..crop_max_x).contains(&x) && b.cell_at(x, b_y).is_some()
         })
         .collect();
     let rows: Vec<usize> = (0..a.height)
         .filter(|&row| {
             let (_, y) = a.cell_center(0, row);
-            (crop_min_y..crop_max_y).contains(&y) && (b.min_y()..b.max_y).contains(&y)
+            (crop_min_y..crop_max_y).contains(&y) && b.cell_at(b_x, y).is_some()
         })
         .collect();
     if cols.is_empty() || rows.is_empty() {
@@ -174,7 +182,7 @@ fn compare(args: &Args) -> Result<bool, String> {
                 }
                 (true, true) => {
                     let difference = (value_a - value_b).abs();
-                    if max_difference.map_or(true, |max| difference > max.0) {
+                    if max_difference.is_none_or(|max| difference > max.0) {
                         max_difference = Some((difference, x, y, value_a, value_b));
                     }
                     differences.push(difference);
@@ -222,7 +230,8 @@ fn compare(args: &Args) -> Result<bool, String> {
         );
     }
 
-    Ok(identical == valid && only_a_nodata == 0 && only_b_nodata == 0)
+    let same_cells = identical == valid && only_a_nodata == 0 && only_b_nodata == 0;
+    Ok(same_cells && same_type && same_nodata && (same_grid || args.crop.is_some()))
 }
 
 fn percent(count: usize, total: usize) -> f64 {
@@ -246,7 +255,7 @@ fn write_diff_png(
             Cell::BothNodata => Rgb([0, 0, 0]),
             Cell::OnlyANodata => Rgb([40, 90, 255]),
             Cell::OnlyBNodata => Rgb([255, 150, 0]),
-            Cell::Valid(difference) if difference == 0.0 => Rgb([200, 200, 200]),
+            Cell::Valid(0.0) => Rgb([200, 200, 200]),
             Cell::Valid(difference) => {
                 // Any difference is visible, the largest ones in full red.
                 let t = (0.3 + 0.7 * difference / scale).min(1.0);

@@ -313,19 +313,25 @@ _Each session appends findings here: decisions, tolerances, measured parity, tim
 
 - **tiff 0.11.3:** the existing decoders compiled unchanged. The lockfile also bumps `weezl` 0.1.8 → 0.1.12 and adds `fax`, `zune-jpeg`. `image` 0.25 still pulls `tiff` 0.9.1 alongside; that is harmless. All 17 final PNGs (`*/full-map.png`, `*/vegetation.png`, `*/contours.png`, `*/cliffs.png`, `merged-map.png`) and all GDAL intermediates are byte-identical to the reference.
 - **`merged-map.ocd` is not deterministic:** two runs of the reference binary give different bytes (same size). Don't use it for parity; compare the PNGs.
-- **`src/grid.rs`:** `Grid<T>` for `f32`, `f64`, `u8` (trait `Sample`). `read_geotiff` converts any integer or float band to `f32`/`f64` (`u8` reads only `u8`), honours PixelIsPoint like GDAL, and reads GDAL's floating-point predictor (checked on `dem.tif`). `write_geotiff(path, Compression::{None, Deflate})` adds the horizontal predictor for `u8` only. `cell_at(x, y)` puts points on a cell edge in the east/south cell, so the east and south grid edges return `None`. The module is `#[allow(dead_code)]` in `main.rs` until step 2 uses it.
-- **Examples include source files** with `#[path = "../src/grid.rs"]` (and `error.rs`), because the crate has no library target. Keep `grid.rs` free of other `crate::` dependencies, or the examples break.
+- **`src/grid.rs`:** `Grid<T>` for `f32`, `f64`, `u8` (trait `Sample`).
+  - `read_geotiff` converts any integer or float band to `f32`/`f64` with `as`, like `gdal_translate -ot` (`u8` reads only `u8`). The nodata tag is parsed as the stored type and converted the same way, so nodata cells still match it. `read_geotiff_with_type` also returns the stored `SampleType`.
+  - It honours PixelIsPoint like GDAL and reads GDAL's floating-point predictor (checked on `dem.tif`). It rejects a geographic CRS or an EPSG code other than 2154, and accepts a user-defined CRS or none.
+  - `write_geotiff(path, Compression::{None, Deflate})` adds the horizontal predictor for `u8` only.
+  - `cell_at(x, y)` puts points on a cell edge in the east/south cell, so the east and south grid edges return `None`, as does a NaN coordinate. `index`/`get`/`set` `debug_assert!` that the cell is inside the grid.
+  - It replaces `raster.rs` (`F32Raster`, removed) and the TIFF decoders of `vegetation.rs` and `pullautin_smooth_contours.rs`: every TIFF read goes through `Grid::read_geotiff`. The local `Grid` structs of `cliff_features.rs` and `vegetation_areas.rs` are now `Window`.
+- **Library target:** `src/lib.rs` exports `error` and `grid`; `main.rs` imports them with `use cassini::{error, grid};`, so `crate::grid` still works in the binary's modules. Modules the examples need go in `lib.rs`, and may only depend on other `lib.rs` modules.
 - **Comparison tools** (exit 0 = equal, 1 = different, 2 = error):
-  - `cargo run --release --example compare_rasters -- a.tif b.tif [--crop min_x,min_y,max_x,max_y] [--diff-png d.png]`. Both rasters must have the same resolution; the window is `a`'s cells inside `b`'s extent and the crop. For `dem.tif` vs a tile-sized DEM, pass the tile as `--crop`. The reference `dem.tif` tile 907000_6454000 has 166 290 nodata cells out of 1 000 000.
-  - `cargo run --release --example compare_images -- a b [--diff path] [--tolerance n]`. `a` and `b` are two images, or two output directories, in which case every PNG/WebP image under `a` is matched by relative path and `--diff` is a directory.
+  - `cargo run --release --example compare_rasters -- a.tif b.tif [--crop min_x,min_y,max_x,max_y] [--diff-png d.png]`. Both rasters must have the same resolution and aligned cells (else exit 2); the window is `a`'s cells inside `b`'s extent and the crop. A different stored type or nodata value is a difference, and so is a different extent unless `--crop` is given. For `dem.tif` vs a tile-sized DEM, pass the tile as `--crop`. The reference `dem.tif` tile 907000_6454000 has 166 290 nodata cells out of 1 000 000.
+  - `cargo run --release --example compare_images -- a b [--diff path] [--tolerance n]`. `a` and `b` are two images, or two output directories, in which case the PNG/WebP images of both are matched by relative path (an image missing on either side is a difference) and `--diff` is a directory.
 - **Reference outputs.** Commands, from the repo root:
 
   ```bash
   git switch remove-pdal-gdal   # pre-rewrite code
   cargo build --release --locked
-  cp -r out-poussebout out-reference-poussebout
+  cp -r out-poussebout out-reference-poussebout   # out-reference-poussebout must not exist yet
   cp target/release/cassini out-reference-poussebout/cassini-reference
   ./out-reference-poussebout/cassini-reference batch -o out-reference-poussebout --skip-lidar --ocad in-poussebout
+  git switch -                  # back to the step branch
   ```
 
   To check a new binary: copy `out-poussebout` to the scratchpad, run the same batch on the copy with `./target/release/cassini`, then `compare_images out-reference-poussebout <copy>` (about 20 s per batch). Reference intermediates: `dem_with_buffer.tif`, `dem_2m_with_buffer.tif` and `slopes.tif` are Float32 (2800², 700², 2800²), uncompressed, nodata -9999; `*_vegetation_with_buffer.tif` are Byte 1400², nodata 255.

@@ -9,14 +9,14 @@ use crate::{
         BLACK, BUFFER, CLIFF_THICKNESS_1, CLIFF_THICKNESS_2, DEM_BLOCK_SIZE, INCH, TRANSPARENT,
     },
     error::{Result, ResultContext},
-    raster::F32Raster,
+    grid::Grid,
     tile::Tile,
 };
 
 /// Renders `slopes`, the tile's `slopes.tif`, to `cliffs.png`.
 pub fn render_cliffs(
     tile: &Tile,
-    slopes: &F32Raster,
+    slopes: &Grid<f32>,
     image_width: u32,
     image_height: u32,
     config: &Config,

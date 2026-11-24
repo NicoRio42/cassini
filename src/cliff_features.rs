@@ -26,8 +26,8 @@ use crate::{
     config::Config,
     constants::{BUFFER, CLIFF_THICKNESS_1, CLIFF_THICKNESS_2, DEM_BLOCK_SIZE},
     error::{CassiniError, Result},
+    grid::Grid,
     map_features::{AreaSymbol, Extent, LineSymbol, MapFeature, PointSymbol},
-    raster::F32Raster,
     tile::Tile,
     vectorization::{simplify_line, simplify_ring, FeatureSink, PinnedLines, Tracer, SLIVER_AREA},
 };
@@ -108,7 +108,7 @@ const AREA_SIMPLIFY_FACTOR: f64 = 2.0;
 /// with `simplify_tolerance` metres (0 to keep every vertex).
 pub fn get_cliff_features(
     tile: &Tile,
-    slopes: &F32Raster,
+    slopes: &Grid<f32>,
     config: &Config,
     simplify_tolerance: f64,
 ) -> Result<Vec<MapFeature>> {
@@ -125,7 +125,7 @@ pub fn get_cliff_features(
         max_x: tile.max_x as f64,
         max_y: tile.max_y as f64,
     };
-    let grid = Grid::around(&tile_extent);
+    let grid = Window::around(&tile_extent);
     let slopes = read_window(
         slopes,
         &tile.render_dir_path.join("slopes.tif"),
@@ -133,7 +133,7 @@ pub fn get_cliff_features(
         grid,
     )?;
     let dem_path = tile.render_dir_path.join("dem_with_buffer.tif");
-    let dem = read_window(&F32Raster::read(&dem_path)?, &dem_path, &tile_extent, grid)?;
+    let dem = read_window(&Grid::read_geotiff(&dem_path)?, &dem_path, &tile_extent, grid)?;
 
     let features = vectorize_cliffs(
         grid,
@@ -161,7 +161,7 @@ pub fn get_cliff_features(
 
 /// The window of `grid` in `raster`, read from `path`, a 0.5 m raster
 /// covering the tile and its buffer. The cells without data are NaN.
-fn read_window(raster: &F32Raster, path: &Path, tile: &Extent, grid: Grid) -> Result<Vec<f32>> {
+fn read_window(raster: &Grid<f32>, path: &Path, tile: &Extent, grid: Window) -> Result<Vec<f32>> {
     let buffer = 2.0 * BUFFER as f64;
     let expected_width = ((tile.max_x - tile.min_x + buffer) / CELL_SIZE) as usize;
     let expected_height = ((tile.max_y - tile.min_y + buffer) / CELL_SIZE) as usize;
@@ -195,13 +195,13 @@ fn read_window(raster: &F32Raster, path: &Path, tile: &Extent, grid: Grid) -> Re
 /// The vectorized window: the tile and a margin of `MARGIN` metres, as
 /// 0.5 m cells row-major from the north-west corner.
 #[derive(Debug, Clone, Copy)]
-struct Grid {
+struct Window {
     width: usize,
     height: usize,
     extent: Extent,
 }
 
-impl Grid {
+impl Window {
     fn around(tile: &Extent) -> Self {
         let extent = tile.expanded(MARGIN as f64);
         Self {
@@ -289,7 +289,7 @@ fn squared_distances(width: usize, height: usize, mask: impl Iterator<Item = boo
 /// Vectorizes the cells steeper than the first of `thresholds`, the
 /// `cliff_threshold_1` and `cliff_threshold_2` of the configuration.
 fn vectorize_cliffs(
-    grid: Grid,
+    grid: Window,
     tile: &Extent,
     slopes: &[f32],
     dem: &[f32],
@@ -422,7 +422,7 @@ fn vectorize_cliffs(
 
 /// A component of steep cells, in a patch of the grid around it.
 struct Component {
-    grid: Grid,
+    grid: Window,
     /// The north-west cell of the patch in the grid.
     x0: usize,
     y0: usize,
@@ -436,7 +436,7 @@ struct Component {
 }
 
 impl Component {
-    fn new(grid: Grid, cells: &[usize]) -> Self {
+    fn new(grid: Window, cells: &[usize]) -> Self {
         let xs = || cells.iter().map(|cell| cell % grid.width);
         let ys = || cells.iter().map(|cell| cell / grid.width);
         let bounds = [
@@ -1160,7 +1160,7 @@ mod tests {
 
     /// The DEM of `height` over the grid, and its slopes in degrees, as
     /// `gdaldem slope` computes them (Horn), without the border cells.
-    fn rasters(grid: Grid, height: impl Fn(f64, f64) -> f64) -> (Vec<f32>, Vec<f32>) {
+    fn rasters(grid: Window, height: impl Fn(f64, f64) -> f64) -> (Vec<f32>, Vec<f32>) {
         let mut dem = vec![0.0; grid.len()];
         for y in 0..grid.height {
             for x in 0..grid.width {
@@ -1198,7 +1198,7 @@ mod tests {
         thresholds: [f32; 2],
         simplify_tolerance: f64,
     ) -> Vec<MapFeature> {
-        let grid = Grid::around(tile);
+        let grid = Window::around(tile);
         let (dem, slopes) = rasters(grid, height);
         vectorize_cliffs(grid, tile, &slopes, &dem, thresholds, simplify_tolerance).unwrap()
     }
@@ -1537,7 +1537,7 @@ mod tests {
     fn ends_the_branches_on_the_line_they_leave() {
         // A T of two steps three cells wide: a long one along y = 20, and a
         // branch along x = 20 north of it
-        let grid = Grid::around(&TILE);
+        let grid = Window::around(&TILE);
         let cells: Vec<usize> = (0..grid.len())
             .filter(|cell| {
                 let [x, y] = grid.center(cell % grid.width, cell / grid.width);

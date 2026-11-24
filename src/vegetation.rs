@@ -5,6 +5,7 @@ use crate::{
         BUFFER, GREEN_1, GREEN_2, GREEN_3, INCH, TRANSPARENT, VEGETATION_BLOCK_SIZE, WHITE, YELLOW,
     },
     error::{CassiniError, Result, ResultContext},
+    grid::Grid,
     tile::Tile,
 };
 use image::{imageops, RgbaImage};
@@ -15,11 +16,9 @@ use imageproc::{
 use log::info;
 use std::{
     f32::consts::E,
-    fs::File,
     path::{Path, PathBuf},
     time::Instant,
 };
-use tiff::decoder::{Decoder, DecodingResult};
 
 /// Blur radii, in 1 m cells, of the medium and low vegetation densities.
 pub(crate) const MEDIUM_DENSITY_BLUR_RADIUS: usize = 2;
@@ -545,45 +544,15 @@ struct TifImage {
 }
 
 fn get_image_data_from_tif(path: &Path) -> Result<TifImage> {
-    let tif_file = File::open(path).context(format!("could not open `{}`", path.display()))?;
-    let mut img_decoder = Decoder::new(tif_file)
-        .context(format!("could not create decoder for `{}`", path.display()))?;
-    img_decoder = img_decoder.with_limits(tiff::decoder::Limits::unlimited());
-    let (width, height) = img_decoder.dimensions().context(format!(
-        "could not read dimensions from `{}`",
-        path.display()
-    ))?;
-
-    let decoded = img_decoder
-        .read_image()
-        .context(format!("could not decode `{}`", path.display()))?;
-    let DecodingResult::U8(image_data) = decoded else {
-        return Err(CassiniError::InvalidArtifact {
-            path: path.to_path_buf(),
-            message: "expected an 8-bit TIFF band".to_owned(),
-        });
+    let grid = Grid::<u8>::read_geotiff(path)?;
+    let invalid_size = || CassiniError::InvalidArtifact {
+        path: path.to_path_buf(),
+        message: format!("{} x {} cells is too large", grid.width, grid.height),
     };
-
-    let expected_len = (width as usize)
-        .checked_mul(height as usize)
-        .ok_or_else(|| CassiniError::InvalidArtifact {
-            path: path.to_path_buf(),
-            message: "TIFF dimensions overflow addressable memory".to_owned(),
-        })?;
-    if image_data.len() != expected_len {
-        return Err(CassiniError::InvalidArtifact {
-            path: path.to_path_buf(),
-            message: format!(
-                "TIFF contains {} pixels but its dimensions require {expected_len}",
-                image_data.len()
-            ),
-        });
-    }
-
     Ok(TifImage {
-        pixels: image_data,
-        width,
-        height,
+        width: u32::try_from(grid.width).map_err(|_| invalid_size())?,
+        height: u32::try_from(grid.height).map_err(|_| invalid_size())?,
+        pixels: grid.values,
     })
 }
 

@@ -9,10 +9,6 @@ mod constants;
 mod contours;
 mod dem;
 mod download;
-mod error;
-// Not used by the binary yet; the examples also include it.
-#[allow(dead_code)]
-mod grid;
 mod helpers;
 mod lidar;
 mod map_features;
@@ -24,7 +20,6 @@ mod ocd;
 mod process;
 mod pullautin_contours_render;
 mod pullautin_smooth_contours;
-mod raster;
 mod render;
 mod tile;
 mod vectorization;
@@ -34,6 +29,7 @@ mod vegetation_areas;
 mod world_file;
 
 use batch::batch;
+use cassini::{error, grid};
 use clap::{CommandFactory, Parser, Subcommand};
 use config::{default_config, get_config, Config};
 use download::download_osm_file;

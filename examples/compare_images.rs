@@ -6,14 +6,18 @@
 //! cargo run --release --example compare_images -- out-a out-b [--diff diff-dir]
 //! ```
 //!
-//! With directories, the images of `a` are matched by relative path in `b`,
-//! and `--diff` is a directory receiving a diff image per differing pair.
-//! In a diff image, the differing pixels are red over a faded copy of `a`.
-//! Exits with status 1 if any image differs.
+//! With directories, the images are matched by relative path, an image
+//! missing on either side counting as a difference, and `--diff` is a
+//! directory receiving a diff image per differing pair, named after the image
+//! with `.png` appended unless it is a PNG. In a diff image, the differing
+//! pixels are red over a faded copy of `a`. Exits with status 1 if any image
+//! differs, and 2 if any image cannot be read.
 
 use clap::Parser;
 use image::{Rgba, RgbaImage};
 use std::{
+    collections::BTreeSet,
+    ffi::OsString,
     fs,
     path::{Path, PathBuf},
     process::ExitCode,
@@ -51,44 +55,66 @@ fn main() -> ExitCode {
 }
 
 fn compare_directories(args: &Args) -> Result<bool, String> {
-    let mut images = Vec::new();
-    find_images(&args.a, &mut images)?;
-    images.sort();
-    if images.is_empty() {
+    let (mut in_a, mut in_b) = (BTreeSet::new(), BTreeSet::new());
+    find_images(&args.a, &args.a, &mut in_a)?;
+    find_images(&args.b, &args.b, &mut in_b)?;
+    if in_a.is_empty() {
         return Err(format!("no PNG or WebP image in `{}`", args.a.display()));
     }
 
-    let mut all_equal = true;
-    for path in images {
-        let relative = path.strip_prefix(&args.a).unwrap();
-        let other = args.b.join(relative);
+    let (mut all_equal, mut errors) = (true, 0usize);
+    for relative in in_a.union(&in_b) {
         print!("{}: ", relative.display());
-        if !other.exists() {
-            println!("MISSING in `{}`", args.b.display());
+        let missing_from = match (in_a.contains(relative), in_b.contains(relative)) {
+            (true, false) => Some(&args.b),
+            (false, true) => Some(&args.a),
+            _ => None,
+        };
+        if let Some(dir) = missing_from {
+            println!("MISSING in `{}`", dir.display());
             all_equal = false;
             continue;
         }
-        let diff = args
-            .diff
-            .as_ref()
-            .map(|dir| dir.join(relative).with_extension("png"));
-        all_equal &= compare_files(&path, &other, diff.as_deref(), args.tolerance)?;
+        let diff = args.diff.as_ref().map(|dir| diff_path(dir, relative));
+        let (a, b) = (args.a.join(relative), args.b.join(relative));
+        match compare_files(&a, &b, diff.as_deref(), args.tolerance) {
+            Ok(equal) => all_equal &= equal,
+            Err(message) => {
+                println!("ERROR: {message}");
+                errors += 1;
+            }
+        }
+    }
+    if errors > 0 {
+        return Err(format!("could not compare {errors} image(s)"));
     }
     Ok(all_equal)
 }
 
-fn find_images(dir: &Path, images: &mut Vec<PathBuf>) -> Result<(), String> {
+/// The diff image of `relative` in `dir`, so that `x.png` and `x.webp` do not
+/// share one.
+fn diff_path(dir: &Path, relative: &Path) -> PathBuf {
+    if relative.extension().is_some_and(|extension| extension == "png") {
+        return dir.join(relative);
+    }
+    let mut name = OsString::from(relative.as_os_str());
+    name.push(".png");
+    dir.join(name)
+}
+
+/// Adds the paths relative to `root` of the images under `dir` to `images`.
+fn find_images(root: &Path, dir: &Path, images: &mut BTreeSet<PathBuf>) -> Result<(), String> {
     let entries = fs::read_dir(dir)
         .map_err(|error| format!("could not read `{}`: {error}", dir.display()))?;
     for entry in entries {
         let path = entry.map_err(|error| error.to_string())?.path();
         if path.is_dir() {
-            find_images(&path, images)?;
+            find_images(root, &path, images)?;
         } else if matches!(
             path.extension().and_then(|extension| extension.to_str()),
             Some("png" | "webp")
         ) {
-            images.push(path);
+            images.insert(path.strip_prefix(root).unwrap().to_path_buf());
         }
     }
     Ok(())
