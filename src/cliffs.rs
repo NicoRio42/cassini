@@ -1,20 +1,22 @@
 use image::RgbaImage;
 use imageproc::drawing::draw_filled_ellipse_mut;
 use log::info;
-use std::{fs::File, time::Instant};
-use tiff::decoder::{Decoder, DecodingResult};
+use std::time::Instant;
 
 use crate::{
     config::Config,
     constants::{
         BLACK, BUFFER, CLIFF_THICKNESS_1, CLIFF_THICKNESS_2, DEM_BLOCK_SIZE, INCH, TRANSPARENT,
     },
-    error::{CassiniError, Result, ResultContext},
+    error::{Result, ResultContext},
+    raster::F32Raster,
     tile::Tile,
 };
 
+/// Renders `slopes`, the tile's `slopes.tif`, to `cliffs.png`.
 pub fn render_cliffs(
     tile: &Tile,
+    slopes: &F32Raster,
     image_width: u32,
     image_height: u32,
     config: &Config,
@@ -28,35 +30,11 @@ pub fn render_cliffs(
 
     let dem_block_size_pixel = DEM_BLOCK_SIZE * config.dpi_resolution / INCH;
 
-    let slopes_path = tile.render_dir_path.join("slopes.tif");
-    let slopes_tif_file =
-        File::open(&slopes_path).context(format!("could not open `{}`", slopes_path.display()))?;
-
-    let mut slopes_img_decoder = Decoder::new(slopes_tif_file).context(format!(
-        "could not create decoder for `{}`",
-        slopes_path.display()
-    ))?;
-    slopes_img_decoder = slopes_img_decoder.with_limits(tiff::decoder::Limits::unlimited());
-
-    let (slopes_width, _) = slopes_img_decoder.dimensions().context(format!(
-        "could not read dimensions from `{}`",
-        slopes_path.display()
-    ))?;
     let mut cliffs_layer_canvas = RgbaImage::from_pixel(image_width, image_height, TRANSPARENT);
 
-    let decoded = slopes_img_decoder
-        .read_image()
-        .context(format!("could not decode `{}`", slopes_path.display()))?;
-    let DecodingResult::F32(image_data) = decoded else {
-        return Err(CassiniError::InvalidArtifact {
-            path: slopes_path,
-            message: "expected a 32-bit floating-point TIFF band".to_owned(),
-        });
-    };
-
-    for index in 0..image_data.len() {
-        let x = index % slopes_width as usize;
-        let y = index / slopes_width as usize;
+    for (index, slope) in slopes.values.iter().copied().enumerate() {
+        let x = index % slopes.width;
+        let y = index / slopes.width;
 
         let x_pixel = ((x as i64 - (BUFFER as f32 / DEM_BLOCK_SIZE) as i64) as f32
             * dem_block_size_pixel) as i32;
@@ -70,8 +48,6 @@ pub fn render_cliffs(
         {
             continue;
         }
-
-        let slope = image_data[index];
 
         let mut cliff_thickness: Option<f32> = None;
 

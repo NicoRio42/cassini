@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 use crate::{
     canvas::Canvas,
     constants::{
-        BUILDING_OUTLINE_WIDTH, CROSSABLE_WATERCOURSE_WIDTH, DOUBLE_TRACK_WIDE_ROAD_INNER_WIDTH,
+        _MAJOR_POWERLINE_INNER_WIDTH, _MAJOR_POWERLINE_OUTER_WIDTH, BUILDING_OUTLINE_WIDTH,
+        CROSSABLE_WATERCOURSE_WIDTH, DOUBLE_TRACK_WIDE_ROAD_INNER_WIDTH,
         DOUBLE_TRACK_WIDE_ROAD_OUTER_WIDTH, FOOTPATH_DASH_INTERVAL_LENGTH, FOOTPATH_DASH_LENGTH,
         FOOTPATH_WIDTH, INCH, INCROSSABLE_BODY_OF_WATER_OUTLINE_WIDTH, MARSH_LINE_SPACING,
         MARSH_LINE_WIDTH, MINOR_WATERCOURSE_DASH_INTERVAL_LENGTH, MINOR_WATERCOURSE_DASH_LENGTH,
@@ -13,13 +14,13 @@ use crate::{
         VECTOR_BUILDING_GRAY, VECTOR_OLIVE_GREEN, VECTOR_PAVED_AREA_BROWN, VECTOR_TUNNEL_ALPHA,
         VECTOR_WHITE, WIDE_ROAD_INNER_WIDTH, WIDE_ROAD_OUTER_WIDTH, XL_WIDE_ROAD_INNER_WIDTH,
         XL_WIDE_ROAD_OUTER_WIDTH, XXL_WIDE_ROAD_INNER_WIDTH, XXL_WIDE_ROAD_OUTER_WIDTH,
-        _MAJOR_POWERLINE_INNER_WIDTH, _MAJOR_POWERLINE_OUTER_WIDTH,
     },
     error::Result,
+    map_features::get_polygon_areas,
 };
 use shapefile::{
     record::{polygon::GenericPolygon, polyline::GenericPolyline},
-    Point, PolygonRing,
+    Point,
 };
 
 enum StripeDirection {
@@ -95,18 +96,18 @@ impl MapRenderer {
 
     #[inline]
     pub fn uncrossable_body_of_water_301(mut self, polygon: &GenericPolygon<Point>) -> MapRenderer {
-        let (outer_geometry, holes) = self.get_outer_geometry_and_holes_from_polygon(polygon);
-
         self = self.uncrossable_body_of_water_area_301_1(&polygon);
 
-        self.black_img.set_color(VECTOR_BLACK);
-        self.black_img.set_line_width(
-            INCROSSABLE_BODY_OF_WATER_OUTLINE_WIDTH * self.dpi_resolution * 10.0 / INCH,
-        );
-        self.black_img.draw_polyline(&outer_geometry);
+        for (outer_geometry, holes) in self.get_outer_geometries_and_holes_from_polygon(polygon) {
+            self.black_img.set_color(VECTOR_BLACK);
+            self.black_img.set_line_width(
+                INCROSSABLE_BODY_OF_WATER_OUTLINE_WIDTH * self.dpi_resolution * 10.0 / INCH,
+            );
+            self.black_img.draw_polyline(&outer_geometry);
 
-        for hole in holes {
-            self.black_img.draw_polyline(&hole);
+            for hole in holes {
+                self.black_img.draw_polyline(&hole);
+            }
         }
 
         return self;
@@ -117,19 +118,19 @@ impl MapRenderer {
         mut self,
         polygon: &GenericPolygon<Point>,
     ) -> MapRenderer {
-        let (outer_geometry, holes) = self.get_outer_geometry_and_holes_from_polygon(polygon);
+        for (outer_geometry, holes) in self.get_outer_geometries_and_holes_from_polygon(polygon) {
+            self.blue_img.set_color(VECTOR_BLUE);
+            self.blue_img
+                .draw_filled_polygon_with_holes(&outer_geometry, &holes);
 
-        self.blue_img.set_color(VECTOR_BLUE);
-        self.blue_img
-            .draw_filled_polygon_with_holes(&outer_geometry, &holes);
+            self.contours_img.set_transparent_color();
+            self.contours_img
+                .draw_filled_polygon_with_holes(&outer_geometry, &holes);
 
-        self.contours_img.set_transparent_color();
-        self.contours_img
-            .draw_filled_polygon_with_holes(&outer_geometry, &holes);
-
-        self.cliffs_img.set_transparent_color();
-        self.cliffs_img
-            .draw_filled_polygon_with_holes(&outer_geometry, &holes);
+            self.cliffs_img.set_transparent_color();
+            self.cliffs_img
+                .draw_filled_polygon_with_holes(&outer_geometry, &holes);
+        }
 
         return self;
     }
@@ -190,10 +191,11 @@ impl MapRenderer {
 
     #[inline]
     pub fn marsh_308(mut self, polygon: &GenericPolygon<Point>) -> MapRenderer {
-        let (outer_geometry, holes) = self.get_outer_geometry_and_holes_from_polygon(polygon);
-        self.striped_blue_img.set_color(VECTOR_BLUE);
-        self.striped_blue_img
-            .draw_filled_polygon_with_holes(&outer_geometry, &holes);
+        for (outer_geometry, holes) in self.get_outer_geometries_and_holes_from_polygon(polygon) {
+            self.striped_blue_img.set_color(VECTOR_BLUE);
+            self.striped_blue_img
+                .draw_filled_polygon_with_holes(&outer_geometry, &holes);
+        }
 
         return self;
     }
@@ -421,37 +423,37 @@ impl MapRenderer {
         mut self,
         polygon: &GenericPolygon<Point>,
     ) -> MapRenderer {
-        let (outer_geometry, holes) = self.get_outer_geometry_and_holes_from_polygon(polygon);
-
-        self.olive_green_img.set_color(VECTOR_OLIVE_GREEN);
-        self.olive_green_img
-            .draw_filled_polygon_with_holes(&outer_geometry, &holes);
-
-        return self;
-    }
-
-    #[inline]
-    pub fn building_521(mut self, polygon: &GenericPolygon<Point>) -> MapRenderer {
-        let (outer_geometry, holes) = self.get_outer_geometry_and_holes_from_polygon(polygon);
-
-        self.gray_img.set_color(VECTOR_BUILDING_GRAY);
-        self.gray_img
-            .draw_filled_polygon_with_holes(&outer_geometry, &holes);
-
-        self.black_img.set_color(VECTOR_BLACK);
-        self.black_img
-            .set_line_width(BUILDING_OUTLINE_WIDTH * self.dpi_resolution * 10.0 / INCH);
-        self.black_img.draw_polyline(&outer_geometry);
-
-        for hole in holes {
-            self.black_img.draw_polyline(&hole);
+        for (outer_geometry, holes) in self.get_outer_geometries_and_holes_from_polygon(polygon) {
+            self.olive_green_img.set_color(VECTOR_OLIVE_GREEN);
+            self.olive_green_img
+                .draw_filled_polygon_with_holes(&outer_geometry, &holes);
         }
 
         return self;
     }
 
     #[inline]
-    fn get_points_from_line_part(&self, line_part: &Vec<Point>) -> Vec<(f32, f32)> {
+    pub fn building_521(mut self, polygon: &GenericPolygon<Point>) -> MapRenderer {
+        for (outer_geometry, holes) in self.get_outer_geometries_and_holes_from_polygon(polygon) {
+            self.gray_img.set_color(VECTOR_BUILDING_GRAY);
+            self.gray_img
+                .draw_filled_polygon_with_holes(&outer_geometry, &holes);
+
+            self.black_img.set_color(VECTOR_BLACK);
+            self.black_img
+                .set_line_width(BUILDING_OUTLINE_WIDTH * self.dpi_resolution * 10.0 / INCH);
+            self.black_img.draw_polyline(&outer_geometry);
+
+            for hole in holes {
+                self.black_img.draw_polyline(&hole);
+            }
+        }
+
+        return self;
+    }
+
+    #[inline]
+    fn get_points_from_line_part(&self, line_part: &[Point]) -> Vec<(f32, f32)> {
         let mut points: Vec<(f32, f32)> = vec![];
 
         for point in line_part {
@@ -466,26 +468,22 @@ impl MapRenderer {
     }
 
     #[inline]
-    fn get_outer_geometry_and_holes_from_polygon(
+    fn get_outer_geometries_and_holes_from_polygon(
         &self,
         polygon: &GenericPolygon<Point>,
-    ) -> (Vec<(f32, f32)>, Vec<Vec<(f32, f32)>>) {
-        let mut outer_geometry: Vec<(f32, f32)> = vec![];
-        let mut holes: Vec<Vec<(f32, f32)>> = vec![];
-
-        for ring in polygon.rings().iter() {
-            match ring {
-                PolygonRing::Outer(outer_ring) => {
-                    outer_geometry = self.get_points_from_line_part(outer_ring);
-                }
-                PolygonRing::Inner(inner_ring) => {
-                    let points = self.get_points_from_line_part(inner_ring);
-                    holes.push(points);
-                }
-            }
-        }
-
-        return (outer_geometry, holes);
+    ) -> Vec<(Vec<(f32, f32)>, Vec<Vec<(f32, f32)>>)> {
+        get_polygon_areas(polygon)
+            .into_iter()
+            .map(|area| {
+                (
+                    self.get_points_from_line_part(area.outer),
+                    area.holes
+                        .into_iter()
+                        .map(|hole| self.get_points_from_line_part(hole))
+                        .collect(),
+                )
+            })
+            .collect()
     }
 
     #[inline]
