@@ -108,7 +108,7 @@ mod tests {
     fn non_zero_exit_is_a_command_error() {
         let error = checked_output(
             Command::new("sh").args(["-c", "printf boom >&2; exit 7"]),
-            Stage::Dem,
+            Stage::Vectors,
             None,
         )
         .unwrap_err();
