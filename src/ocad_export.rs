@@ -3,6 +3,7 @@ use crate::{
     helpers::remove_if_exists,
     map_features::{
         clip_line_part, clip_ring, get_polygon_areas, AreaSymbol, Extent, LineSymbol, MapFeature,
+        PointSymbol,
     },
     ocad_merge::{merge_tile_objects, take_interior_objects, Bounds, TileObjects},
     ocd::{
@@ -29,6 +30,12 @@ pub const MERGED_OCD_FILE_NAME: &str = "merged-map.ocd";
 /// render directory until the merged OCAD file is written.
 pub const SPILLED_OBJECTS_FILE_NAME: &str = "ocad-objects.bin";
 
+fn get_point_symbol_number(symbol: PointSymbol) -> i32 {
+    match symbol {
+        PointSymbol::LargeBoulder205 => 205000,
+    }
+}
+
 /// Returns the OCD symbols drawn for a line feature. A motorway is two
 /// overlaid lines. Wide road tunnels are drawn as 512 bridge / tunnel, and
 /// road and footpath tunnels are left out, like the PNG renderer does.
@@ -53,6 +60,7 @@ fn get_line_symbol_numbers(symbol: LineSymbol) -> &'static [i32] {
         LineSymbol::Road503 { tunnel: true } | LineSymbol::Footpath505 { tunnel: true } => &[],
         LineSymbol::Railway509 => &[509000],
         LineSymbol::PowerLineCablewayOrSkilift510 => &[510000],
+        LineSymbol::Cliff202 => &[202000],
     }
 }
 
@@ -79,28 +87,37 @@ fn get_area_symbol_numbers(symbol: AreaSymbol) -> AreaSymbolNumbers {
         AreaSymbol::VegetationWalk408 => (408000, None),
         AreaSymbol::VegetationWalkGoodVisibility409 => (409000, None),
         AreaSymbol::VegetationFight410 => (410000, None),
+        AreaSymbol::GiganticBoulderOrRockPillar206 => (206000, None),
     };
 
     AreaSymbolNumbers { fill, border }
 }
 
-/// Every OCD symbol number the exporter can emit, sorted.
-fn get_exported_symbols() -> Vec<i32> {
-    let mut numbers: Vec<i32> = LineSymbol::ALL
+/// Every OCD symbol number the exporter can emit, with the kind of the
+/// objects it draws, sorted.
+fn get_exported_symbols() -> Vec<(i32, ObjectKind)> {
+    let mut symbols: Vec<(i32, ObjectKind)> = PointSymbol::ALL
         .iter()
-        .flat_map(|symbol| get_line_symbol_numbers(*symbol).iter().copied())
+        .map(|symbol| (get_point_symbol_number(*symbol), ObjectKind::Point))
+        .chain(LineSymbol::ALL.iter().flat_map(|symbol| {
+            get_line_symbol_numbers(*symbol)
+                .iter()
+                .map(|number| (*number, ObjectKind::Line))
+        }))
         .chain(AreaSymbol::ALL.iter().flat_map(|symbol| {
             let numbers = get_area_symbol_numbers(*symbol);
-            once(numbers.fill).chain(numbers.border)
+            once((numbers.fill, ObjectKind::Area))
+                .chain(numbers.border.map(|border| (border, ObjectKind::Line)))
         }))
         .collect();
 
-    numbers.sort();
-    numbers.dedup();
-    numbers
+    symbols.sort_by_key(|(number, _)| *number);
+    symbols.dedup();
+    symbols
 }
 
-/// Fails when the template lacks a symbol the exporter can emit, and warns
+/// Fails when the template lacks a symbol the exporter can emit, or defines
+/// it with another type than the objects it draws, and warns
 /// when a fill symbol has a border, which would be drawn along the tile edge.
 pub fn check_template(template: &OcdTemplate) -> Result<()> {
     template.check_symbols(&get_exported_symbols())?;
@@ -320,6 +337,16 @@ fn get_ocd_objects(
 
     for feature in features {
         match feature {
+            MapFeature::Point(symbol, point) => {
+                // A point on the edge between two tiles goes to one of them
+                if point.x.is_finite() && point.y.is_finite() && extent.contains_half_open(point) {
+                    objects.push(OcdObject {
+                        symbol: get_point_symbol_number(*symbol),
+                        kind: ObjectKind::Point,
+                        points: convert_points(&[*point], georeferencing)?,
+                    });
+                }
+            }
             MapFeature::Line(symbol, line) => {
                 for part in line.parts() {
                     push_line_objects(
@@ -497,14 +524,30 @@ mod tests {
 
     #[test]
     fn exports_the_symbols_of_every_variant() {
-        let numbers = get_exported_symbols();
+        let symbols = get_exported_symbols();
+        let numbers: Vec<i32> = symbols.iter().map(|(number, _)| *number).collect();
 
-        for number in [
-            101000, 301001, 301004, 403000, 406000, 408000, 409000, 410000, 502002, 512000, 521003,
-            521004,
+        for symbol in [
+            (101000, ObjectKind::Line),
+            (202000, ObjectKind::Line),
+            (205000, ObjectKind::Point),
+            (206000, ObjectKind::Area),
+            (301001, ObjectKind::Area),
+            (301004, ObjectKind::Line),
+            (403000, ObjectKind::Area),
+            (406000, ObjectKind::Area),
+            (408000, ObjectKind::Area),
+            (409000, ObjectKind::Area),
+            (410000, ObjectKind::Area),
+            (502002, ObjectKind::Line),
+            (512000, ObjectKind::Line),
+            (521003, ObjectKind::Area),
+            (521004, ObjectKind::Line),
         ] {
-            assert!(numbers.contains(&number), "{number} is not exported");
+            assert!(symbols.contains(&symbol), "{symbol:?} is not exported");
         }
+        // Each number once, with one kind
+        assert!(numbers.windows(2).all(|pair| pair[0] < pair[1]));
         // Lakes and buildings are exported without their bordered symbols
         assert!(!numbers.contains(&301000));
         assert!(!numbers.contains(&521002));
@@ -528,6 +571,26 @@ mod tests {
             objects[0].points,
             vec![point(-5_000, 0), point(0, 0), point(0, 1_000)]
         );
+    }
+
+    #[test]
+    fn keeps_the_points_of_the_tile_edges_in_one_tile_only() {
+        let boulder = |x, y| MapFeature::Point(PointSymbol::LargeBoulder205, Point::new(x, y));
+        let features = [
+            boulder(500.0, 600.0),
+            boulder(0.0, 0.0),
+            boulder(1000.0, 500.0),
+            boulder(500.0, 1000.0),
+            boulder(-1.0, 500.0),
+        ];
+
+        let objects = get_ocd_objects(&features, &EXTENT, &GEOREFERENCING).unwrap();
+
+        assert_eq!(objects.len(), 2);
+        assert_eq!(objects[0].symbol, 205000);
+        assert_eq!(objects[0].kind, ObjectKind::Point);
+        assert_eq!(objects[0].points, vec![point(0, 1_000)]);
+        assert_eq!(objects[1].points, vec![point(-5_000, -5_000)]);
     }
 
     #[test]

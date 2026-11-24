@@ -4,7 +4,7 @@ use crate::{
     constants::{BUFFER, COASTLINE_EDGE_BUFFER, INCH},
     error::{Result, ResultContext},
     helpers::does_polyline_intersect_tile,
-    map_features::{AreaSymbol, Extent, LineSymbol, MapFeature},
+    map_features::{AreaSymbol, Extent, LineSymbol, MapFeature, PointSymbol},
     map_renderer::MapRenderer,
     tile::Tile,
 };
@@ -44,6 +44,8 @@ pub fn render_map_with_osm_vector_shapes(
 
     for feature in features {
         map_renderer = match feature {
+            // Cliffs are rasterized into cliffs.png by the cliff renderer
+            MapFeature::Point(PointSymbol::LargeBoulder205, _) => map_renderer,
             MapFeature::Line(symbol, line) => match symbol {
                 // Contours are rasterized into contours.png by the contour renderer
                 LineSymbol::Contour101 | LineSymbol::IndexContour102 | LineSymbol::FormLine103 => {
@@ -82,6 +84,7 @@ pub fn render_map_with_osm_vector_shapes(
                 LineSymbol::PowerLineCablewayOrSkilift510 => {
                     map_renderer.power_line_cableway_or_skilift_510(line)
                 }
+                LineSymbol::Cliff202 => map_renderer,
             },
             MapFeature::Area(symbol, polygon) => match symbol {
                 AreaSymbol::UncrossableBodyOfWater301 => {
@@ -101,6 +104,7 @@ pub fn render_map_with_osm_vector_shapes(
                 | AreaSymbol::VegetationWalk408
                 | AreaSymbol::VegetationWalkGoodVisibility409
                 | AreaSymbol::VegetationFight410 => map_renderer,
+                AreaSymbol::GiganticBoulderOrRockPillar206 => map_renderer,
             },
         };
     }

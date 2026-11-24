@@ -110,6 +110,9 @@ fn reaches_edge(object: &OcdObject, bounds: &Bounds) -> bool {
         .edge_lines()
         .into_iter()
         .any(|edge_line| match object.kind {
+            // The export keeps the points of the edge between two tiles in
+            // one of them only
+            ObjectKind::Point => false,
             ObjectKind::Line => line_ends(object).any(|(_, point)| edge_line.contains(&point)),
             ObjectKind::Area => edge_contacts(object, edge_line).next().is_some(),
         })
@@ -218,6 +221,7 @@ pub fn merge_tile_objects(tiles: Vec<TileObjects>, join_tolerance: i32) -> Vec<O
     let seams = get_seams(&bounds);
     let seam_edges = SeamEdges::new(&bounds, &seams);
 
+    let mut points: Vec<OcdObject> = vec![];
     let mut lines: Vec<TileObject> = vec![];
     let mut areas: Vec<TileObject> = vec![];
     for (tile_index, tile) in tiles.into_iter().enumerate() {
@@ -227,6 +231,7 @@ pub fn merge_tile_objects(tiles: Vec<TileObjects>, join_tolerance: i32) -> Vec<O
                 object,
             };
             match tile_object.object.kind {
+                ObjectKind::Point => points.push(tile_object.object),
                 ObjectKind::Line => lines.push(tile_object),
                 ObjectKind::Area => areas.push(tile_object),
             }
@@ -268,7 +273,9 @@ pub fn merge_tile_objects(tiles: Vec<TileObjects>, join_tolerance: i32) -> Vec<O
             .filter(|(_, is_changed)| !is_changed)
             .map(|(tile_object, _)| tile_object.object)
     };
-    unchanged(lines, is_joined)
+    points
+        .into_iter()
+        .chain(unchanged(lines, is_joined))
         .chain(joined_lines)
         .chain(unchanged(areas, is_unioned))
         .chain(unioned_areas)
@@ -917,15 +924,21 @@ mod tests {
                 area(406000, &[&[(0, 20), (50, 20), (50, 30), (0, 30)]]),
                 // Touching the edge at a vertex only
                 area(406000, &[&[(0, 50), (50, 40), (50, 60)]]),
+                OcdObject {
+                    symbol: 205000,
+                    kind: ObjectKind::Point,
+                    points: points(&[(0, 70)]),
+                },
             ],
         };
 
         let interior = take_interior_objects(&mut tile);
 
         assert_eq!(tile.objects.len(), 2);
-        assert_eq!(interior.len(), 2);
+        assert_eq!(interior.len(), 3);
         assert_eq!(interior[0].kind, ObjectKind::Line);
         assert_eq!(interior[1].kind, ObjectKind::Area);
+        assert_eq!(interior[2].kind, ObjectKind::Point);
     }
 
     #[test]

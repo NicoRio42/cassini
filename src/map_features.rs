@@ -3,6 +3,7 @@ use shapefile::{Point, Polygon, PolygonRing, Polyline};
 /// A classified map feature, in projected coordinates (EPSG:2154 metres).
 /// The PNG renderer draws these and the OCAD exporter serializes them.
 pub enum MapFeature {
+    Point(PointSymbol, Point),
     Line(LineSymbol, Polyline),
     Area(AreaSymbol, Polygon),
 }
@@ -11,11 +12,25 @@ impl MapFeature {
     /// Whether the feature's bounding box overlaps `extent`.
     pub fn overlaps(&self, extent: &Extent) -> bool {
         let bbox = match self {
+            MapFeature::Point(_, point) => return extent.overlaps_bbox(point, point),
             MapFeature::Line(_, line) => line.bbox(),
             MapFeature::Area(_, polygon) => polygon.bbox(),
         };
         extent.overlaps_bbox(&bbox.min, &bbox.max)
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PointSymbol {
+    // Cliffs are only exported to OCAD, the PNG renderer draws the cliffs
+    // raster instead
+    LargeBoulder205,
+}
+
+impl PointSymbol {
+    /// Every point symbol. Add new variants here too, the OCAD export checks
+    /// its template against the symbols of this list.
+    pub const ALL: [PointSymbol; 1] = [PointSymbol::LargeBoulder205];
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,12 +49,14 @@ pub enum LineSymbol {
     Footpath505 { tunnel: bool },
     Railway509,
     PowerLineCablewayOrSkilift510,
+    // Cliffs are only exported to OCAD
+    Cliff202,
 }
 
 impl LineSymbol {
     /// Every line symbol. Add new variants here too, the OCAD export checks
     /// its template against the symbols of this list.
-    pub const ALL: [LineSymbol; 20] = [
+    pub const ALL: [LineSymbol; 21] = [
         LineSymbol::Contour101,
         LineSymbol::IndexContour102,
         LineSymbol::FormLine103,
@@ -60,6 +77,7 @@ impl LineSymbol {
         LineSymbol::Footpath505 { tunnel: true },
         LineSymbol::Railway509,
         LineSymbol::PowerLineCablewayOrSkilift510,
+        LineSymbol::Cliff202,
     ];
 }
 
@@ -77,12 +95,14 @@ pub enum AreaSymbol {
     VegetationWalk408,
     VegetationWalkGoodVisibility409,
     VegetationFight410,
+    // Cliffs are only exported to OCAD
+    GiganticBoulderOrRockPillar206,
 }
 
 impl AreaSymbol {
     /// Every area symbol. Add new variants here too, the OCAD export checks
     /// its template against the symbols of this list.
-    pub const ALL: [AreaSymbol; 10] = [
+    pub const ALL: [AreaSymbol; 11] = [
         AreaSymbol::UncrossableBodyOfWater301,
         AreaSymbol::UncrossableBodyOfWaterArea301_1,
         AreaSymbol::Marsh308,
@@ -93,6 +113,7 @@ impl AreaSymbol {
         AreaSymbol::VegetationWalk408,
         AreaSymbol::VegetationWalkGoodVisibility409,
         AreaSymbol::VegetationFight410,
+        AreaSymbol::GiganticBoulderOrRockPillar206,
     ];
 }
 
@@ -113,6 +134,15 @@ impl Extent {
             max_x: self.max_x + margin,
             max_y: self.max_y + margin,
         }
+    }
+
+    /// Whether `point` is in the extent, its maximum edges excluded, so that
+    /// a point on the edge between two tiles is in one of them only.
+    pub fn contains_half_open(&self, point: &Point) -> bool {
+        point.x >= self.min_x
+            && point.x < self.max_x
+            && point.y >= self.min_y
+            && point.y < self.max_y
     }
 
     /// Whether the bounding box from `min` to `max` overlaps the extent.

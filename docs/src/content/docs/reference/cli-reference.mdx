@@ -345,9 +345,17 @@ The following options are available for the `process`, `render` and `batch` subc
 
 </p>
 
-Also export the map as an OCAD 12 file, `full-map.ocd`, next to `full-map.png`. The file contains contours (101, 102), form lines (103), vegetation areas and the vector features (roads, paths, water, buildings...) as editable objects, clipped to the tile extent and georeferenced in RGF93 / Lambert-93. Cliffs are not exported yet. Load `full-map.png` as a background map to trace them.
+Also export the map as an OCAD 12 file, `full-map.ocd`, next to `full-map.png`. The file contains contours (101, 102), form lines (103), vegetation areas and the vector features (roads, paths, water, buildings...) as editable objects, clipped to the tile extent and georeferenced in RGF93 / Lambert-93.
 
 Vegetation is exported as 403 (rough open land), 406, 408 and 410 (vegetation: slow running, walk, fight) areas, plus 409 (vegetation: walk, good visibility) in the `409` [undergrowth mode](#--undergrowth). The areas follow the same thresholds as the PNG rendering, and are generalised with the ISOM 2017-2 minimum areas and widths: areas, holes and parts narrower than the minimum are merged into their surroundings. The green areas and 403 do not overlap and share the same boundary. 403 and 409 are left out under the green areas, but 409 may overlap 403, as `undergrowth.png` covers the yellow in `full-map.png`. Areas crossing the tile edge are measured whole, up to 50 m beyond it, so that neighbouring tiles keep or drop them alike. When the neighbouring tile is missing, they are measured as if they continued beyond the edge. As a result, the exported map is less green than `full-map.png`, whose small patches are below the ISOM minimums.
+
+Cliffs are exported from the cells steeper than [`cliff_threshold_1`](/reference/configuration-reference#cliff-threshold-1), the ones `cliffs.png` draws as dots: 3.5 m dots for the cells steeper than [`cliff_threshold_2`](/reference/configuration-reference#cliff-threshold-2), 2.5 m dots for the others. Both thresholds are 60 by default, so every dot is 3.5 m:
+
+- Touching steep cells that fit in the 205 symbol, about 9 m across, and whose top stands at least 1 m above three quarters of the ground around them, are exported as a 205 (large boulder).
+- Where the dots merge into black wider than a 202 line drawn over 3.5 m dots, about 7 m, the black is exported as a 206 (gigantic boulder or rock pillar) area, when it is larger than the 205 symbol. Its outline follows the dots, so steep hillsides and dense groups of small cliffs are exported this way too.
+- The other steep cells are exported as 202 (cliff) lines along the middle of their steep band. A cliff leaving a 206 area is a line starting at the area's edge. A short cliff in a slope gives a short line, and a rock too large for the 205 symbol, whose flat top is not steep, gives a line closed around its top. Branches shorter than 2 m are dropped, and so are groups of touching cells whose lines are shorter than 3 m in total, or of fewer than 4 cells. A branch ends on the line it leaves.
+
+The 202 lines have no tags, and their direction is not meaningful. The export has no 201 (impassable cliff): `cliff_threshold_2` only sets the size of the dots, which the 206 areas follow. The sizes above are ISOM 2017-2 sizes on the ground, whatever the scale of the template.
 
 Lakes are exported as a 301.001 area with 301.004 bank lines, and buildings as a 521.003 area with 521.004 outlines, so that no bank line or outline is drawn where the tile edge cuts them. Wide road tunnels are exported as 512 (bridge / tunnel), road and footpath tunnels are left out.
 
@@ -363,7 +371,7 @@ The whole batch must fit in one OCAD file at the template's scale: about 1,670 k
 
 </p>
 
-Optional path to an OCAD 12 file whose colors and symbols are copied into the exported file, instead of the built-in ISOM 2017-2 symbol set (1:10 000). The map scale is also taken from this file. Its objects are not copied. Cassini checks that the template defines every symbol it exports, and lists the missing ones otherwise. Requires `--ocad`.
+Optional path to an OCAD 12 file whose colors and symbols are copied into the exported file, instead of the built-in ISOM 2017-2 symbol set (1:10 000). The map scale is also taken from this file. Its objects are not copied. Cassini checks that the template defines every symbol it exports, including the cliff symbols 202, 205 and 206, as a point, line or area symbol as its objects need, and lists the missing or mistyped ones otherwise. Requires `--ocad`.
 
 ### `--ocad-simplify`
 
@@ -374,7 +382,7 @@ Optional path to an OCAD 12 file whose colors and symbols are copied into the ex
 
 </p>
 
-Tolerance in meters for simplifying the boundaries of the exported vegetation areas (Douglas–Peucker). A larger tolerance gives fewer vertices, which makes the areas easier to edit in OCAD, at the cost of fidelity. `0` keeps every traced vertex, about one per meter of boundary. Requires `--ocad`.
+Tolerance in meters for simplifying the boundaries of the exported vegetation areas and the 202 cliff lines (Douglas–Peucker). The 206 areas are simplified with twice this tolerance. A larger tolerance gives fewer vertices, which makes the areas easier to edit in OCAD, at the cost of fidelity. `0` keeps every traced vertex, about one per meter of boundary. Requires `--ocad`.
 
 ## Common options
 

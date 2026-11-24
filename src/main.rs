@@ -1,6 +1,7 @@
 mod batch;
 mod buffer;
 mod canvas;
+mod cliff_features;
 mod cliffs;
 mod coastlines;
 mod config;
@@ -20,8 +21,10 @@ mod ocd;
 mod process;
 mod pullautin_contours_render;
 mod pullautin_smooth_contours;
+mod raster;
 mod render;
 mod tile;
+mod vectorization;
 mod vectors;
 mod vegetation;
 mod vegetation_areas;
@@ -250,7 +253,7 @@ struct OcadArgs {
         requires = "ocad",
         default_value_t = DEFAULT_OCAD_SIMPLIFY_TOLERANCE,
         value_parser = parse_simplify_tolerance,
-        help = "Tolerance in meters for simplifying the vegetation areas of the OCAD export, 0 to keep every traced vertex"
+        help = "Tolerance in meters for simplifying the vegetation areas and cliffs of the OCAD export, 0 to keep every traced vertex"
     )]
     ocad_simplify: f64,
 }

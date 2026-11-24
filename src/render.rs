@@ -7,11 +7,13 @@ use crate::map_features::MapFeature;
 use crate::ocad_export::{SPILLED_OBJECTS_FILE_NAME, TILE_OCD_FILE_NAME};
 use crate::ocd::OcdTemplate;
 use crate::process::{checked_output, ensure_file};
+use crate::raster::F32Raster;
 use crate::tile::TileWithNeighbors;
 use crate::vectors::{get_map_features_from_osm_shapes, render_map_with_osm_vector_shapes};
 use crate::vegetation_areas::get_vegetation_features;
 use crate::world_file::create_world_file;
 use crate::{
+    cliff_features::get_cliff_features,
     cliffs::render_cliffs,
     dem::create_dem_with_buffer_and_slopes_tiff,
     tile::Tile,
@@ -39,8 +41,8 @@ pub struct RenderOptions {
 #[derive(Clone)]
 pub struct OcadOptions {
     pub template: Arc<OcdTemplate>,
-    /// Douglas–Peucker tolerance in metres for the vegetation areas, 0 to
-    /// keep every traced vertex.
+    /// Douglas–Peucker tolerance in metres for the vegetation areas and the
+    /// cliffs, 0 to keep every traced vertex.
     pub simplify_tolerance: f64,
 }
 
@@ -98,7 +100,13 @@ pub fn render_tile_map(
     create_dem_with_buffer_and_slopes_tiff(&tile, &neighbor_tiles)?;
     let contour_features =
         generate_contours_with_pullautin_algorithme(&tile, image_width, image_height, config)?;
-    render_cliffs(&tile, image_width, image_height, config)?;
+    let slopes = F32Raster::read(&tile.render_dir_path.join("slopes.tif"))?;
+    render_cliffs(&tile, &slopes, image_width, image_height, config)?;
+    let cliff_features = match &options.ocad {
+        Some(ocad) => get_cliff_features(&tile, &slopes, config, ocad.simplify_tolerance)?,
+        None => vec![],
+    };
+    drop(slopes);
 
     info!(
         "Tile min_x={} min_y={} max_x={} max_y={}. Rendering map to PNG",
@@ -229,6 +237,7 @@ pub fn render_tile_map(
     }
 
     let mut features = vegetation_features;
+    features.extend(cliff_features);
     features.extend(contour_features);
     features.extend(osm_features);
     Ok(Some(features))
