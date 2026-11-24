@@ -1,17 +1,33 @@
 use crate::{
-    error::{Result, ResultContext},
+    error::{CassiniError, Result, ResultContext},
+    helpers::remove_if_exists,
     map_features::{
         clip_line_part, clip_ring, get_polygon_areas, AreaSymbol, Extent, LineSymbol, MapFeature,
     },
+    ocad_merge::{merge_tile_objects, take_interior_objects, Bounds, TileObjects},
     ocd::{
-        format_symbol_number, Georeferencing, ObjectKind, OcdObject, OcdPoint, OcdTemplate,
-        FLAG_HOLE,
+        format_symbol_number, read_object_record, write_object_record, Georeferencing, ObjectKind,
+        OcdObject, OcdPoint, OcdTemplate, FLAG_HOLE,
     },
     tile::Tile,
 };
 use log::{info, warn};
 use shapefile::Point;
-use std::{iter::once, time::Instant};
+use std::{
+    fs::File,
+    io::{BufReader, BufWriter, Write},
+    iter::once,
+    path::{Path, PathBuf},
+    time::Instant,
+};
+
+/// The OCAD export of a single tile, in its render directory.
+pub const TILE_OCD_FILE_NAME: &str = "full-map.ocd";
+/// The OCAD export of a batch, in the output directory.
+pub const MERGED_OCD_FILE_NAME: &str = "merged-map.ocd";
+/// The objects of a tile of a batch that merging leaves unchanged, in its
+/// render directory until the merged OCAD file is written.
+pub const SPILLED_OBJECTS_FILE_NAME: &str = "ocad-objects.bin";
 
 /// Returns the OCD symbols drawn for a line feature. A motorway is two
 /// overlaid lines. Wide road tunnels are drawn as 512 bridge / tunnel, and
@@ -102,6 +118,12 @@ pub fn check_template(template: &OcdTemplate) -> Result<()> {
     Ok(())
 }
 
+/// Line ends on either side of a tile edge closer than this, in metres, are
+/// joined in the merged OCAD file of a batch. Both tiles compute the lines
+/// crossing their common edge from the same data, so their ends coincide
+/// almost always.
+const SEAM_JOIN_TOLERANCE: f64 = 1.0;
+
 /// Writes `features`, clipped to the tile extent, to `full-map.ocd` in the
 /// tile's render directory.
 pub fn write_ocd_file(tile: &Tile, template: &OcdTemplate, features: &[MapFeature]) -> Result<()> {
@@ -112,20 +134,12 @@ pub fn write_ocd_file(tile: &Tile, template: &OcdTemplate, features: &[MapFeatur
 
     let start = Instant::now();
 
-    let extent = Extent {
-        min_x: tile.min_x as f64,
-        min_y: tile.min_y as f64,
-        max_x: tile.max_x as f64,
-        max_y: tile.max_y as f64,
-    };
     let georeferencing =
         template.georeferencing((tile.min_x + tile.max_x) / 2, (tile.min_y + tile.max_y) / 2);
-    let objects = get_ocd_objects(features, &extent, &georeferencing)?;
+    let objects = get_tile_objects(tile, &georeferencing, features)?.objects;
 
-    let bytes = template.write(&georeferencing, &objects)?;
-    let ocd_path = tile.render_dir_path.join("full-map.ocd");
-    std::fs::write(&ocd_path, bytes)
-        .context(format!("could not write `{}`", ocd_path.display()))?;
+    let ocd_path = tile.render_dir_path.join(TILE_OCD_FILE_NAME);
+    template.write_file(&ocd_path, &georeferencing, objects.iter().map(Ok))?;
 
     let duration = start.elapsed();
 
@@ -140,6 +154,161 @@ pub fn write_ocd_file(tile: &Tile, template: &OcdTemplate, features: &[MapFeatur
     );
 
     Ok(())
+}
+
+/// Converts `features`, clipped to the tile extent, to OCD objects.
+pub fn get_tile_objects(
+    tile: &Tile,
+    georeferencing: &Georeferencing,
+    features: &[MapFeature],
+) -> Result<TileObjects> {
+    let extent = Extent {
+        min_x: tile.min_x as f64,
+        min_y: tile.min_y as f64,
+        max_x: tile.max_x as f64,
+        max_y: tile.max_y as f64,
+    };
+    let (min_x, min_y) = georeferencing.to_ocd(extent.min_x, extent.min_y)?;
+    let (max_x, max_y) = georeferencing.to_ocd(extent.max_x, extent.max_y)?;
+
+    Ok(TileObjects {
+        bounds: Bounds {
+            min_x,
+            min_y,
+            max_x,
+            max_y,
+        },
+        objects: get_ocd_objects(features, &extent, georeferencing)?,
+    })
+}
+
+/// The georeferencing of the merged OCAD file of a batch covering `extent`
+/// (min x, min y, max x, max y), centred on it. Fails when the extent does
+/// not fit in an OCAD file at the template's scale, before any tile is
+/// rendered.
+pub fn get_batch_georeferencing(
+    template: &OcdTemplate,
+    (min_x, min_y, max_x, max_y): (i64, i64, i64, i64),
+) -> Result<Georeferencing> {
+    let georeferencing = template.georeferencing((min_x + max_x) / 2, (min_y + max_y) / 2);
+
+    for (x, y) in [(min_x, min_y), (max_x, max_y)] {
+        if georeferencing.to_ocd(x as f64, y as f64).is_err() {
+            return Err(CassiniError::InvalidInput {
+                message: format!(
+                    "the batch covers {} m x {} m, more than an OCAD file holds at 1:{}",
+                    max_x - min_x,
+                    max_y - min_y,
+                    georeferencing.scale
+                ),
+            });
+        }
+    }
+
+    Ok(georeferencing)
+}
+
+/// Converts `features`, clipped to the tile extent, to OCD objects for the
+/// merged OCAD file of a batch, in `georeferencing`'s paper coordinates.
+/// Writes those that merging leaves unchanged to the tile's render directory,
+/// for `write_merged_ocd_file` to read back, and returns the others.
+pub fn prepare_tile_for_merge(
+    tile: &Tile,
+    georeferencing: &Georeferencing,
+    features: &[MapFeature],
+) -> Result<TileObjects> {
+    let mut tile_objects = get_tile_objects(tile, georeferencing, features)?;
+    let interior = take_interior_objects(&mut tile_objects);
+
+    let path = tile.render_dir_path.join(SPILLED_OBJECTS_FILE_NAME);
+    let file = File::create(&path).context(format!("could not create `{}`", path.display()))?;
+    let mut out = BufWriter::new(file);
+    for object in &interior {
+        write_object_record(&mut out, object)
+            .context(format!("could not write `{}`", path.display()))?;
+    }
+    out.flush()
+        .context(format!("could not write `{}`", path.display()))?;
+
+    Ok(tile_objects)
+}
+
+/// Writes the objects of every tile of a batch, joined across the tile
+/// edges, to `merged-map.ocd` in `output_dir`: the objects `tiles` were
+/// prepared with by `prepare_tile_for_merge`, which are read back and removed
+/// one tile at a time, and `seam_objects`, which are merged.
+pub fn write_merged_ocd_file<'a>(
+    output_dir: &Path,
+    template: &OcdTemplate,
+    georeferencing: &Georeferencing,
+    tiles: impl IntoIterator<Item = &'a Tile>,
+    seam_objects: Vec<TileObjects>,
+) -> Result<()> {
+    info!("Merging OCAD export");
+
+    let start = Instant::now();
+
+    let join_tolerance = (SEAM_JOIN_TOLERANCE * georeferencing.units_per_meter()).round() as i32;
+    let merged = merge_tile_objects(seam_objects, join_tolerance);
+
+    let spilled_paths: Vec<PathBuf> = tiles
+        .into_iter()
+        .map(|tile| tile.render_dir_path.join(SPILLED_OBJECTS_FILE_NAME))
+        .collect();
+    let ocd_path = output_dir.join(MERGED_OCD_FILE_NAME);
+    let mut count = 0;
+    template.write_file(
+        &ocd_path,
+        georeferencing,
+        spilled_paths
+            .iter()
+            .flat_map(|path| read_spilled_objects(path))
+            .chain(merged.into_iter().map(Ok))
+            .inspect(|_| count += 1),
+    )?;
+
+    for path in &spilled_paths {
+        remove_if_exists(path).context(format!("could not remove `{}`", path.display()))?;
+    }
+
+    let duration = start.elapsed();
+
+    info!(
+        "{} objects exported to `{}` in {:.1?}",
+        count,
+        ocd_path.display(),
+        duration
+    );
+
+    Ok(())
+}
+
+/// The objects `prepare_tile_for_merge` wrote to `path`, read one at a time.
+fn read_spilled_objects(path: &Path) -> impl Iterator<Item = Result<OcdObject>> + '_ {
+    let context = move || format!("could not read `{}`", path.display());
+    let mut input: Option<BufReader<File>> = None;
+    let mut is_done = false;
+
+    std::iter::from_fn(move || {
+        if is_done {
+            return None;
+        }
+        let reader = match &mut input {
+            Some(reader) => reader,
+            None => match File::open(path).context(context()) {
+                Ok(file) => input.insert(BufReader::new(file)),
+                Err(error) => {
+                    is_done = true;
+                    return Some(Err(error));
+                }
+            },
+        };
+
+        let record = read_object_record(reader).context(context()).transpose();
+        // Stops at the end of the file or after an error
+        is_done = !matches!(record, Some(Ok(_)));
+        record
+    })
 }
 
 fn get_ocd_objects(
@@ -285,6 +454,7 @@ fn convert_points(points: &[Point], georeferencing: &Georeferencing) -> Result<V
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ocad_merge::merge_tile_objects;
     use shapefile::{Polygon, PolygonRing, Polyline};
 
     const EXTENT: Extent = Extent {
@@ -440,5 +610,142 @@ mod tests {
                 point(-4_000, -5_000)
             ]
         );
+    }
+
+    #[test]
+    fn merges_features_cut_by_tile_edges() {
+        let tile = |min_x: i64| Tile {
+            lidar_dir_path: Default::default(),
+            render_dir_path: Default::default(),
+            min_x,
+            min_y: 0,
+            max_x: min_x + 1000,
+            max_y: 1000,
+        };
+        // Both tiles hold the whole features, as they do with OpenStreetMap
+        let features = || {
+            vec![
+                MapFeature::Line(
+                    LineSymbol::Footpath505 { tunnel: false },
+                    Polyline::new(ring(&[(500.0, 500.0), (1500.0, 600.0)])),
+                ),
+                MapFeature::Area(
+                    AreaSymbol::UncrossableBodyOfWater301,
+                    Polygon::new(PolygonRing::Outer(ring(&[
+                        (900.0, 400.0),
+                        (900.0, 600.0),
+                        (1100.0, 600.0),
+                        (1100.0, 400.0),
+                        (900.0, 400.0),
+                    ]))),
+                ),
+            ]
+        };
+
+        let tiles: Vec<TileObjects> = [tile(0), tile(1000)]
+            .iter()
+            .map(|tile| get_tile_objects(tile, &GEOREFERENCING, &features()).unwrap())
+            .collect();
+        assert_eq!(tiles[0].bounds.max_x, 5_000);
+        assert_eq!(tiles[1].bounds.min_x, 5_000);
+        // The bank line is cut where its ring starts too
+        let counts: Vec<usize> = tiles.iter().map(|tile| tile.objects.len()).collect();
+        assert_eq!(counts, vec![4, 3]);
+
+        let objects = merge_tile_objects(tiles, 10);
+
+        let mut kinds: Vec<(i32, ObjectKind, usize)> = objects
+            .iter()
+            .map(|object| (object.symbol, object.kind, object.points.len()))
+            .collect();
+        kinds.sort_by_key(|(symbol, ..)| *symbol);
+        assert_eq!(
+            kinds,
+            vec![
+                // The lake, its bank line closed, and the footpath, without
+                // the vertices where the tile edge cut their straight sides
+                (301001, ObjectKind::Area, 5),
+                (301004, ObjectKind::Line, 5),
+                (505000, ObjectKind::Line, 2),
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_batches_larger_than_an_ocad_file() {
+        let template = OcdTemplate::load(None).unwrap();
+
+        assert!(get_batch_georeferencing(&template, (0, 0, 100_000, 100_000)).is_ok());
+        assert!(get_batch_georeferencing(&template, (0, 0, 2_000_000, 1_000)).is_err());
+    }
+
+    #[test]
+    fn writes_the_merged_file_from_the_prepared_tiles() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let output_dir = std::env::temp_dir().join(format!("cassini-merged-ocd-{unique}"));
+        let tiles: Vec<Tile> = [0, 1000]
+            .into_iter()
+            .map(|min_x| {
+                let render_dir_path = output_dir.join(min_x.to_string());
+                std::fs::create_dir_all(&render_dir_path).unwrap();
+                Tile {
+                    lidar_dir_path: Default::default(),
+                    render_dir_path,
+                    min_x,
+                    min_y: 0,
+                    max_x: min_x + 1000,
+                    max_y: 1000,
+                }
+            })
+            .collect();
+        let features = vec![
+            // Crossing the edge between the tiles
+            MapFeature::Line(
+                LineSymbol::Footpath505 { tunnel: false },
+                Polyline::new(ring(&[(500.0, 500.0), (1500.0, 600.0)])),
+            ),
+            // Inside the first tile
+            MapFeature::Line(
+                LineSymbol::Footpath505 { tunnel: false },
+                Polyline::new(ring(&[(100.0, 100.0), (200.0, 200.0), (300.0, 100.0)])),
+            ),
+        ];
+        let template = OcdTemplate::load(None).unwrap();
+        let georeferencing = get_batch_georeferencing(&template, (0, 0, 2000, 1000)).unwrap();
+
+        let seam_objects: Vec<TileObjects> = tiles
+            .iter()
+            .map(|tile| prepare_tile_for_merge(tile, &georeferencing, &features).unwrap())
+            .collect();
+        let counts: Vec<usize> = seam_objects.iter().map(|tile| tile.objects.len()).collect();
+        assert_eq!(counts, vec![1, 1]);
+
+        write_merged_ocd_file(
+            &output_dir,
+            &template,
+            &georeferencing,
+            &tiles,
+            seam_objects,
+        )
+        .unwrap();
+
+        let bytes = std::fs::read(output_dir.join(MERGED_OCD_FILE_NAME)).unwrap();
+        let spilled_files_left = tiles.iter().any(|tile| {
+            tile.render_dir_path
+                .join(SPILLED_OBJECTS_FILE_NAME)
+                .exists()
+        });
+        std::fs::remove_dir_all(&output_dir).unwrap();
+
+        let mut point_counts: Vec<usize> = crate::ocd::tests::read_objects(&bytes)
+            .iter()
+            .map(|written| written.object.points.len())
+            .collect();
+        point_counts.sort();
+        assert_eq!(point_counts, vec![2, 3]);
+        assert!(!spilled_files_left);
     }
 }
