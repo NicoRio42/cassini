@@ -63,3 +63,33 @@ cassini render ./tile
 
   </TabItem>
 </Tabs>
+
+## Export to OCAD
+
+To also get a map you can edit in <GlossaryLink slug="ocad" />, add the `--ocad` option to the `process` or the `render` subcommand. It writes a `full-map.ocd` file next to the PNG map, with the contours, vegetation, cliffs and vector features as editable objects. Check the [OCAD export options](/reference/cli-reference#ocad-export-options) to use your own symbol set or change how much the areas are simplified.
+
+<Tabs syncKey="os">
+  <TabItem label="Windows" icon="seti:windows">
+
+```sh frame="none"
+cassini process path\to\my\tile.laz --ocad
+```
+
+  </TabItem>
+  
+  <TabItem label="macOS" icon="apple">
+
+```sh frame="none"
+cassini process ./path/to/my/tile.laz --ocad
+```
+
+  </TabItem>
+
+  <TabItem label="Linux" icon="linux">
+
+```sh frame="none"
+cassini process ./path/to/my/tile.laz --ocad
+```
+
+  </TabItem>
+</Tabs>
