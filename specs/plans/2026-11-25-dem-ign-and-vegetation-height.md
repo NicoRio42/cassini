@@ -28,7 +28,7 @@ Three changes, each one changing the render, so each is measured on its own:
 
 | Step | Title | Depends on | Status |
 |---|---|---|---|
-| 1 | 0.5 m DEM from the ground points | – | Not started |
+| 1 | 0.5 m DEM from the ground points | – | Done |
 | 2 | IGN DEM input (`lidar`, `process`, `batch`) | 1 | Not started |
 | 3 | Vegetation layers from height above ground | 2 | Not started |
 
@@ -201,3 +201,41 @@ Leave every vegetation and cliff threshold in [config.rs](../../src/config.rs) u
 ## Notes from completed steps
 
 _Each session appends findings here: decisions, measured differences, timings, surprises._
+
+### Step 1 (branch `dem-vegetation/step-1-dem-05m`, cut from `develop`)
+
+- **Baseline:** `out-baseline/cassini-baseline` (`develop` at 7f8914a). **Second dataset: arselle** (3.22 M cliff pixels in `cliffs.png`, against 1.93 M for evg, 0.53 M for tunnels, 0.42 M for correncon). Baseline outputs are `out-baseline-poussebout` and `out-baseline-arselle`, step 1 outputs `out-dem-step1-<dataset>` (full batch, `--ocad`, from copies of `out-step6-<dataset>`). The step 1 binary is `out-baseline/cassini-dem-step1`.
+- **Code:** [lidar.rs](../../src/lidar.rs) bins with a `TileCells` per resolution (`DEM_BLOCK_SIZE` for the DEM, `VEGETATION_BLOCK_SIZE` for vegetation), same `floor` rule; a compile-time check makes a vegetation cell a whole block of DEM cells, and a test checks a 1 cm point grid lands in matching cells. `dem.tif` is Float32, Deflate, nodata -9999, 2000×2000 for a 1 km tile; the mean stays `f64` until written. [dem.rs](../../src/dem.rs) now logs the fill: cells filled, cells without data, total, and fill time.
+- **No CLI change**, nothing for mapant to update. `dem.tif` doubles in size (3.8 → 7.7 MB on tile 907000_6454000).
+- **Acceptance:** vegetation rasters byte-identical to the baseline on all 8 tiles (`compare_rasters` exit 0). A `--skip-lidar --ocad` batch of the new binary on the baseline's 1 m `dem.tif` files gives pixel-identical PNGs (the old-run path still upsamples). `cargo test` green.
+- **Tools:**
+  - `cargo run --release --example measure_dem_render -- out-a [out-b] [--level-threshold 5]`: per tile, the share of 0.5 m cells with a ground point / filled, the cliff pixels of `cliffs.png`, the contour length and line count per level and in all (`contours-raw.shp` and `contours.shp`, clipped to the tile), and the 202 / 205 objects of `merged-map.ocd`. With two directories it prints the changes and the levels that change by more than the threshold.
+  - `cargo run --release --example crop_side_by_side -- out-a out-b crop.png --crop min_x,min_y,max_x,max_y`: rows `contours.png`, `cliffs.png`, `full-map.png`; columns a | b | diff. The crop may span tiles.
+  - Crop areas (250 m): poussebout steep `907375,6455025,907625,6455275`, flat `907275,6455725,907525,6455975`, tile corner `907875,6454875,908125,6455125`; arselle steep `927675,6448725,927925,6448975`, flat `926075,6448175,926325,6448425`, tile corner `926875,6448875,927125,6449125`. Reuse them in steps 2 and 3.
+- **Ground cells inside the tile** (with a point / filled), 1 m DEM → 0.5 m DEM:
+  - poussebout: 83.4/16.6 → 59.7/40.3, 67.0/33.0 → 48.7/51.3, 54.8/45.2 → 31.0/69.0, 73.2/26.8 → 42.5/57.5 %
+  - arselle: 85.1/14.9 → 75.9/24.1, 84.3/15.7 → 75.4/24.6, 73.3/26.7 → 53.7/46.3, 88.5/11.5 → 77.7/22.3 %
+- **Timings** (4 tiles, default 3 threads, 12 cores, warm cache):
+  - LiDAR stage per tile: poussebout 5.9–7.0 s → 6.4–7.2 s, arselle 4.7–6.4 s → 5.4–7.1 s (+0.3–0.7 s, the larger DEM arrays and file).
+  - Fill per tile: 0.35–0.51 s (1 m `dem.tif`, measured with the new binary's log on the baseline's files) → 0.46–0.77 s. Mosaic + fill + write: 0.45–0.62 s → 0.73–0.96 s.
+  - Full batch: poussebout 20.5 → 21.7 s, arselle 19.5 → 22.1 s.
+- **Cliffs go down, not up:**
+
+  | | cliff pixels | 202 objects | 205 objects |
+  |---|---|---|---|
+  | poussebout | 2 095 035 → 1 585 639 (−24.3%) | 2348 → 1905 (−18.9%) | 193 → 97 |
+  | arselle | 3 216 357 → 2 928 628 (−8.9%) | 3219 → 3210 (−0.3%) | 107 → 35 |
+
+  Per tile, −0.0% to −44.7%: the sparser the ground points, the larger the drop. The loss is in the cells without a ground point at 0.5 m, which `fill_nodata` interpolates. Cells steeper than the 60° threshold, poussebout 908000_6455000: 1 897 → 1 802 with a point, 19 749 → 12 129 without; 907000_6454000: 100 764 → 101 317 with, 89 212 → 71 618 without; arselle 927000_6448000: 398 508 → 409 593 with, 257 709 → 220 294 without. In the crops, the cliffs lost are mostly isolated dots around the main bands; the bands stay. Likely cause, not checked: the 1 m DEM held each mean over a 2×2 block of slope cells, while at 0.5 m more and wider gaps are left to the inverse-distance fill, which smooths them. IGN's filled DEM (step 2) changes this again.
+- **Contours stay close.** Total length clipped to the tiles, `contours-raw.shp`: −0.4% (poussebout), −0.3% (arselle); lines −2.8% / −1.9% (fewer short closed loops). `contours.shp`: −0.2% / −0.1%, lines −0.9% / −0.6%. Per-level change, median 0.40% / 0.28% raw, 0.15% / 0.10% smoothed. Levels over 5%: only tiny ones (poussebout raw 1680 m: 14 → 16 m; arselle 712.5 m: 4 → 2 m raw, 4 → 0 m smoothed, and 720 m: 54 → 59 m smoothed). Crops show the same lines with sub-pixel shifts (1.1–2.6% of `contours.png` pixels differ on steep and edge crops, 0.25–1.4% on flat ones).
+- **Fallback added after review (supersedes the cliff drop above):** a 0.5 m cell without a ground point now takes the mean of the ground points of its 1 m block (`FALLBACK_BLOCK_SIZE`, weighted by the cell counts, so the old 1 m DEM value), in `TileRasters::dem` in [lidar.rs](../../src/lidar.rs). Only 1 m blocks without any ground point are left to `fill_nodata`, as before the plan. Binary `out-baseline/cassini-dem-step1-fallback`, outputs `out-dem-step1-fallback-<dataset>`. Against the baseline:
+
+  | | cliff pixels | 202 objects | 205 objects |
+  |---|---|---|---|
+  | poussebout | 2 095 035 → 2 103 436 (+0.4%) | 2348 → 2460 (+4.8%) | 193 → 159 |
+  | arselle | 3 216 357 → 3 328 893 (+3.5%) | 3219 → 3646 (+13.3%) | 107 → 83 |
+
+  Per tile −1.5% to +9.0% cliff pixels. Contours: total length ±0.0%, lines −0.2% / +0.1%, per-level median change 0.02%; only poussebout raw 1680 m (14 → 16 m) changes by more than 5%. Crops: 0.25–0.96% of `contours.png` pixels differ, 2.2% of `cliffs.png` on the steep crops (scattered dots), ~0% on the others. Vegetation rasters still byte-identical. Timings back to the baseline: LiDAR stage 5.9–6.9 s per tile, fill 0.36–0.52 s, full batch 20.2 s (poussebout) / 19.7 s (arselle). `measure_dem_render`'s "with ground points" share now counts the fallback cells, so it equals the 1 m figures. The 205 boulders still drop (−18% / −22%), not investigated. Step 2's IGN DEM is already filled, so the fallback only applies to the DEM from the points.
+- **Review fixes:** `MAX_TILE_SIDE` lowered from 10 km to 5 km (the DEM accumulators take 64 MB per km² over the header bounds, 4× the 1 m DEM). `VEGETATION_BLOCK_SIZE` is now an `f64` used everywhere (no more `1.0` literal in `vegetation.rs`). The fill log counts only the cells inside the tile.
+- **Docs:** `what-and-why.mdx` (DEM cells are 0.5 m, vegetation 1 m, and the 1 m fallback) and the two cliff thresholds in `configuration-reference.mdx`, which said "one meter by one meter cell" although the slopes have always been 0.5 m.
+

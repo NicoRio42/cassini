@@ -190,6 +190,22 @@ mod tests {
     }
 
     #[test]
+    fn copies_cells_of_the_same_resolution_one_to_one() {
+        let mut source = source(0.0, 1.0, [1.0, 2.0, 3.0, 4.0]);
+        source.resolution = 0.5;
+        let mut output = Grid::new(-0.5, 1.5, 0.5, 4, 4, Some(-9999.0), -9999.0f32);
+        paste_nearest(&source, &mut output);
+        let n = -9999.0;
+        #[rustfmt::skip]
+        assert_eq!(output.values, [
+            n, n, n, n,
+            n, 1.0, 2.0, n,
+            n, 3.0, 4.0, n,
+            n, n, n, n,
+        ]);
+    }
+
+    #[test]
     fn composites_sources_with_transparent_nodata() {
         let mut output = Grid::new(-1.0, 3.0, 1.0, 4, 4, Some(-9999.0), -9999.0f32);
         paste_nearest(&source(0.0, 2.0, [1.0, -9999.0, 3.0, 4.0]), &mut output);

@@ -47,7 +47,20 @@ pub fn create_dem_contours_and_slopes(
         mosaic_with_buffer::<f32>(tile, neighbor_tiles, "dem", DEM_BLOCK_SIZE)?;
 
     // Filling holes
+    let fill_start = Instant::now();
+    let (nodata_cells, tile_cells) = count_tile_nodata(&dem_with_buffer, tile);
     fill_nodata(&mut dem_with_buffer, DEFAULT_MAX_SEARCH_DISTANCE);
+    info!(
+        "Tile min_x={} min_y={} max_x={} max_y={}. Filled {} of the {} DEM cells of the tile without data, out of {}, in {:.1?}",
+        tile.min_x,
+        tile.min_y,
+        tile.max_x,
+        tile.max_y,
+        nodata_cells - count_tile_nodata(&dem_with_buffer, tile).0,
+        nodata_cells,
+        tile_cells,
+        fill_start.elapsed()
+    );
     dem_with_buffer.write_geotiff(&dem_with_buffer_path, Compression::None)?;
 
     let duration = start.elapsed();
@@ -104,6 +117,27 @@ pub fn create_dem_contours_and_slopes(
     );
 
     Ok(contours)
+}
+
+/// The number of nodata cells of `grid` whose centre is in `tile`, and the
+/// number of its cells there. The buffer is left out: on the edge of a batch,
+/// it is mostly cells that no tile covers.
+fn count_tile_nodata(grid: &Grid<f32>, tile: &Tile) -> (usize, usize) {
+    let (mut nodata, mut cells) = (0, 0);
+    for row in 0..grid.height {
+        for col in 0..grid.width {
+            let (x, y) = grid.cell_center(col, row);
+            if (tile.min_x as f64..tile.max_x as f64).contains(&x)
+                && (tile.min_y as f64..tile.max_y as f64).contains(&y)
+            {
+                cells += 1;
+                if !grid.has_data(grid.get(col, row)) {
+                    nodata += 1;
+                }
+            }
+        }
+    }
+    (nodata, cells)
 }
 
 /// `grid` with cells `factor` times larger, each the mean of the data cells of

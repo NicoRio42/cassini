@@ -1,7 +1,10 @@
 //! The DEM and vegetation density rasters of a LiDAR tile, computed in one
 //! streaming pass over its points.
 //!
-//! They reproduce what the PDAL pipeline Cassini used to run produced. That
+//! The vegetation rasters reproduce what the PDAL pipeline Cassini used to
+//! run produced, and the DEM is computed the same way, but on
+//! `DEM_BLOCK_SIZE` cells instead of 1 m ones, the cells without ground
+//! points taking the mean of their 1 m block. That
 //! pipeline (`writers.gdal`, `filters.hag_dem`, `filters.voxeldownsize`,
 //! `filters.assign`) was meant to classify vegetation by height above ground,
 //! but PDAL ran it in stream mode, where `filters.hag_dem` opens the DEM
@@ -19,6 +22,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use crate::{
+    constants::{DEM_BLOCK_SIZE, VEGETATION_BLOCK_SIZE},
     error::{CassiniError, Result, ResultContext, TileId},
     grid::{Compression, Grid, Sample},
     helpers::remove_dir_content_except,
@@ -31,8 +35,29 @@ const LOW_VEGETATION: u8 = 3;
 const MEDIUM_VEGETATION: u8 = 4;
 const HIGH_VEGETATION: u8 = 5;
 
-/// The value of the DEM cells without ground points.
-const NO_DATA_ELEVATION: f64 = -9999.0;
+/// The value of the DEM cells whose fallback block has no ground points.
+const NO_DATA_ELEVATION: f32 = -9999.0;
+
+/// How many DEM cells fit along a vegetation cell, so that a vegetation cell
+/// is exactly a block of DEM cells.
+const DEM_CELLS_PER_VEGETATION_CELL: usize = (VEGETATION_BLOCK_SIZE / DEM_BLOCK_SIZE) as usize;
+const _: () = assert!(
+    DEM_CELLS_PER_VEGETATION_CELL as f64 * DEM_BLOCK_SIZE == VEGETATION_BLOCK_SIZE,
+    "the vegetation resolution must be a multiple of the DEM resolution"
+);
+
+/// The side of the blocks of DEM cells whose ground points fill the DEM cells
+/// without any, in metres: the cell size of the DEM before it was computed at
+/// `DEM_BLOCK_SIZE`. A whole metre, so that the blocks cover exactly the
+/// tiles, whose sides are whole metres.
+const FALLBACK_BLOCK_SIZE: f64 = 1.0;
+
+/// How many DEM cells fit along a fallback block.
+const DEM_CELLS_PER_FALLBACK_BLOCK: usize = (FALLBACK_BLOCK_SIZE / DEM_BLOCK_SIZE) as usize;
+const _: () = assert!(
+    DEM_CELLS_PER_FALLBACK_BLOCK as f64 * DEM_BLOCK_SIZE == FALLBACK_BLOCK_SIZE,
+    "the fallback block size must be a multiple of the DEM resolution"
+);
 
 /// The nodata value of the vegetation rasters. Their cells hold point counts,
 /// with 0 for cells without points, so counts saturate just below it.
@@ -44,8 +69,11 @@ const VOXEL_SIZE: f64 = 0.5;
 /// The largest tile side accepted, in metres. LiDAR HD tiles are 1 km, and
 /// other national grids a few kilometres. A larger extent most likely comes
 /// from outlier points in the header bounds, and its rasters would not fit
-/// in memory.
-const MAX_TILE_SIDE: i64 = 10_000;
+/// in memory: they are allocated over the header bounds, and the DEM alone
+/// takes 64 MB per km² while it is computed (four 0.5 m cells per m², each
+/// with an `f64` mean, a `u32` count and then an `f32` elevation), 1.6 GB
+/// for a 5 km tile.
+const MAX_TILE_SIDE: i64 = 5_000;
 
 /// The number of points decompressed at a time. A batch spans many LAZ
 /// chunks, which are decompressed in parallel.
@@ -220,16 +248,17 @@ fn fill_points(reader: &mut Reader, points: &mut PointData, laz_path: &Path) -> 
         ))
 }
 
-/// The 1 m rasters of a tile, accumulated point by point.
+/// The rasters of a tile, accumulated point by point: the DEM at
+/// `DEM_BLOCK_SIZE` and the vegetation densities at `VEGETATION_BLOCK_SIZE`.
 struct TileRasters {
-    tile: TileId,
-    width: usize,
-    height: usize,
-    /// The running mean elevation of the ground points of each cell, and
+    dem_cells: TileCells,
+    vegetation_cells: TileCells,
+    /// The running mean elevation of the ground points of each DEM cell, and
     /// their number.
     elevations: Vec<f64>,
     ground_counts: Vec<u32>,
-    /// The number of low, medium and high vegetation points of each cell.
+    /// The number of low, medium and high vegetation points of each
+    /// vegetation cell.
     vegetation_counts: [Vec<u8>; 3],
     voxels: VoxelSet,
 }
@@ -237,15 +266,16 @@ struct TileRasters {
 impl TileRasters {
     /// The empty rasters of `tile`, whose points are thinned with `voxels`.
     fn new(tile: &TileId, voxels: VoxelSet) -> Self {
-        let width = (tile.max_x - tile.min_x) as usize;
-        let height = (tile.max_y - tile.min_y) as usize;
+        let dem_cells = TileCells::new(tile, DEM_BLOCK_SIZE);
+        let vegetation_cells = TileCells::new(tile, VEGETATION_BLOCK_SIZE);
+        let dem_len = dem_cells.width * dem_cells.height;
+        let vegetation_len = vegetation_cells.width * vegetation_cells.height;
         Self {
-            tile: *tile,
-            width,
-            height,
-            elevations: vec![0.0; width * height],
-            ground_counts: vec![0; width * height],
-            vegetation_counts: [(); 3].map(|_| vec![0; width * height]),
+            dem_cells,
+            vegetation_cells,
+            elevations: vec![0.0; dem_len],
+            ground_counts: vec![0; dem_len],
+            vegetation_counts: [(); 3].map(|_| vec![0; vegetation_len]),
             voxels,
         }
     }
@@ -267,8 +297,8 @@ impl TileRasters {
     fn add_point(&mut self, x: f64, y: f64, z: f64, classification: u8) {
         // The DEM writer comes before the thinning, so it gets every point.
         if classification == GROUND {
-            if let Some(index) = self.bin_index(x, y) {
-                // `writers.gdal`'s running mean, so the rounding matches.
+            if let Some(index) = self.dem_cells.bin_index(x, y) {
+                // `writers.gdal`'s running mean.
                 self.ground_counts[index] += 1;
                 self.elevations[index] +=
                     (z - self.elevations[index]) / self.ground_counts[index] as f64;
@@ -285,19 +315,101 @@ impl TileRasters {
             HIGH_VEGETATION => 2,
             _ => return,
         };
-        if let Some(index) = self.bin_index(x, y) {
+        if let Some(index) = self.vegetation_cells.bin_index(x, y) {
             let count = &mut self.vegetation_counts[layer][index];
             *count = count.saturating_add(1).min(NO_DATA_COUNT - 1);
         }
     }
 
-    /// The index of the cell `writers.gdal` bins the point (`x`, `y`) into
-    /// in `binmode`, row-major from the north-west corner. A point on the
+    /// The DEM, and the low, medium and high vegetation densities.
+    fn into_grids(self) -> (Grid<f32>, [Grid<u8>; 3]) {
+        let dem = self.dem();
+        let vegetation_cells = self.vegetation_cells;
+        (
+            dem,
+            self.vegetation_counts
+                .map(|counts| vegetation_cells.grid(counts, NO_DATA_COUNT)),
+        )
+    }
+
+    /// The mean elevation of the ground points of each DEM cell. A cell
+    /// without any takes the mean of the ground points of its
+    /// `FALLBACK_BLOCK_SIZE` block, the value the 1 m DEM gave it, and only
+    /// the blocks without any stay nodata.
+    ///
+    /// At 0.5 m, a quarter to two thirds of the cells of a LiDAR HD tile have
+    /// no ground point. Left to `fill_nodata`, their inverse distance
+    /// weighted mean smoothed the slopes and lost up to 45% of the cliffs of
+    /// the 1 m DEM.
+    fn dem(&self) -> Grid<f32> {
+        let cells = self.dem_cells;
+        let side = DEM_CELLS_PER_FALLBACK_BLOCK;
+        let mut values = vec![NO_DATA_ELEVATION; cells.width * cells.height];
+        for block_row in (0..cells.height).step_by(side) {
+            for block_col in (0..cells.width).step_by(side) {
+                let block = (block_row..block_row + side).flat_map(|row| {
+                    (block_col..block_col + side).map(move |col| row * cells.width + col)
+                });
+                let (sum, count) = block.clone().fold((0.0, 0), |(sum, count), index| {
+                    let cell_count = self.ground_counts[index];
+                    (
+                        sum + self.elevations[index] * cell_count as f64,
+                        count + u64::from(cell_count),
+                    )
+                });
+                for index in block {
+                    if self.ground_counts[index] > 0 {
+                        values[index] = self.elevations[index] as f32;
+                    } else if count > 0 {
+                        values[index] = (sum / count as f64) as f32;
+                    }
+                }
+            }
+        }
+        cells.grid(values, NO_DATA_ELEVATION)
+    }
+}
+
+/// The square cells of `resolution` metres covering exactly a tile, which
+/// points are binned into.
+#[derive(Clone, Copy)]
+struct TileCells {
+    tile: TileId,
+    resolution: f64,
+    width: usize,
+    height: usize,
+}
+
+impl TileCells {
+    /// The cells of `tile`, whose sides must be multiples of `resolution`
+    /// metres.
+    fn new(tile: &TileId, resolution: f64) -> Self {
+        let cells = |min: i64, max: i64| {
+            let side = (max - min) as f64;
+            let cells = (side / resolution).round();
+            debug_assert_eq!(
+                cells * resolution,
+                side,
+                "{side} m is not a multiple of {resolution} m"
+            );
+            cells as usize
+        };
+        Self {
+            tile: *tile,
+            resolution,
+            width: cells(tile.min_x, tile.max_x),
+            height: cells(tile.min_y, tile.max_y),
+        }
+    }
+
+    /// The index of the cell the point (`x`, `y`) is binned into, as
+    /// `writers.gdal` bins it in `binmode`, row-major from the north-west
+    /// corner. A point on the
     /// edge between two cells goes to the east or north one, so the east and
     /// north edges of the tile are out.
     fn bin_index(&self, x: f64, y: f64) -> Option<usize> {
-        let col = (x - self.tile.min_x as f64).floor();
-        let row_from_south = (y - self.tile.min_y as f64).floor();
+        let col = ((x - self.tile.min_x as f64) / self.resolution).floor();
+        let row_from_south = ((y - self.tile.min_y as f64) / self.resolution).floor();
         if !(0.0..self.width as f64).contains(&col)
             || !(0.0..self.height as f64).contains(&row_from_south)
         {
@@ -306,32 +418,18 @@ impl TileRasters {
         Some((self.height - 1 - row_from_south as usize) * self.width + col as usize)
     }
 
-    /// The DEM, and the low, medium and high vegetation densities.
-    fn into_grids(self) -> (Grid<f64>, [Grid<u8>; 3]) {
-        let elevations = self
-            .elevations
-            .into_iter()
-            .zip(self.ground_counts)
-            .map(|(mean, count)| if count == 0 { NO_DATA_ELEVATION } else { mean })
-            .collect();
-        (
-            tile_grid(&self.tile, elevations, NO_DATA_ELEVATION),
-            self.vegetation_counts
-                .map(|counts| tile_grid(&self.tile, counts, NO_DATA_COUNT)),
-        )
-    }
-}
-
-/// The 1 m grid of `tile` with `values`, row-major from the north-west corner.
-fn tile_grid<T: Sample>(tile: &TileId, values: Vec<T>, nodata: T) -> Grid<T> {
-    Grid {
-        min_x: tile.min_x as f64,
-        max_y: tile.max_y as f64,
-        resolution: 1.0,
-        width: (tile.max_x - tile.min_x) as usize,
-        height: (tile.max_y - tile.min_y) as usize,
-        nodata: Some(nodata),
-        values,
+    /// The grid of these cells with `values`, row-major from the north-west
+    /// corner.
+    fn grid<T: Sample>(&self, values: Vec<T>, nodata: T) -> Grid<T> {
+        Grid {
+            min_x: self.tile.min_x as f64,
+            max_y: self.tile.max_y as f64,
+            resolution: self.resolution,
+            width: self.width,
+            height: self.height,
+            nodata: Some(nodata),
+            values,
+        }
     }
 }
 
@@ -488,23 +586,62 @@ mod tests {
             ([0.0, 0.0], [0.0, 0.0]),
             ([1000.0, 2000.0], [900.0, 3000.0]),
             ([f64::NAN, 2000.0], [1000.0, 3000.0]),
-            ([1000.0, 2000.0], [11001.0, 3000.0]),
+            ([1000.0, 2000.0], [6001.0, 3000.0]),
         ] {
             assert!(tile_id(path, min, max).is_err(), "{min:?} {max:?}");
         }
-        assert!(tile_id(path, [0.0, 0.0], [10_000.0, 10_000.0]).is_ok());
+        assert!(tile_id(path, [0.0, 0.0], [5_000.0, 5_000.0]).is_ok());
     }
 
     #[test]
     fn points_on_cell_edges_are_binned_east_and_north() {
         let rasters = rasters();
-        assert_eq!(rasters.bin_index(1000.0, 2000.0), Some(3));
-        assert_eq!(rasters.bin_index(1000.5, 2001.0), Some(0));
-        assert_eq!(rasters.bin_index(1002.999, 2001.999), Some(2));
-        assert_eq!(rasters.bin_index(1003.0, 2001.0), None);
-        assert_eq!(rasters.bin_index(1001.0, 2002.0), None);
-        assert_eq!(rasters.bin_index(999.99, 2001.0), None);
-        assert_eq!(rasters.bin_index(f64::NAN, 2001.0), None);
+        let vegetation = rasters.vegetation_cells;
+        assert_eq!(vegetation.bin_index(1000.0, 2000.0), Some(3));
+        assert_eq!(vegetation.bin_index(1000.5, 2001.0), Some(0));
+        assert_eq!(vegetation.bin_index(1002.999, 2001.999), Some(2));
+        assert_eq!(vegetation.bin_index(1003.0, 2001.0), None);
+        assert_eq!(vegetation.bin_index(1001.0, 2002.0), None);
+        assert_eq!(vegetation.bin_index(999.99, 2001.0), None);
+        assert_eq!(vegetation.bin_index(f64::NAN, 2001.0), None);
+
+        let dem = rasters.dem_cells;
+        assert_eq!((dem.width, dem.height), (6, 4));
+        assert_eq!(dem.bin_index(1000.0, 2000.0), Some(18));
+        assert_eq!(dem.bin_index(1000.5, 2001.0), Some(7));
+        assert_eq!(dem.bin_index(1000.49, 2001.5), Some(0));
+        assert_eq!(dem.bin_index(1002.999, 2001.999), Some(5));
+        assert_eq!(dem.bin_index(1003.0, 2001.0), None);
+        assert_eq!(dem.bin_index(1001.0, 2002.0), None);
+    }
+
+    #[test]
+    fn dem_cells_lie_inside_the_vegetation_cell_of_their_points() {
+        let rasters = rasters();
+        let (dem, vegetation) = (rasters.dem_cells, rasters.vegetation_cells);
+        // A 1 cm grid of points over the tile, edges included, as in LiDAR HD.
+        for x in 99_990..=100_310 {
+            for y in 199_990..=200_210 {
+                let (x, y) = (x as f64 / 100.0, y as f64 / 100.0);
+                let dem_index = dem.bin_index(x, y);
+                let vegetation_index = vegetation.bin_index(x, y);
+                assert_eq!(dem_index.is_some(), vegetation_index.is_some(), "{x} {y}");
+                if let (Some(dem_index), Some(vegetation_index)) = (dem_index, vegetation_index) {
+                    let (dem_col, dem_row) = (dem_index % dem.width, dem_index / dem.width);
+                    assert_eq!(
+                        (
+                            dem_col / DEM_CELLS_PER_VEGETATION_CELL,
+                            dem_row / DEM_CELLS_PER_VEGETATION_CELL
+                        ),
+                        (
+                            vegetation_index % vegetation.width,
+                            vegetation_index / vegetation.width
+                        ),
+                        "{x} {y}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
@@ -512,7 +649,8 @@ mod tests {
         let mut rasters = rasters();
         for (x, y, z, classification) in [
             (1000.2, 2001.5, 10.0, GROUND),
-            (1000.8, 2001.2, 11.0, GROUND),
+            (1000.4, 2001.9, 11.0, GROUND),
+            (1000.8, 2001.2, 15.0, GROUND),
             (1000.5, 2001.5, 12.0, LOW_VEGETATION),
             (1000.5, 2001.5, 12.2, HIGH_VEGETATION),
             (1001.5, 2001.5, 13.0, MEDIUM_VEGETATION),
@@ -525,15 +663,33 @@ mod tests {
         }
         let (dem, [low, medium, high]) = rasters.into_grids();
         let n = NO_DATA_ELEVATION;
-        assert_eq!(dem.values, [10.5, n, n, n, n, 20.0]);
+        // The cells without ground points take the mean of the ground points
+        // of their 1 m block, (10 + 11 + 15) / 3 in the north-west one.
+        #[rustfmt::skip]
+        assert_eq!(dem.values, [
+            10.5, 12.0, n, n, n, n,
+            12.0, 15.0, n, n, n, n,
+            n, n, n, n, 20.0, 20.0,
+            n, n, n, n, 20.0, 20.0,
+        ]);
         assert_eq!(dem.nodata, Some(n));
+        assert_eq!(
+            (dem.min_x, dem.max_y, dem.resolution, dem.width, dem.height),
+            (1000.0, 2002.0, DEM_BLOCK_SIZE, 6, 4)
+        );
         assert_eq!(low.values, [1, 0, 0, 0, 0, 0]);
         assert_eq!(medium.values, [0, 1, 0, 0, 0, 0]);
         assert_eq!(high.values, [0, 0, 0, 0, 0, 2]);
         assert_eq!(high.nodata, Some(NO_DATA_COUNT));
         assert_eq!(
-            (high.min_x, high.max_y, high.width, high.height),
-            (1000.0, 2002.0, 3, 2)
+            (
+                high.min_x,
+                high.max_y,
+                high.resolution,
+                high.width,
+                high.height
+            ),
+            (1000.0, 2002.0, 1.0, 3, 2)
         );
     }
 

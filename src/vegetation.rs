@@ -201,7 +201,8 @@ pub fn render_vegetation(
     let casted_green_block_size_pixel = (vegetation_block_size_pixel).ceil() as u32;
 
     let buffered = |name: &str| {
-        create_tif_with_buffer::<u8>(tile, neighbor_tiles, name, 1.0).map(TifImage::from)
+        create_tif_with_buffer::<u8>(tile, neighbor_tiles, name, VEGETATION_BLOCK_SIZE)
+            .map(TifImage::from)
     };
     let rasters = VegetationRasters {
         high: buffered("high_vegetation")?,

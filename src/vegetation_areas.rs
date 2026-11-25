@@ -32,7 +32,7 @@ use log::info;
 use std::time::Instant;
 
 // Areas are counted in cells and lengths in cells below
-const _: () = assert!(VEGETATION_BLOCK_SIZE == 1);
+const _: () = assert!(VEGETATION_BLOCK_SIZE == 1.0);
 
 /// Cells vectorized around the tile, so that areas reach the tile edge and
 /// areas crossing it are measured beyond it.
