@@ -1,26 +1,44 @@
 use std::{
-    fs::{read_dir, remove_dir_all, remove_file},
-    io::{self, ErrorKind},
+    fs::{remove_dir_all, remove_file},
+    io::ErrorKind,
     path::Path,
 };
 
-pub fn remove_dir_content_except<P: AsRef<Path>>(path: P, kept_names: &[&str]) -> io::Result<()> {
-    for entry in read_dir(path)? {
-        let entry = entry?;
-        if kept_names.iter().any(|name| entry.file_name() == *name) {
-            continue;
-        }
+use crate::error::{Result, ResultContext};
 
-        let path = entry.path();
-
-        if path.is_dir() {
-            remove_dir_all(&path)?;
-        } else {
-            remove_file(path)?;
-        }
+/// Removes the files or directories named `names` from `dir_path`, if they
+/// exist, leaving any other entry of `dir_path` in place.
+pub fn remove_artifacts(dir_path: &Path, names: &[&str]) -> Result<()> {
+    for name in names {
+        let artifact = dir_path.join(name);
+        remove_if_exists(&artifact).context(format!(
+            "could not remove stale artifact `{}`",
+            artifact.display()
+        ))?;
     }
-
     Ok(())
+}
+
+/// The extensions of the LiDAR files that `batch` reads.
+pub const LAZ_EXTENSIONS: [&str; 1] = ["laz"];
+
+/// Whether `path` is a file with one of `extensions`, in any case, that is
+/// not hidden. macOS writes hidden `._` files next to the files it copies to
+/// some drives, with the same extension.
+pub fn is_input_file(path: &Path, extensions: &[&str]) -> bool {
+    let is_hidden = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with('.'));
+    let has_extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extensions
+                .iter()
+                .any(|expected| extension.eq_ignore_ascii_case(expected))
+        });
+    has_extension && !is_hidden && path.is_file()
 }
 
 pub fn remove_if_exists<P: AsRef<Path>>(path: P) -> std::io::Result<()> {
@@ -48,13 +66,13 @@ pub fn does_segment_intersect_tile(
         ((min_x, min_y), (min_x, max_y)), // left
     ];
 
-    return tile_edges
+    tile_edges
         .iter()
-        .any(|tile_edge| do_intersect(*tile_edge, segment));
+        .any(|tile_edge| do_intersect(*tile_edge, segment))
 }
 
 pub fn does_polyline_intersect_tile(
-    polyline: &Vec<(f32, f32)>,
+    polyline: &[(f32, f32)],
     min_x: f32,
     min_y: f32,
     max_x: f32,
@@ -83,7 +101,7 @@ pub fn does_polyline_intersect_tile(
         }
     }
 
-    return false;
+    false
 }
 
 fn orientation(p: (f32, f32), q: (f32, f32), r: (f32, f32)) -> i32 {

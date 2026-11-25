@@ -129,11 +129,11 @@ pub mod test_files {
     use std::path::Path;
 
     /// Writes `points` to `path` in point format `format`, compressed if
-    /// `path` ends with `.laz`, with LiDAR HD's 1 cm scale.
+    /// `path` ends with `.laz`, in any case, with LiDAR HD's 1 cm scale.
     pub fn write_points(path: &Path, format: u8, points: &[Point]) {
         let mut builder = Builder::from((1, 4));
         builder.point_format = Format::new(format).unwrap();
-        builder.point_format.is_compressed = path.extension().unwrap() == "laz";
+        builder.point_format.is_compressed = path.extension().unwrap().eq_ignore_ascii_case("laz");
         let transform = |offset| Transform {
             scale: 0.01,
             offset,

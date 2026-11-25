@@ -12,13 +12,17 @@ use crate::grid::Grid;
 use crate::marching_squares::ContourLine;
 use crate::tile::Tile;
 
+/// The x and y coordinates of the vertices of a smoothed contour, and its
+/// elevation.
+pub type SmoothedContour = (Vec<f64>, Vec<f64>, f64);
+
 /// Smooths `raw_contours`, the lines of `contours-raw.shp` in the same order,
 /// and writes them to `contours/contours.shp` with the IDs of the raw lines.
 pub fn pullautin_smooth_contours(
     tile: &Tile,
     avg_alt: &[Vec<f64>],
     raw_contours: Vec<ContourLine>,
-) -> Result<Vec<(Vec<f64>, Vec<f64>, f64)>> {
+) -> Result<Vec<SmoothedContour>> {
     info!(
         "Tile min_x={} min_y={} max_x={} max_y={}. Smoothing contours",
         tile.min_x, tile.min_y, tile.max_x, tile.max_y
@@ -36,7 +40,7 @@ pub fn pullautin_smooth_contours(
     let ymax: u64 = ((tile.max_y + BUFFER as i64 - ystart as i64) as f64 / 2.).ceil() as u64;
 
     let mut steepness = vec![vec![f64::NAN; (ymax + 2) as usize]; (xmax + 2) as usize];
-    let mut smoothed_contours: Vec<(Vec<f64>, Vec<f64>, f64)> = vec![];
+    let mut smoothed_contours: Vec<SmoothedContour> = vec![];
 
     // Computing a basic steepness matrix
     for i in 1..xmax {
@@ -215,10 +219,8 @@ pub fn pullautin_smooth_contours(
             xa[el_x_len - 1] = x_array[el_x_len - 1];
             ya[el_x_len - 1] = y_array[el_x_len - 1];
         }
-        for k in 0..el_x_len {
-            x_array[k] = xa[k];
-            y_array[k] = ya[k];
-        }
+        x_array[..el_x_len].copy_from_slice(&xa[..el_x_len]);
+        y_array[..el_x_len].copy_from_slice(&ya[..el_x_len]);
 
         let mut dx2: Vec<f64> = vec![f64::NAN; el_x_len];
         let mut dy2: Vec<f64> = vec![f64::NAN; el_x_len];

@@ -3,7 +3,7 @@ use crate::constants::INCH;
 use crate::contours::generate_contours_with_pullautin_algorithme;
 use crate::error::{CassiniError, Result, ResultContext, TileId};
 use crate::grid::Grid;
-use crate::helpers::remove_if_exists;
+use crate::helpers::{remove_artifacts, remove_if_exists};
 use crate::map_features::MapFeature;
 use crate::ocad_export::{SPILLED_OBJECTS_FILE_NAME, TILE_OCD_FILE_NAME};
 use crate::ocd::OcdTemplate;
@@ -22,7 +22,7 @@ use crate::{
     vegetation::{render_vegetation, UndergrowthMode},
 };
 use log::info;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -233,12 +233,11 @@ pub fn cleanup_render_step_files(tiles: &[TileWithNeighbors], output_dir: &str) 
 }
 
 pub fn cleanup_render_step_files_for_single_tile(tile: &TileWithNeighbors) -> Result<()> {
-    for path in RENDER_STEP_FILES {
-        let artifact = tile.tile.render_dir_path.join(path);
-        remove_if_exists(&artifact).context(format!(
-            "could not remove stale artifact `{}`",
-            artifact.display()
-        ))?;
-    }
-    Ok(())
+    remove_render_step_files(&tile.tile.render_dir_path)
+}
+
+/// Removes the files the render step writes from `dir_path`, leaving any
+/// other file in place.
+pub fn remove_render_step_files(dir_path: &Path) -> Result<()> {
+    remove_artifacts(dir_path, &RENDER_STEP_FILES)
 }

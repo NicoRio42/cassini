@@ -45,7 +45,7 @@ use lidar::{generate_dem_and_vegetation_density_tiff_images_from_laz_file, Veget
 use log::info;
 use ocad_export::{check_template, write_ocd_file};
 use ocd::OcdTemplate;
-use render::{render_tile_map, OcadOptions, RenderOptions};
+use render::{remove_render_step_files, render_tile_map, OcadOptions, RenderOptions};
 use std::{
     fs::create_dir_all,
     num::NonZeroUsize,
@@ -334,6 +334,8 @@ fn process_single_tile(
 ) -> Result<()> {
     let config = get_config(None)?;
 
+    // The LiDAR step only removes its own previous output.
+    remove_render_step_files(output_dir_path)?;
     let extent = generate_dem_and_vegetation_density_tiff_images_from_laz_file(
         file_path,
         dem_path,
@@ -515,7 +517,7 @@ fn run() -> Result<()> {
 
     if let Some(command) = args.command {
         match command {
-            Commands::Config {} => {
+            Commands::Config => {
                 default_config()?;
             }
 

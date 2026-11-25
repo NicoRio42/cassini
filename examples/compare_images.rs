@@ -94,7 +94,10 @@ fn compare_directories(args: &Args) -> Result<bool, String> {
 /// The diff image of `relative` in `dir`, so that `x.png` and `x.webp` do not
 /// share one.
 fn diff_path(dir: &Path, relative: &Path) -> PathBuf {
-    if relative.extension().is_some_and(|extension| extension == "png") {
+    if relative
+        .extension()
+        .is_some_and(|extension| extension == "png")
+    {
         return dir.join(relative);
     }
     let mut name = OsString::from(relative.as_os_str());

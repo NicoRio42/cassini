@@ -18,7 +18,7 @@ pub fn merge_maps(
     info!("Merging maps");
     let start = Instant::now();
 
-    if tiles_with_neighbors.len() == 0 {
+    if tiles_with_neighbors.is_empty() {
         warn!("No map to merge.");
         return Ok(());
     }

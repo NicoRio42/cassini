@@ -106,11 +106,18 @@ fn compare(args: &Args) -> Result<bool, String> {
         ));
     }
     let same_type = a_type == b_type;
-    println!("type: {}", if same_type { "identical" } else { "DIFFERENT" });
+    println!(
+        "type: {}",
+        if same_type { "identical" } else { "DIFFERENT" }
+    );
     let same_nodata = a.nodata.map(f64::to_bits) == b.nodata.map(f64::to_bits);
     println!(
         "nodata value: {}",
-        if same_nodata { "identical" } else { "DIFFERENT" }
+        if same_nodata {
+            "identical"
+        } else {
+            "DIFFERENT"
+        }
     );
     let same_grid = (a.min_x, a.max_y, a.width, a.height) == (b.min_x, b.max_y, b.width, b.height);
     println!(

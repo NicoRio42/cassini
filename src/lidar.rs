@@ -34,11 +34,11 @@ use std::time::Instant;
 use crate::{
     buffer::paste_with_buffer,
     constants::{DEM_BLOCK_SIZE, VEGETATION_BLOCK_SIZE},
-    dem::{fill_dem_with_buffer, write_dem_with_buffer},
+    dem::{fill_dem_with_buffer, write_dem_with_buffer, DEM_WITH_BUFFER_FILE_NAME},
     error::{CassiniError, Result, ResultContext, TileId},
     external_dem::read_external_dem,
     grid::{Compression, Grid, Sample},
-    helpers::remove_dir_content_except,
+    helpers::remove_artifacts,
     point_reader::PointReader,
 };
 
@@ -66,6 +66,26 @@ impl VegetationLayers {
 /// sorted into layers, with the [`VegetationLayers::name`] of the mode. The
 /// versions before 0.19.0 do not write it.
 pub const VEGETATION_LAYERS_FILE_NAME: &str = "vegetation_layers.txt";
+
+/// The files the LiDAR stage writes. Its output directory can hold other
+/// files, such as the LiDAR file itself, so only these are removed before a
+/// run. The OSM file is not one of them: it only depends on the tile extent
+/// and is slow to download.
+const LIDAR_STEP_FILES: [&str; 12] = [
+    DEM_WITH_BUFFER_FILE_NAME,
+    "dem.tif",
+    "extent.txt",
+    "high_vegetation.tif",
+    "low_vegetation.tif",
+    "medium_vegetation.tif",
+    VEGETATION_LAYERS_FILE_NAME,
+    // Written by the versions that ran PDAL.
+    "dem-low-resolution.tif",
+    "high-vegetation.tif",
+    "low-vegetation.tif",
+    "medium-vegetation.tif",
+    "pipeline.json",
+];
 
 /// How the vegetation densities of the LiDAR output in `lidar_dir_path` were
 /// sorted into layers, `None` without `vegetation_layers.txt`.
@@ -254,20 +274,12 @@ pub fn run_dem_pass(
         }
     );
 
-    // Cleaning up output directory to fix https://github.com/NicoRio42/cassini/issues/7
-    // The OSM file only depends on the tile extent and is slow to download, so it is kept.
-    if output_dir_path.exists() {
-        let osm_file_name = format!("{:0>7}_{:0>7}.osm", min_x, max_y);
-        remove_dir_content_except(output_dir_path, &[&osm_file_name]).context(format!(
-            "could not clean LiDAR output directory `{}`",
-            output_dir_path.display()
-        ))?;
-    } else {
-        create_dir_all(output_dir_path).context(format!(
-            "could not create LiDAR output directory `{}`",
-            output_dir_path.display()
-        ))?;
-    }
+    // Removing the previous output to fix https://github.com/NicoRio42/cassini/issues/7
+    create_dir_all(output_dir_path).context(format!(
+        "could not create LiDAR output directory `{}`",
+        output_dir_path.display()
+    ))?;
+    remove_artifacts(output_dir_path, &LIDAR_STEP_FILES)?;
 
     let mut ground_dem = external_dem.is_none().then(|| GroundDem::new(&tile));
     let mut vegetation = None;
@@ -1342,6 +1354,50 @@ mod tests {
                 write_filled_dem
             );
         }
+    }
+
+    #[test]
+    fn the_lidar_output_replaces_only_its_own_files_in_the_output_directory() {
+        use test_tiles::{write_tile, POINTS};
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path();
+        let laz_path = output.join("tile.laz");
+        write_tile(&laz_path, 0.0, 100.0, &POINTS);
+        let tile = test_tile(output, 0.0);
+        let osm_file_name = format!("{:0>7}_{:0>7}.osm", tile.min_x, tile.max_y);
+        let kept = ["config.json", "other.laz", &osm_file_name];
+        for name in kept {
+            std::fs::write(output.join(name), name).unwrap();
+        }
+        std::fs::create_dir(output.join("data")).unwrap();
+        std::fs::write(output.join("data/notes.txt"), "notes").unwrap();
+        // A previous run, in `LidarClass` mode with a filled DEM, by a
+        // version that ran PDAL.
+        std::fs::write(output.join("pipeline.json"), "{}").unwrap();
+        std::fs::write(output.join(DEM_WITH_BUFFER_FILE_NAME), "stale").unwrap();
+        std::fs::write(output.join(VEGETATION_LAYERS_FILE_NAME), "lidar-class").unwrap();
+
+        generate_dem_and_vegetation_density_tiff_images_from_laz_file(
+            &laz_path,
+            None,
+            output,
+            VegetationLayers::Height,
+            false,
+        )
+        .unwrap();
+
+        assert!(laz_path.exists());
+        for name in kept {
+            assert_eq!(std::fs::read_to_string(output.join(name)).unwrap(), name);
+        }
+        assert!(output.join("data/notes.txt").exists());
+        assert!(!output.join("pipeline.json").exists());
+        assert!(!output.join(DEM_WITH_BUFFER_FILE_NAME).exists());
+        assert_eq!(
+            read_vegetation_layers(output).unwrap(),
+            Some(VegetationLayers::Height)
+        );
+        assert!(output.join("dem.tif").exists());
     }
 
     #[test]

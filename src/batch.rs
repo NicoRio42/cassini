@@ -4,7 +4,7 @@ use crate::{
     download::download_osm_file,
     error::{CassiniError, Result, ResultContext, Stage, TileId},
     grid::GridExtent,
-    helpers::remove_if_exists,
+    helpers::{is_input_file, remove_if_exists, LAZ_EXTENSIONS},
     lidar::{
         read_tile_id, read_vegetation_layers, run_dem_pass, VegetationByHeightPass,
         VegetationLayers, VEGETATION_LAYERS_FILE_NAME,
@@ -97,6 +97,8 @@ pub fn batch(
         );
         cleanup_render_step_files(&tiles, output_dir)?;
     } else {
+        // The LiDAR stage only removes its own previous output.
+        cleanup_render_step_files(&tiles, output_dir)?;
         run_lidar_stage(&tiles, chunk_size, vegetation_layers)?;
     }
 
@@ -378,26 +380,21 @@ pub fn get_tiles_with_neighbors(
             .context(format!("could not read an entry in `{input_dir}`"))?
             .path();
 
-        match path.extension() {
-            Some(extension) => {
-                if !path.is_file() || extension != "laz" {
-                    continue;
-                }
+        if !is_input_file(&path, &LAZ_EXTENSIONS) {
+            continue;
+        }
 
-                let tile = read_tile_id(&path)?;
-                let extent = (tile.min_x, tile.min_y, tile.max_x, tile.max_y);
+        let tile = read_tile_id(&path)?;
+        let extent = (tile.min_x, tile.min_y, tile.max_x, tile.max_y);
 
-                if let Some(previous) = tiles_map.insert(extent, path.clone()) {
-                    return Err(CassiniError::InvalidInput {
-                        message: format!(
-                            "LiDAR files `{}` and `{}` have the same rounded extent",
-                            previous.display(),
-                            path.display()
-                        ),
-                    });
-                }
-            }
-            None => {}
+        if let Some(previous) = tiles_map.insert(extent, path.clone()) {
+            return Err(CassiniError::InvalidInput {
+                message: format!(
+                    "LiDAR files `{}` and `{}` have the same rounded extent",
+                    previous.display(),
+                    path.display()
+                ),
+            });
         }
     }
 
@@ -499,7 +496,7 @@ pub fn get_tiles_with_neighbors(
             ),
         ]
         .into_iter()
-        .filter_map(|x| x)
+        .flatten()
         .collect();
 
         tiles.push(TileWithNeighbors {
@@ -523,17 +520,7 @@ fn geotiff_paths(input_dir: &str) -> Result<Vec<PathBuf>> {
         let path = dir_entry
             .context(format!("could not read an entry in `{input_dir}`"))?
             .path();
-        let is_hidden = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.starts_with('.'));
-        let is_tiff = path
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .is_some_and(|extension| {
-                extension.eq_ignore_ascii_case("tif") || extension.eq_ignore_ascii_case("tiff")
-            });
-        if is_tiff && !is_hidden && path.is_file() {
+        if is_input_file(&path, &["tif", "tiff"]) {
             paths.push(path);
         }
     }
@@ -624,12 +611,9 @@ fn get_neighbor_tile_from_hash_map(
     max_x: i64,
     max_y: i64,
 ) -> Option<PathBuf> {
-    return match tiles_map.get(&(min_x, min_y, max_x, max_y)) {
-        Some(_) => {
-            Some(Path::new(output_dir).join(format!("{}_{}_{}_{}", min_x, min_y, max_x, max_y)))
-        }
-        None => None,
-    };
+    tiles_map
+        .get(&(min_x, min_y, max_x, max_y))
+        .map(|_| Path::new(output_dir).join(format!("{}_{}_{}_{}", min_x, min_y, max_x, max_y)))
 }
 
 #[cfg(test)]
@@ -731,6 +715,25 @@ mod tests {
                 .unwrap();
         tiles.sort_by_key(|tile| tile.tile.min_x);
         tiles
+    }
+
+    #[test]
+    fn reads_laz_files_in_any_case_and_skips_hidden_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("in");
+        std::fs::create_dir(&input).unwrap();
+        write_tile(&input.join("a.LAZ"), 0.0, 100.0, &[]);
+        // The AppleDouble file macOS writes next to `b.laz` on some drives.
+        std::fs::write(input.join("._b.laz"), "not a LAZ file").unwrap();
+        std::fs::create_dir(input.join("folder.laz")).unwrap();
+        let output = dir.path().join("out");
+
+        let tiles =
+            get_tiles_with_neighbors(input.to_str().unwrap(), output.to_str().unwrap(), false)
+                .unwrap();
+
+        let laz_paths: Vec<_> = tiles.iter().map(|tile| &tile.laz_path).collect();
+        assert_eq!(laz_paths, [&input.join("a.LAZ")]);
     }
 
     #[test]
