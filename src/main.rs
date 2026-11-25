@@ -27,6 +27,7 @@ mod pullautin_smooth_contours;
 mod render;
 mod tile;
 mod ui;
+mod update;
 mod vectorization;
 mod vectors;
 mod vegetation;
@@ -273,6 +274,10 @@ enum Commands {
         #[arg(long, help = "Don't open the web page in the default browser")]
         no_open: bool,
     },
+
+    /// Upgrade Cassini to the latest version
+    #[command(alias = "update")]
+    Upgrade,
 }
 
 #[derive(clap::Args, Debug)]
@@ -501,6 +506,13 @@ fn run() -> Result<()> {
         return Ok(());
     }
 
+    update::remove_previous_executable();
+
+    let mut update_check = match args.command {
+        Some(Commands::Upgrade) | None => None,
+        Some(_) => update::start_update_check(),
+    };
+
     if let Some(command) = args.command {
         match command {
             Commands::Config {} => {
@@ -508,7 +520,14 @@ fn run() -> Result<()> {
             }
 
             Commands::Ui { port, no_open } => {
+                if let Some(check) = update_check.take() {
+                    check.print_notice_when_done();
+                }
                 ui::run_ui(port, !no_open)?;
+            }
+
+            Commands::Upgrade => {
+                update::upgrade()?;
             }
 
             Commands::Process {
@@ -666,6 +685,10 @@ fn run() -> Result<()> {
                 info!("Tiles generated in {:.1?}", duration);
             }
         }
+    }
+
+    if let Some(check) = update_check {
+        check.print_notice();
     }
 
     Ok(())

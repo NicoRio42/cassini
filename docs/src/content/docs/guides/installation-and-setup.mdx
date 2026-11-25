@@ -42,7 +42,7 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/NicoRio42/cassini/relea
   </TabItem>
 </Tabs>
 
-Open a new terminal afterwards, so that it picks up the new `PATH`. To update Cassini, run the script again.
+Open a new terminal afterwards, so that it picks up the new `PATH`. To update Cassini, run `cassini upgrade` (in versions after 0.19.0), or the script again. Cassini tells you when a newer version is available.
 
 If you used to run Cassini with Docker, through a `cassini` function in your `.bashrc` or PowerShell profile, the script removes that function, so that the `cassini` command runs the installed executable instead of the Docker image. It keeps a copy of each file it changes, next to it, with a `.cassini-backup` extension. Set the `CASSINI_NO_MODIFY_PATH` environment variable to `1` to leave your files untouched: the script then only tells you where the function is.
 
