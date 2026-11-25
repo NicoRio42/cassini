@@ -36,13 +36,14 @@ use batch::batch;
 use cassini::{error, grid, projection};
 use clap::{CommandFactory, Parser, Subcommand};
 use config::{default_config, get_config, Config};
+use dem::create_dem_with_buffer;
 use download::download_osm_file;
 use error::{CassiniError, Result, ResultContext};
 use lidar::{generate_dem_and_vegetation_density_tiff_images_from_laz_file, VegetationLayers};
 use log::info;
 use ocad_export::{check_template, write_ocd_file};
 use ocd::OcdTemplate;
-use render::{render_tile_map, DemWithBuffer, OcadOptions, RenderOptions};
+use render::{render_tile_map, OcadOptions, RenderOptions};
 use std::{
     fs::create_dir_all,
     num::NonZeroUsize,
@@ -80,13 +81,8 @@ enum Commands {
         )]
         dem: Option<PathBuf>,
 
-        #[arg(
-            long,
-            value_enum,
-            help = "How the vegetation points are sorted into the low, medium and high vegetation layers: by height above the ground, or by LiDAR classification",
-            default_value = "height"
-        )]
-        vegetation_layers: VegetationLayers,
+        #[command(flatten)]
+        vegetation: VegetationArgs,
 
         #[arg(
             long,
@@ -135,13 +131,8 @@ enum Commands {
         )]
         dem: Option<PathBuf>,
 
-        #[arg(
-            long,
-            value_enum,
-            help = "How the vegetation points are sorted into the low, medium and high vegetation layers: by height above the ground, or by LiDAR classification",
-            default_value = "height"
-        )]
-        vegetation_layers: VegetationLayers,
+        #[command(flatten)]
+        vegetation: VegetationArgs,
 
         #[arg(
             long,
@@ -236,17 +227,13 @@ enum Commands {
 
         #[arg(
             long,
-            help = "Skip the LiDAR processing stage of the pipeline (only if you already ran cassini once with the same input files)."
+            conflicts_with = "vegetation_layers",
+            help = "Skip the LiDAR processing stage of the pipeline (only if you already ran cassini once with the same input files). The vegetation layers are those of that run"
         )]
         skip_lidar: bool,
 
-        #[arg(
-            long,
-            value_enum,
-            help = "How the vegetation points are sorted into the low, medium and high vegetation layers: by height above the ground, or by LiDAR classification. No effect with --skip-lidar",
-            default_value = "height"
-        )]
-        vegetation_layers: VegetationLayers,
+        #[command(flatten)]
+        vegetation: VegetationArgs,
 
         #[arg(long, help = "Skip the vector processing stage of the pipeline")]
         skip_vector: bool,
@@ -271,6 +258,17 @@ enum Commands {
 
     /// Output a default config.json file.
     Config,
+}
+
+#[derive(clap::Args, Debug)]
+struct VegetationArgs {
+    #[arg(
+        long,
+        value_enum,
+        help = "How the vegetation points are sorted into the low, medium and high vegetation layers: by height above the ground, or by LiDAR classification",
+        default_value = "height"
+    )]
+    vegetation_layers: VegetationLayers,
 }
 
 #[derive(clap::Args, Debug)]
@@ -321,6 +319,7 @@ fn process_single_tile(
         dem_path,
         output_dir_path,
         vegetation_layers,
+        true,
     )?;
     let tile = Tile {
         lidar_dir_path: output_dir_path.to_path_buf(),
@@ -354,6 +353,7 @@ fn process_single_tile_lidar_step(
         dem_path,
         output_dir_path,
         vegetation_layers,
+        false,
     )
     .map(|_| ())
 }
@@ -386,23 +386,19 @@ fn process_single_tile_render_step(
         download_osm_file_if_needed(&tile)?;
     }
 
+    create_dem_with_buffer(&tile, &neighbor_tiles)?;
     render_and_export_tile(tile, neighbor_tiles, &options, &config)
 }
 
-/// Renders a single tile, and exports it to `full-map.ocd` when requested.
+/// Renders a single tile from its `dem_with_buffer.tif`, and exports it to
+/// `full-map.ocd` when requested.
 fn render_and_export_tile(
     tile: Tile,
     neighbor_tiles: Vec<PathBuf>,
     options: &RenderOptions,
     config: &Config,
 ) -> Result<()> {
-    let features = render_tile_map(
-        tile.clone(),
-        neighbor_tiles,
-        DemWithBuffer::Mosaic,
-        options,
-        config,
-    )?;
+    let features = render_tile_map(tile.clone(), neighbor_tiles, options, config)?;
 
     match (&options.ocad, features) {
         (Some(ocad), Some(features)) => write_ocd_file(&tile, &ocad.template, &features),
@@ -499,7 +495,7 @@ fn run() -> Result<()> {
             Commands::Process {
                 file_path,
                 dem,
-                vegetation_layers,
+                vegetation: VegetationArgs { vegetation_layers },
                 output_dir: maybe_output_dir,
                 skip_vector,
                 skip_520,
@@ -536,7 +532,7 @@ fn run() -> Result<()> {
             Commands::Lidar {
                 file_path,
                 dem,
-                vegetation_layers,
+                vegetation: VegetationArgs { vegetation_layers },
                 output_dir: maybe_output_dir,
                 config,
             } => {
@@ -616,7 +612,7 @@ fn run() -> Result<()> {
                 output_dir: maybe_output_dir,
                 threads: maybe_threads,
                 skip_lidar,
-                vegetation_layers,
+                vegetation: VegetationArgs { vegetation_layers },
                 skip_vector,
                 skip_520,
                 undergrowth,
@@ -746,15 +742,9 @@ mod tests {
                 .into_iter()
                 .chain(options.iter().copied());
             match Args::try_parse_from(args).unwrap().command.unwrap() {
-                Commands::Lidar {
-                    vegetation_layers, ..
-                }
-                | Commands::Process {
-                    vegetation_layers, ..
-                }
-                | Commands::Batch {
-                    vegetation_layers, ..
-                } => vegetation_layers,
+                Commands::Lidar { vegetation, .. }
+                | Commands::Process { vegetation, .. }
+                | Commands::Batch { vegetation, .. } => vegetation.vegetation_layers,
                 _ => panic!("unexpected command"),
             }
         };
@@ -781,6 +771,32 @@ mod tests {
             "height"
         ])
         .is_err());
+    }
+
+    #[test]
+    fn skip_lidar_reuses_the_vegetation_layers_of_the_previous_run() {
+        assert!(Args::try_parse_from(["cassini", "batch", "--skip-lidar"]).is_ok());
+        for layers in ["height", "lidar-class"] {
+            assert!(Args::try_parse_from([
+                "cassini",
+                "batch",
+                "--skip-lidar",
+                "--vegetation-layers",
+                layers
+            ])
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn vegetation_layers_names_are_the_command_line_values() {
+        use clap::ValueEnum;
+        for layers in VegetationLayers::value_variants() {
+            assert_eq!(
+                VegetationLayers::from_str(layers.name(), false),
+                Ok(*layers)
+            );
+        }
     }
 
     #[test]

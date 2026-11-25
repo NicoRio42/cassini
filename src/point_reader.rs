@@ -122,17 +122,15 @@ impl PointReader {
     }
 }
 
+/// LiDAR files for tests.
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use las::{
-        point::{Classification, Format},
-        Builder, Color, Point, Transform, Vector, Writer,
-    };
+pub mod test_files {
+    use las::{point::Format, Builder, Point, Transform, Vector, Writer};
+    use std::path::Path;
 
     /// Writes `points` to `path` in point format `format`, compressed if
     /// `path` ends with `.laz`, with LiDAR HD's 1 cm scale.
-    fn write_points(path: &Path, format: u8, points: &[Point]) {
+    pub fn write_points(path: &Path, format: u8, points: &[Point]) {
         let mut builder = Builder::from((1, 4));
         builder.point_format = Format::new(format).unwrap();
         builder.point_format.is_compressed = path.extension().unwrap() == "laz";
@@ -152,6 +150,18 @@ mod tests {
         }
         writer.close().unwrap();
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_files::write_points;
+    use super::*;
+    use las::{
+        point::{Classification, Format},
+        Color, Point,
+    };
+    use laz::{LasZipCompressor, LazVlrBuilder};
+    use std::io::Write;
 
     /// 1234 points with every field set, so that a field decoded from the
     /// wrong bytes shows.
@@ -242,6 +252,88 @@ mod tests {
                     path.display()
                 );
             }
+        }
+    }
+
+    /// Rewrites the LAZ file `laz_path`, of the points of the LAS file
+    /// `las_path`, to `output_path` with chunks of `chunk_sizes` points, as
+    /// LiDAR HD's COPC files have chunks of variable sizes.
+    fn write_variable_size_chunks(
+        laz_path: &Path,
+        las_path: &Path,
+        chunk_sizes: &[usize],
+        output_path: &Path,
+    ) {
+        let laz_bytes = std::fs::read(laz_path).unwrap();
+        let laz_header = las::raw::Header::read_from(&mut laz_bytes.as_slice()).unwrap();
+        let mut header_bytes = laz_bytes[..laz_header.offset_to_point_data as usize].to_vec();
+
+        // The same LAZ items, with the chunk size of variable-size chunks.
+        let fixed_vlr = Reader::from_path(laz_path)
+            .unwrap()
+            .header()
+            .laz_vlr()
+            .unwrap();
+        let variable_vlr = LazVlrBuilder::new(fixed_vlr.items().clone())
+            .with_variable_chunk_size()
+            .build();
+        let (mut fixed_vlr_bytes, mut variable_vlr_bytes) = (vec![], vec![]);
+        fixed_vlr.write_to(&mut fixed_vlr_bytes).unwrap();
+        variable_vlr.write_to(&mut variable_vlr_bytes).unwrap();
+        assert_eq!(fixed_vlr_bytes.len(), variable_vlr_bytes.len());
+        let vlr_start = header_bytes
+            .windows(fixed_vlr_bytes.len())
+            .position(|window| window == fixed_vlr_bytes)
+            .unwrap();
+        header_bytes[vlr_start..vlr_start + variable_vlr_bytes.len()]
+            .copy_from_slice(&variable_vlr_bytes);
+
+        let las_bytes = std::fs::read(las_path).unwrap();
+        let las_header = las::raw::Header::read_from(&mut las_bytes.as_slice()).unwrap();
+        let record_len = las_header.point_data_record_length as usize;
+        let mut records = &las_bytes[las_header.offset_to_point_data as usize..];
+        let chunks: Vec<&[u8]> = chunk_sizes
+            .iter()
+            .map(|&size| {
+                let (chunk, rest) = records.split_at(size * record_len);
+                records = rest;
+                chunk
+            })
+            .collect();
+
+        let mut file = File::create(output_path).unwrap();
+        file.write_all(&header_bytes).unwrap();
+        let mut compressor = LasZipCompressor::new(file, variable_vlr).unwrap();
+        compressor.compress_chunks(chunks).unwrap();
+        compressor.done().unwrap();
+    }
+
+    #[test]
+    fn reads_variable_size_chunks() {
+        let dir = tempfile::tempdir().unwrap();
+        let points = points(&Format::new(6).unwrap());
+        let (laz_path, las_path) = (dir.path().join("fixed.laz"), dir.path().join("points.las"));
+        write_points(&laz_path, 6, &points);
+        write_points(&las_path, 6, &points);
+        let path = dir.path().join("variable.laz");
+        let chunk_sizes = [1, 500, 33, 700];
+        assert_eq!(chunk_sizes.iter().sum::<usize>(), points.len());
+        write_variable_size_chunks(&laz_path, &las_path, &chunk_sizes, &path);
+
+        let mut reader = Reader::from_path(&path).unwrap();
+        assert!(reader
+            .header()
+            .laz_vlr()
+            .unwrap()
+            .uses_variable_size_chunks());
+        let mut expected = PointDataBuilder::new().for_header(reader.header()).build();
+        assert_eq!(reader.fill_points(5000, &mut expected).unwrap(), 1234);
+        let expected = fields(&expected);
+        assert_eq!(expected, read_fields(&las_path, 5000));
+
+        // Batches ending inside a chunk, on a chunk end, and past the last.
+        for n in [7, 501, 1000, 5000] {
+            assert_eq!(read_fields(&path, n), expected, "by {n}");
         }
     }
 }

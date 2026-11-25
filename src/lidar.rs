@@ -22,18 +22,19 @@
 //!   PDAL up to 2.9 ignores that error and leaves every height at 0, so no
 //!   point was reclassified.
 
+use clap::ValueEnum;
 use las::{Bounds, PointData};
 use log::info;
 use std::collections::HashSet;
 use std::fs::{create_dir_all, File};
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use crate::{
     buffer::paste_with_buffer,
     constants::{DEM_BLOCK_SIZE, VEGETATION_BLOCK_SIZE},
-    dem::fill_dem_with_buffer,
+    dem::{fill_dem_with_buffer, write_dem_with_buffer},
     error::{CassiniError, Result, ResultContext, TileId},
     external_dem::read_external_dem,
     grid::{Compression, Grid, Sample},
@@ -49,6 +50,40 @@ pub enum VegetationLayers {
     Height,
     /// By the LiDAR classification.
     LidarClass,
+}
+
+impl VegetationLayers {
+    /// Its value on the command line.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Height => "height",
+            Self::LidarClass => "lidar-class",
+        }
+    }
+}
+
+/// The file of the LiDAR output that says how its vegetation densities were
+/// sorted into layers, with the [`VegetationLayers::name`] of the mode. The
+/// versions before 0.19.0 do not write it.
+pub const VEGETATION_LAYERS_FILE_NAME: &str = "vegetation_layers.txt";
+
+/// How the vegetation densities of the LiDAR output in `lidar_dir_path` were
+/// sorted into layers, `None` without `vegetation_layers.txt`.
+pub fn read_vegetation_layers(lidar_dir_path: &Path) -> Result<Option<VegetationLayers>> {
+    let path = lidar_dir_path.join(VEGETATION_LAYERS_FILE_NAME);
+    let content = match std::fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error).context(format!("could not read `{}`", path.display()));
+        }
+    };
+    VegetationLayers::from_str(content.trim(), false)
+        .map(Some)
+        .map_err(|_| CassiniError::InvalidArtifact {
+            path,
+            message: format!("unknown vegetation layers `{}`", content.trim()),
+        })
 }
 
 /// The ASPRS classifications of unclassified points, of ground and of low,
@@ -108,53 +143,81 @@ const MAX_TILE_SIDE: i64 = 5_000;
 /// chunks, which are decompressed in parallel.
 const POINTS_PER_BATCH: u64 = 1 << 21;
 
-/// Writes the DEM and vegetation density rasters of the LiDAR file at
-/// `laz_path` to `output_dir_path`, for a tile processed alone, returning
-/// the tile's extent. The DEM is the one at `dem_path` if given, else it is
-/// computed from the ground points.
+/// Writes the LiDAR output of the LiDAR file at `laz_path` to
+/// `output_dir_path`, for a tile processed alone, returning the tile's
+/// extent. The DEM is the one at `dem_path` if given, else it is computed
+/// from the ground points.
 ///
-/// In `Height` mode, the heights are taken above the tile's DEM pasted onto
-/// its buffered grid without neighbours and filled, which is not written. In
-/// a batch, the neighbours' DEMs fill the buffer instead, so the heights near
-/// the tile edges can differ.
+/// The filled DEM of the buffered tile is the tile's DEM pasted onto its
+/// buffered grid without neighbours and filled. It is written to
+/// `dem_with_buffer.tif` if `write_filled_dem`, for the render step of
+/// `process`. In `Height` mode, the heights are taken above it. In a batch,
+/// the neighbours' DEMs fill the buffer instead, so the heights near the
+/// tile edges can differ.
 pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
     laz_path: &Path,
     dem_path: Option<&Path>,
     output_dir_path: &Path,
     layers: VegetationLayers,
+    write_filled_dem: bool,
 ) -> Result<TileId> {
-    let (tile, dem) =
-        generate_dem_tiff_image_from_laz_file(laz_path, dem_path, output_dir_path, layers)?;
-    if layers == VegetationLayers::Height {
-        let nodata = dem.nodata.unwrap_or(NO_DATA_ELEVATION);
-        let mut dem_with_buffer = paste_with_buffer(&tile, &dem, nodata, DEM_BLOCK_SIZE);
-        drop(dem);
-        fill_dem_with_buffer(&mut dem_with_buffer, &tile);
-        generate_vegetation_density_tiff_images_from_laz_file(
-            laz_path,
-            &tile,
-            &dem_with_buffer,
-            output_dir_path,
-        )?;
+    let DemPass {
+        tile,
+        dem,
+        vegetation_by_height,
+    } = run_dem_pass(laz_path, dem_path, output_dir_path, layers)?;
+    if vegetation_by_height.is_none() && !write_filled_dem {
+        return Ok(tile);
+    }
+    let nodata = dem.nodata.unwrap_or(NO_DATA_ELEVATION);
+    let mut dem_with_buffer = paste_with_buffer(&tile, &dem, nodata, DEM_BLOCK_SIZE);
+    drop(dem);
+    fill_dem_with_buffer(&mut dem_with_buffer, &tile);
+    if write_filled_dem {
+        write_dem_with_buffer(output_dir_path, &dem_with_buffer)?;
+    }
+    if let Some(vegetation_by_height) = vegetation_by_height {
+        vegetation_by_height.run(&dem_with_buffer)?;
     }
     Ok(tile)
 }
 
+/// What [`run_dem_pass`] leaves of the LiDAR output of a tile.
+pub struct DemPass {
+    pub tile: TileId,
+    /// The DEM written to `dem.tif`.
+    pub dem: Grid<f32>,
+    /// The pass that completes the LiDAR output in `Height` mode, once the
+    /// filled DEM of the buffered tile is known. `None` in `LidarClass` mode,
+    /// where the DEM pass wrote the vegetation densities and the LiDAR output
+    /// is complete.
+    pub vegetation_by_height: Option<VegetationByHeightPass>,
+}
+
+/// The pass over the points of a tile that writes its vegetation densities
+/// by height above the ground, which completes its LiDAR output.
+#[must_use = "the LiDAR output of the tile is incomplete until the pass runs"]
+pub struct VegetationByHeightPass {
+    laz_path: PathBuf,
+    tile: TileId,
+    output_dir_path: PathBuf,
+}
+
 /// Writes the DEM of the LiDAR file at `laz_path` to `output_dir_path` as
-/// `dem.tif`, returning the tile's extent and its DEM. The DEM is the one at
-/// `dem_path` if given, else it is computed from the ground points.
+/// `dem.tif`. The DEM is the one at `dem_path` if given, else it is computed
+/// from the ground points.
 ///
 /// In `LidarClass` mode, the same pass over the points writes the vegetation
-/// density rasters, and the LiDAR output is complete. In `Height` mode,
-/// [`generate_vegetation_density_tiff_images_from_laz_file`] writes them
-/// once the filled DEM of the buffered tile is known. With a DEM file, that
-/// is the only pass over the points.
-pub fn generate_dem_tiff_image_from_laz_file(
+/// density rasters, and the LiDAR output is complete. In `Height` mode, the
+/// returned [`VegetationByHeightPass`] writes them once the filled DEM of the
+/// buffered tile is known. With a DEM file, that is the only pass over the
+/// points.
+pub fn run_dem_pass(
     laz_path: &Path,
     dem_path: Option<&Path>,
     output_dir_path: &Path,
     layers: VegetationLayers,
-) -> Result<(TileId, Grid<f32>)> {
+) -> Result<DemPass> {
     let start = Instant::now();
 
     let mut reader = PointReader::open(laz_path)?;
@@ -241,7 +304,7 @@ pub fn generate_dem_tiff_image_from_laz_file(
         let vegetation = vegetation.unwrap_or_else(|| {
             VegetationDensities::new(&tile, VoxelSet::new([0.0; 3], &bounds), None)
         });
-        write_vegetation(vegetation, &tile, output_dir_path)?;
+        write_vegetation(vegetation, layers, &tile, output_dir_path)?;
     }
 
     info!(
@@ -258,51 +321,64 @@ pub fn generate_dem_tiff_image_from_laz_file(
         start.elapsed()
     );
 
-    Ok((tile, dem))
+    Ok(DemPass {
+        tile,
+        dem,
+        vegetation_by_height: (!with_vegetation).then(|| VegetationByHeightPass {
+            laz_path: laz_path.to_path_buf(),
+            tile,
+            output_dir_path: output_dir_path.to_path_buf(),
+        }),
+    })
 }
 
-/// Writes the vegetation density rasters of the LiDAR file at `laz_path` to
-/// `output_dir_path`, by height above `dem_with_buffer`, the filled DEM of
-/// the buffered tile `tile`. This completes the LiDAR output that
-/// [`generate_dem_tiff_image_from_laz_file`] started in `Height` mode.
-pub fn generate_vegetation_density_tiff_images_from_laz_file(
-    laz_path: &Path,
-    tile: &TileId,
-    dem_with_buffer: &Grid<f32>,
-    output_dir_path: &Path,
-) -> Result<()> {
-    let start = Instant::now();
-    info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. Computing vegetation densities by height",
-        tile.min_x, tile.min_y, tile.max_x, tile.max_y
-    );
+impl VegetationByHeightPass {
+    /// Writes the vegetation density rasters of the tile, by height above
+    /// `dem_with_buffer`, the filled DEM of the buffered tile.
+    pub fn run(self, dem_with_buffer: &Grid<f32>) -> Result<()> {
+        let Self {
+            laz_path,
+            tile,
+            output_dir_path,
+        } = self;
+        let start = Instant::now();
+        info!(
+            "Tile min_x={} min_y={} max_x={} max_y={}. Computing vegetation densities by height",
+            tile.min_x, tile.min_y, tile.max_x, tile.max_y
+        );
 
-    let mut reader = PointReader::open(laz_path)?;
-    let bounds = reader.header().bounds();
-    let ground = GroundElevations::new(dem_with_buffer);
-    let mut vegetation = None;
-    read_points(&mut reader, |first_point, points| {
-        let vegetation = vegetation.get_or_insert_with(|| {
-            VegetationDensities::new(tile, VoxelSet::new(first_point, &bounds), Some(&ground))
+        let mut reader = PointReader::open(&laz_path)?;
+        let bounds = reader.header().bounds();
+        let ground = GroundElevations::new(dem_with_buffer);
+        let mut vegetation = None;
+        read_points(&mut reader, |first_point, points| {
+            let vegetation = vegetation.get_or_insert_with(|| {
+                VegetationDensities::new(&tile, VoxelSet::new(first_point, &bounds), Some(&ground))
+            });
+            for (((x, y), z), classification) in point_columns(points) {
+                vegetation.add_point(x, y, z, classification);
+            }
+        })?;
+        let vegetation = vegetation.unwrap_or_else(|| {
+            VegetationDensities::new(&tile, VoxelSet::new([0.0; 3], &bounds), Some(&ground))
         });
-        for (((x, y), z), classification) in point_columns(points) {
-            vegetation.add_point(x, y, z, classification);
-        }
-    })?;
-    let vegetation = vegetation.unwrap_or_else(|| {
-        VegetationDensities::new(tile, VoxelSet::new([0.0; 3], &bounds), Some(&ground))
-    });
-    write_vegetation(vegetation, tile, output_dir_path)?;
+        write_vegetation(
+            vegetation,
+            VegetationLayers::Height,
+            &tile,
+            &output_dir_path,
+        )?;
 
-    info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. Vegetation densities computed in {:.1?}",
-        tile.min_x,
-        tile.min_y,
-        tile.max_x,
-        tile.max_y,
-        start.elapsed()
-    );
-    Ok(())
+        info!(
+            "Tile min_x={} min_y={} max_x={} max_y={}. Vegetation densities computed in {:.1?}",
+            tile.min_x,
+            tile.min_y,
+            tile.max_x,
+            tile.max_y,
+            start.elapsed()
+        );
+        Ok(())
+    }
 }
 
 /// Reads the points of `reader` in file order, giving each batch of points
@@ -342,9 +418,11 @@ fn point_columns(points: &PointData) -> impl Iterator<Item = (((f64, f64), f64),
 }
 
 /// Writes the low, medium and high vegetation density rasters of `tile`,
-/// then `extent.txt`, which completes the LiDAR output.
+/// sorted into layers by `layers`, then `vegetation_layers.txt` and
+/// `extent.txt`, which completes the LiDAR output.
 fn write_vegetation(
     vegetation: VegetationDensities,
+    layers: VegetationLayers,
     tile: &TileId,
     output_dir_path: &Path,
 ) -> Result<()> {
@@ -370,6 +448,10 @@ fn write_vegetation(
     ] {
         grid.write_geotiff(&output_dir_path.join(name), Compression::Deflate)?;
     }
+
+    let layers_path = output_dir_path.join(VEGETATION_LAYERS_FILE_NAME);
+    std::fs::write(&layers_path, layers.name())
+        .context(format!("could not write `{}`", layers_path.display()))?;
 
     // Downstream tools use extent.txt as the completion marker, so write it last.
     let extent_path = output_dir_path.join("extent.txt");
@@ -797,6 +879,83 @@ fn voxel_index(coordinate: f64, origin: f64) -> i32 {
     ((coordinate - origin) / VOXEL_SIZE).floor() as i32
 }
 
+/// LiDAR tiles for tests.
+#[cfg(test)]
+pub mod test_tiles {
+    use crate::{grid::Grid, point_reader::test_files::write_points};
+    use las::{point::Classification, Point};
+    use std::path::Path;
+
+    /// A 10 m tile with its south-west corner at (`MIN_X` + `offset_x`,
+    /// `MIN_Y`), in LiDAR HD's coordinates.
+    pub const MIN_X: f64 = 900_000.0;
+    pub const MIN_Y: f64 = 6_400_000.0;
+    pub const SIDE: f64 = 10.0;
+
+    /// Vegetation and building points above flat ground at 100 m, at
+    /// (`MIN_X` + x, `MIN_Y` + y): low by height but unclassified, medium by
+    /// height but classified as high vegetation, high by height but
+    /// classified as medium vegetation, and a building.
+    pub const POINTS: [(f64, f64, f64, u8); 4] = [
+        (2.1, 2.1, 100.5, 1),
+        (5.1, 5.1, 103.0, 5),
+        (7.1, 7.1, 120.0, 4),
+        (3.1, 3.1, 105.0, 6),
+    ];
+
+    /// The indices of the 1 m cells of `POINTS` in the tile's vegetation
+    /// rasters: low, medium and high by height.
+    pub const CELLS: [usize; 3] = [72, 45, 27];
+
+    /// Writes the LAZ file of the tile at `offset_x`: ground points every
+    /// 25 cm over it, edges included, at `ground_z`, then `points` shifted
+    /// by `ground_z - 100` m.
+    pub fn write_tile(path: &Path, offset_x: f64, ground_z: f64, points: &[(f64, f64, f64, u8)]) {
+        let point = |x: f64, y: f64, z: f64, classification: u8| Point {
+            x: MIN_X + offset_x + x,
+            y: MIN_Y + y,
+            z,
+            return_number: 1,
+            number_of_returns: 1,
+            classification: Classification::new(classification).unwrap(),
+            gps_time: Some(0.0),
+            ..Default::default()
+        };
+        let steps = (SIDE * 4.0) as i32;
+        let ground = (0..=steps)
+            .flat_map(|col| (0..=steps).map(move |row| (col as f64 / 4.0, row as f64 / 4.0)));
+        let points: Vec<Point> = ground
+            .map(|(x, y)| point(x, y, ground_z, 2))
+            .chain(points.iter().map(|&(x, y, z, classification)| {
+                point(x, y, z + ground_z - 100.0, classification)
+            }))
+            .collect();
+        write_points(path, 6, &points);
+    }
+
+    /// The low, medium and high vegetation counts of the LiDAR output in
+    /// `dir`.
+    pub fn vegetation_counts(dir: &Path) -> [Vec<u8>; 3] {
+        ["low", "medium", "high"].map(|layer| {
+            Grid::<u8>::read_geotiff(&dir.join(format!("{layer}_vegetation.tif")))
+                .unwrap()
+                .values
+        })
+    }
+
+    /// `[low, medium, high]` rasters of 10 x 10 cells, each with a point in
+    /// `cells`, `None` for a layer without any.
+    pub fn counts_in(cells: [Option<usize>; 3]) -> [Vec<u8>; 3] {
+        cells.map(|cell| {
+            let mut counts = vec![0; 100];
+            if let Some(cell) = cell {
+                counts[cell] = 1;
+            }
+            counts
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1107,5 +1266,95 @@ mod tests {
         }
         assert_eq!(voxels.blocks.iter().flatten().count(), 3);
         assert!(voxels.others.is_empty());
+    }
+
+    /// The 10 m test tile at `offset_x`, in `dir`.
+    fn test_tile(dir: &Path, offset_x: f64) -> crate::tile::Tile {
+        use test_tiles::{MIN_X, MIN_Y, SIDE};
+        crate::tile::Tile {
+            lidar_dir_path: dir.to_path_buf(),
+            render_dir_path: dir.to_path_buf(),
+            min_x: (MIN_X + offset_x) as i64,
+            min_y: MIN_Y as i64,
+            max_x: (MIN_X + offset_x + SIDE) as i64,
+            max_y: (MIN_Y + SIDE) as i64,
+        }
+    }
+
+    #[test]
+    fn a_tile_alone_has_its_vegetation_by_height_or_class_and_its_filled_dem_if_asked() {
+        use test_tiles::{counts_in, vegetation_counts, write_tile, CELLS, POINTS};
+        let dir = tempfile::tempdir().unwrap();
+        let laz_path = dir.path().join("tile.laz");
+        write_tile(&laz_path, 0.0, 100.0, &POINTS);
+        let output = dir.path().join("output");
+        let tile = test_tile(&output, 0.0);
+        let [low, medium, high] = CELLS;
+
+        for write_filled_dem in [true, false] {
+            let tile_id = generate_dem_and_vegetation_density_tiff_images_from_laz_file(
+                &laz_path,
+                None,
+                &output,
+                VegetationLayers::Height,
+                write_filled_dem,
+            )
+            .unwrap();
+            assert_eq!(tile_id, TileId::from(&tile));
+            assert_eq!(
+                vegetation_counts(&output),
+                counts_in([Some(low), Some(medium), Some(high)])
+            );
+            assert_eq!(
+                read_vegetation_layers(&output).unwrap(),
+                Some(VegetationLayers::Height)
+            );
+            assert!(output.join("extent.txt").exists());
+            let dem_with_buffer = crate::dem::read_dem_with_buffer(&tile);
+            assert_eq!(dem_with_buffer.is_ok(), write_filled_dem);
+            if let Ok(dem_with_buffer) = dem_with_buffer {
+                // The tile's ground, which the fill extends around it.
+                let (col, row) = (BUFFER * 2 + 10, BUFFER * 2 + 10);
+                assert_eq!(dem_with_buffer.get(col, row), 100.0);
+            }
+        }
+
+        for write_filled_dem in [true, false] {
+            generate_dem_and_vegetation_density_tiff_images_from_laz_file(
+                &laz_path,
+                None,
+                &output,
+                VegetationLayers::LidarClass,
+                write_filled_dem,
+            )
+            .unwrap();
+            // The unclassified point is not low vegetation by class.
+            assert_eq!(
+                vegetation_counts(&output),
+                counts_in([None, Some(high), Some(medium)])
+            );
+            assert_eq!(
+                read_vegetation_layers(&output).unwrap(),
+                Some(VegetationLayers::LidarClass)
+            );
+            assert_eq!(
+                output.join(crate::dem::DEM_WITH_BUFFER_FILE_NAME).exists(),
+                write_filled_dem
+            );
+        }
+    }
+
+    #[test]
+    fn reads_the_vegetation_layers_of_the_lidar_output() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(read_vegetation_layers(dir.path()).unwrap(), None);
+        let path = dir.path().join(VEGETATION_LAYERS_FILE_NAME);
+        std::fs::write(&path, "lidar-class\n").unwrap();
+        assert_eq!(
+            read_vegetation_layers(dir.path()).unwrap(),
+            Some(VegetationLayers::LidarClass)
+        );
+        std::fs::write(&path, "class").unwrap();
+        assert!(read_vegetation_layers(dir.path()).is_err());
     }
 }

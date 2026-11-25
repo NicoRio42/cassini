@@ -1,7 +1,7 @@
 use crate::{
     constants::BUFFER,
     error::{CassiniError, Result, ResultContext, TileId},
-    grid::{Compression, Grid, Sample},
+    grid::{Compression, Grid, GridExtent, Sample},
     tile::Tile,
 };
 use log::warn;
@@ -99,6 +99,20 @@ fn mosaic<T: Sample>(
     Ok(raster_with_buffer)
 }
 
+/// The grid of [`mosaic_with_buffer`] for `tile` at `resolution`: the tile
+/// and `BUFFER` metres around it.
+pub fn buffered_extent(tile: &TileId, resolution: f64) -> GridExtent {
+    let buffer = BUFFER as i64;
+    let size = |min: i64, max: i64| ((max - min + 2 * buffer) as f64 / resolution).round() as usize;
+    GridExtent {
+        min_x: (tile.min_x - buffer) as f64,
+        max_y: (tile.max_y + buffer) as f64,
+        resolution,
+        width: size(tile.min_x, tile.max_x),
+        height: size(tile.min_y, tile.max_y),
+    }
+}
+
 /// The tile raster `raster` alone, on the grid of [`mosaic_with_buffer`]
 /// with `nodata` as the nodata value: the mosaic of a tile without
 /// neighbours, from a raster in memory.
@@ -108,14 +122,13 @@ pub fn paste_with_buffer<T: Sample>(
     nodata: T,
     resolution: f64,
 ) -> Grid<T> {
-    let buffer = BUFFER as i64;
-    let size = |min: i64, max: i64| ((max - min + 2 * buffer) as f64 / resolution).round() as usize;
+    let extent = buffered_extent(tile, resolution);
     let mut raster_with_buffer = Grid::new(
-        (tile.min_x - buffer) as f64,
-        (tile.max_y + buffer) as f64,
-        resolution,
-        size(tile.min_x, tile.max_x),
-        size(tile.min_y, tile.max_y),
+        extent.min_x,
+        extent.max_y,
+        extent.resolution,
+        extent.width,
+        extent.height,
         Some(nodata),
         nodata,
     );
@@ -279,9 +292,8 @@ mod tests {
         for dir in [&tile_dir, &east_dir, &west_dir] {
             std::fs::create_dir_all(dir).unwrap();
         }
-        let raster = |min_x: f64, value: f32| {
-            Grid::new(min_x, 1000.0, 100.0, 10, 10, Some(-9999.0), value)
-        };
+        let raster =
+            |min_x: f64, value: f32| Grid::new(min_x, 1000.0, 100.0, 10, 10, Some(-9999.0), value);
         raster(0.0, 1.0)
             .write_geotiff(&tile_dir.join("dem.tif"), Compression::None)
             .unwrap();
@@ -311,6 +323,8 @@ mod tests {
             -9999.0, -9999.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 2.0, 2.0,
         ]);
         // The north buffer has no data.
-        assert!(mosaic.values[..2 * 14].iter().all(|&value| value == -9999.0));
+        assert!(mosaic.values[..2 * 14]
+            .iter()
+            .all(|&value| value == -9999.0));
     }
 }

@@ -17,7 +17,7 @@ use crate::world_file::create_world_file;
 use crate::{
     cliff_features::get_cliff_features,
     cliffs::render_cliffs,
-    dem::{create_contours_and_slopes, create_dem_with_buffer, read_dem_with_buffer},
+    dem::{create_contours_and_slopes, read_dem_with_buffer},
     tile::Tile,
     vegetation::{render_vegetation, UndergrowthMode},
 };
@@ -47,23 +47,13 @@ pub struct OcadOptions {
     pub simplify_tolerance: f64,
 }
 
-/// Where the render step takes the filled DEM of the buffered tile from.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum DemWithBuffer {
-    /// The `dem.tif` rasters of the tile and its neighbours, mosaicked and
-    /// filled, written to `dem_with_buffer.tif`.
-    Mosaic,
-    /// The `dem_with_buffer.tif` the LiDAR stage of a batch wrote.
-    Existing,
-}
-
-/// Renders the tile to `full-map.png` from its DEM, vegetation density
-/// rasters and vector data. Returns the map features to export when the OCAD
-/// export is requested.
+/// Renders the tile to `full-map.png` from its filled DEM with buffer
+/// (`dem_with_buffer.tif`, see [`crate::dem::DEM_WITH_BUFFER_FILE_NAME`]),
+/// vegetation density rasters and vector data. Returns the map features to
+/// export when the OCAD export is requested.
 pub fn render_tile_map(
     tile: Tile,
     neighbor_tiles: Vec<PathBuf>,
-    dem_with_buffer: DemWithBuffer,
     options: &RenderOptions,
     config: &Config,
 ) -> Result<Option<Vec<MapFeature>>> {
@@ -109,11 +99,21 @@ pub fn render_tile_map(
     };
     drop(vegetation_rasters);
 
-    let dem_with_buffer = match dem_with_buffer {
-        DemWithBuffer::Mosaic => create_dem_with_buffer(&tile, &neighbor_tiles)?,
-        DemWithBuffer::Existing => read_dem_with_buffer(&tile)?,
-    };
+    let dem_with_buffer = read_dem_with_buffer(&tile)?;
     let raw_contours = create_contours_and_slopes(&tile, &dem_with_buffer)?;
+    let slopes = Grid::<f32>::read_geotiff(&tile.render_dir_path.join("slopes.tif"))?;
+    render_cliffs(&tile, &slopes, image_width, image_height, config)?;
+    let cliff_features = match &options.ocad {
+        Some(ocad) => get_cliff_features(
+            &tile,
+            &slopes,
+            &dem_with_buffer,
+            config,
+            ocad.simplify_tolerance,
+        )?,
+        None => vec![],
+    };
+    drop(slopes);
     drop(dem_with_buffer);
     let contour_features = generate_contours_with_pullautin_algorithme(
         &tile,
@@ -122,13 +122,6 @@ pub fn render_tile_map(
         image_height,
         config,
     )?;
-    let slopes = Grid::<f32>::read_geotiff(&tile.render_dir_path.join("slopes.tif"))?;
-    render_cliffs(&tile, &slopes, image_width, image_height, config)?;
-    let cliff_features = match &options.ocad {
-        Some(ocad) => get_cliff_features(&tile, &slopes, config, ocad.simplify_tolerance)?,
-        None => vec![],
-    };
-    drop(slopes);
 
     info!(
         "Tile min_x={} min_y={} max_x={} max_y={}. Rendering map to PNG",
@@ -194,7 +187,7 @@ pub fn render_tile_map(
 }
 
 /// The files the render step writes. `dem_with_buffer.tif` is not one of
-/// them: the LiDAR stage of a batch writes it, and `--skip-lidar` reuses it.
+/// them: the render step reads it, and `--skip-lidar` reuses it.
 const RENDER_STEP_FILES: [&str; 17] = [
     "cliffs.png",
     "contours",

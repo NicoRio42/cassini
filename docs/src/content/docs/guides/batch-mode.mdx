@@ -19,7 +19,7 @@ If you are not happy with the result (too few cliffs, too much green...), you ca
 cassini batch --skip-lidar
 ```
 
-`--skip-lidar` reuses the files of the previous run, including the filled <GlossaryLink slug="dem" /> of each tile and its surroundings, which a batch of a version before 0.19.0 does not write: run the batch once without `--skip-lidar` after upgrading. If you add or remove tiles, run it without `--skip-lidar` too, as the tiles next to them would keep the surroundings of the previous run.
+`--skip-lidar` reuses the files of the previous run, including the filled <GlossaryLink slug="dem" /> of each tile and its surroundings and the [vegetation layers](#vegetation-layers). Cassini stops if that run was made by a version before 0.19.0: run the batch once without `--skip-lidar` after upgrading. If you add or remove tiles, run it without `--skip-lidar` too, as the tiles next to them would keep the surroundings of the previous run.
 
 ## Use IGN DEMs
 
@@ -46,6 +46,8 @@ By default, Cassini sorts the vegetation points into low, medium and high vegeta
 ```sh frame="none"
 cassini batch --vegetation-layers lidar-class
 ```
+
+`--skip-lidar` keeps the vegetation layers of the previous run, so it cannot be combined with `--vegetation-layers`: run the batch without `--skip-lidar` to change them.
 
 ## Export to OCAD
 

@@ -1,15 +1,19 @@
 use crate::{
-    buffer::mosaic_with_buffer,
+    buffer::{buffered_extent, mosaic_with_buffer},
     constants::DEM_BLOCK_SIZE,
     contour_shapefile::write_contour_shapefile,
     error::{CassiniError, Result, ResultContext, TileId},
     fill_nodata::{fill_nodata, DEFAULT_MAX_SEARCH_DISTANCE},
-    grid::{Compression, Grid},
+    grid::{Compression, Grid, GridExtent},
     marching_squares::{contour_lines, ContourLine},
     tile::Tile,
 };
 use log::info;
-use std::{fs::create_dir_all, path::PathBuf, time::Instant};
+use std::{
+    fs::create_dir_all,
+    path::{Path, PathBuf},
+    time::Instant,
+};
 
 /// The elevation interval between contours, in metres.
 const CONTOUR_INTERVAL: f64 = 2.5;
@@ -28,7 +32,9 @@ const _: () = assert!(
 const SLOPE_NODATA: f32 = -9999.0;
 
 /// The name of the filled DEM of the buffered tile, in the tile's render
-/// directory.
+/// directory. The LiDAR stage of `process` and `batch` writes it, and the
+/// `render` command from the neighbours it is given. The render step reads
+/// it.
 pub const DEM_WITH_BUFFER_FILE_NAME: &str = "dem_with_buffer.tif";
 
 /// Writes the filled DEM of the buffered tile (`dem_with_buffer.tif`): the
@@ -42,11 +48,10 @@ pub fn create_dem_with_buffer(tile: &Tile, neighbor_tiles: &[PathBuf]) -> Result
 
     let start = Instant::now();
 
-    let dem_with_buffer_path = tile.render_dir_path.join(DEM_WITH_BUFFER_FILE_NAME);
     let mut dem_with_buffer =
         mosaic_with_buffer::<f32>(tile, neighbor_tiles, "dem", DEM_BLOCK_SIZE)?;
     fill_dem_with_buffer(&mut dem_with_buffer, &TileId::from(tile));
-    dem_with_buffer.write_geotiff(&dem_with_buffer_path, Compression::None)?;
+    write_dem_with_buffer(&tile.render_dir_path, &dem_with_buffer)?;
 
     let duration = start.elapsed();
 
@@ -56,6 +61,12 @@ pub fn create_dem_with_buffer(tile: &Tile, neighbor_tiles: &[PathBuf]) -> Result
     );
 
     Ok(dem_with_buffer)
+}
+
+/// Writes `dem_with_buffer`, the filled DEM of a buffered tile, to
+/// `dem_with_buffer.tif` in `dir_path`.
+pub fn write_dem_with_buffer(dir_path: &Path, dem_with_buffer: &Grid<f32>) -> Result<()> {
+    dem_with_buffer.write_geotiff(&dir_path.join(DEM_WITH_BUFFER_FILE_NAME), Compression::None)
 }
 
 /// Fills the holes of the buffered DEM of `tile`.
@@ -76,19 +87,65 @@ pub fn fill_dem_with_buffer(dem_with_buffer: &mut Grid<f32>, tile: &TileId) {
     );
 }
 
-/// Reads the `dem_with_buffer.tif` of the tile that an earlier run wrote.
+/// Reads the `dem_with_buffer.tif` of the tile, failing unless it is on the
+/// grid of the buffered tile.
 pub fn read_dem_with_buffer(tile: &Tile) -> Result<Grid<f32>> {
+    let path = existing_dem_with_buffer_path(tile)?;
+    let dem = Grid::read_geotiff(&path)?;
+    let extent = GridExtent {
+        min_x: dem.min_x,
+        max_y: dem.max_y,
+        resolution: dem.resolution,
+        width: dem.width,
+        height: dem.height,
+    };
+    check_dem_with_buffer_extent(tile, &path, extent)?;
+    Ok(dem)
+}
+
+/// Fails unless the tile has a `dem_with_buffer.tif` on the grid of the
+/// buffered tile, reading its header only.
+pub fn check_dem_with_buffer(tile: &Tile) -> Result<()> {
+    let path = existing_dem_with_buffer_path(tile)?;
+    check_dem_with_buffer_extent(tile, &path, GridExtent::read_geotiff(&path)?)
+}
+
+fn existing_dem_with_buffer_path(tile: &Tile) -> Result<PathBuf> {
     let path = tile.render_dir_path.join(DEM_WITH_BUFFER_FILE_NAME);
     if !path.exists() {
-        return Err(CassiniError::InvalidInput {
+        return Err(CassiniError::InvalidArtifact {
+            path,
+            message: "the filled DEM of the buffered tile does not exist".to_owned(),
+        });
+    }
+    Ok(path)
+}
+
+/// Fails unless `extent`, that of the `dem_with_buffer.tif` at `path`, is
+/// the grid of the buffered tile.
+fn check_dem_with_buffer_extent(tile: &Tile, path: &Path, extent: GridExtent) -> Result<()> {
+    let expected = buffered_extent(&TileId::from(tile), DEM_BLOCK_SIZE);
+    if extent != expected {
+        return Err(CassiniError::InvalidArtifact {
+            path: path.to_path_buf(),
             message: format!(
-                "`{}` does not exist: the LiDAR stage of a batch writes it since Cassini 0.19, \
-                 run the batch once without `--skip-lidar`",
-                path.display()
+                "expected {} x {} cells of {} m from ({}, {}), found {} x {} cells of {} m from \
+                 ({}, {}): it is not the filled DEM of tile {}",
+                expected.width,
+                expected.height,
+                expected.resolution,
+                expected.min_x,
+                expected.max_y,
+                extent.width,
+                extent.height,
+                extent.resolution,
+                extent.min_x,
+                extent.max_y,
+                TileId::from(tile)
             ),
         });
     }
-    Grid::read_geotiff(&path)
+    Ok(())
 }
 
 /// Writes the 2 m version of the filled DEM of the buffered tile

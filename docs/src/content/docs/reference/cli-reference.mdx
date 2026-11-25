@@ -269,7 +269,7 @@ cassini batch --threads 6
 
 </p>
 
-The `--skip-lidar` option will skip the <GlossaryLink slug="lidar" /> processing stage of the pipeline. It will only work if you already ran `cassini batch` once with the same input files, as it reuses the files of that run: the <GlossaryLink slug="dem" label="DEMs" />, the filled <GlossaryLink slug="dem" /> of each tile and its surroundings (`dem_with_buffer.tif`, written by the <GlossaryLink slug="lidar" /> stage since Cassini 0.19.0) and the vegetation densities. Cassini stops before deleting anything if a tile has no `dem_with_buffer.tif`. `--vegetation-layers` has no effect with `--skip-lidar`.
+The `--skip-lidar` option will skip the <GlossaryLink slug="lidar" /> processing stage of the pipeline. It will only work if you already ran `cassini batch` once with the same input files, as it reuses the files of that run: the <GlossaryLink slug="dem" label="DEMs" />, the filled <GlossaryLink slug="dem" /> of each tile and its surroundings (`dem_with_buffer.tif`) and the vegetation densities, with their [vegetation layers](#--vegetation-layers) (`vegetation_layers.txt`). Cassini stops before deleting anything if a tile has no LiDAR output of Cassini 0.19.0 or later, or no filled <GlossaryLink slug="dem" /> of its own. `--skip-lidar` cannot be combined with `--vegetation-layers`.
 
 The filled <GlossaryLink slug="dem" /> of a tile is built from the <GlossaryLink slug="dem" label="DEMs" /> of its neighbours in that run. If you add or remove tiles in the input directory, run the batch again without `--skip-lidar`: the tiles next to them would keep their old surroundings.
 
