@@ -6,11 +6,11 @@ use shapefile::{Point, Polyline, Writer};
 use std::fs::{create_dir_all, File};
 use std::time::Instant;
 
-use crate::config::Config;
-use crate::constants::{BUFFER, INCH, PURPLE};
+use crate::constants::{BUFFER, PURPLE};
 use crate::contour_shapefile::{contour_table, ContourRecord};
 use crate::map_features::{LineSymbol, MapFeature};
 use crate::pullautin_smooth_contours::SmoothedContour;
+use crate::render_transform::RenderTransform;
 use crate::{
     constants::{BROWN, TRANSPARENT},
     error::{Result, ResultContext},
@@ -21,37 +21,28 @@ use crate::{
 #[allow(clippy::needless_range_loop)]
 pub fn pullautin_cull_formlines_render_contours(
     tile: &Tile,
-    image_width: u32,
-    image_height: u32,
-    config: &Config,
+    transform: &RenderTransform,
     avg_alt: &[Vec<f64>],
     smoothed_contours: Vec<SmoothedContour>,
 ) -> Result<Vec<MapFeature>> {
-    info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. Culling formlines and rendering contours",
-        tile.min_x, tile.min_y, tile.max_x, tile.max_y
-    );
+    info!("Tile {}. Culling formlines and rendering contours", tile);
 
     let start = Instant::now();
 
-    let pixels_per_meter = f64::from(config.dpi_resolution) / f64::from(INCH);
     // The pixel lengths of Karttapullautin are tuned for 600 DPI.
-    let pixel_scale = f64::from(config.dpi_resolution) / 600.0;
+    let pixel_scale = f64::from(transform.dpi_resolution()) / 600.0;
     // In vertices of the smoothed contours.
     let formlineaddition: f64 = 17.;
     let minimumgap: u32 = 30;
     // In pixels.
     let dashlength: f64 = 60. * pixel_scale;
     let gaplength: f64 = 12. * pixel_scale;
-    let mut img = RgbaImage::from_pixel(image_width, image_height, TRANSPARENT);
+    let mut img = RgbaImage::from_pixel(transform.width(), transform.height(), TRANSPARENT);
     let formlinesteepness: f64 = 0.37;
-    let buffer_in_pixels = BUFFER as f32 * (config.dpi_resolution / INCH);
 
     let dem_cell_size: f64 = 2.0;
     let xstart: f64 = (tile.min_x - BUFFER as i64) as f64;
     let ystart: f64 = (tile.min_y - BUFFER as i64) as f64;
-    let x0 = xstart;
-    let y0 = ystart;
 
     let sxmax: usize = ((tile.max_x + BUFFER as i64 - xstart as i64) as f64 / 2.).ceil() as usize;
     let symax: usize = ((tile.max_y + BUFFER as i64 - ystart as i64) as f64 / 2.).ceil() as usize;
@@ -195,8 +186,9 @@ pub fn pullautin_cull_formlines_render_contours(
         let mut y = Vec::<f64>::new();
 
         for i in 0..x_array.len() {
-            x.push((x_array[i] - x0) * pixels_per_meter);
-            y.push((y0 - y_array[i]) * pixels_per_meter);
+            let (pixel_x, pixel_y) = transform.world_to_px(x_array[i], y_array[i]);
+            x.push(pixel_x);
+            y.push(pixel_y);
         }
 
         // Only the culled parts of form lines are mapped, they are pushed below
@@ -402,18 +394,11 @@ pub fn pullautin_cull_formlines_render_contours(
                                 let mut m = -curvew - formline_padding;
                                 while m < curvew + formline_padding {
                                     let start = (
-                                        ((-x[i - 1] * gap + (step + gap) * x[i]) / step + n) as f32
-                                            - buffer_in_pixels,
-                                        image_height as f32
-                                            + buffer_in_pixels
-                                            + ((-y[i - 1] * gap + (step + gap) * y[i]) / step + m)
-                                                as f32,
+                                        ((-x[i - 1] * gap + (step + gap) * x[i]) / step + n) as f32,
+                                        ((-y[i - 1] * gap + (step + gap) * y[i]) / step + m) as f32,
                                     );
 
-                                    let end = (
-                                        (x[i] + n) as f32 - buffer_in_pixels,
-                                        image_height as f32 + buffer_in_pixels + (y[i] + m) as f32,
-                                    );
+                                    let end = ((x[i] + n) as f32, (y[i] + m) as f32);
 
                                     draw_line_segment_mut(&mut img, start, end, color);
                                     m += 1.0;
@@ -427,15 +412,9 @@ pub fn pullautin_cull_formlines_render_contours(
                         while n < curvew + formline_padding {
                             let mut m = -curvew - formline_padding;
                             while m < curvew + formline_padding {
-                                let start = (
-                                    (x[i - 1] + n) as f32 - buffer_in_pixels,
-                                    image_height as f32 + buffer_in_pixels + (y[i - 1] + m) as f32,
-                                );
+                                let start = ((x[i - 1] + n) as f32, (y[i - 1] + m) as f32);
 
-                                let end = (
-                                    (x[i] + n) as f32 - buffer_in_pixels,
-                                    image_height as f32 + buffer_in_pixels + (y[i] + m) as f32,
-                                );
+                                let end = ((x[i] + n) as f32, (y[i] + m) as f32);
 
                                 draw_line_segment_mut(&mut img, start, end, color);
                                 m += 1.0;
@@ -448,15 +427,9 @@ pub fn pullautin_cull_formlines_render_contours(
                     while n < curvew {
                         let mut m = -curvew;
                         while m < curvew {
-                            let start = (
-                                (x[i - 1] + n) as f32 - buffer_in_pixels,
-                                image_height as f32 + buffer_in_pixels + (y[i - 1] + m) as f32,
-                            );
+                            let start = ((x[i - 1] + n) as f32, (y[i - 1] + m) as f32);
 
-                            let end = (
-                                (x[i] + n) as f32 - buffer_in_pixels,
-                                image_height as f32 + buffer_in_pixels + (y[i] + m) as f32,
-                            );
+                            let end = ((x[i] + n) as f32, (y[i] + m) as f32);
 
                             draw_line_segment_mut(&mut img, start, end, color);
                             m += 1.0;
@@ -496,8 +469,8 @@ pub fn pullautin_cull_formlines_render_contours(
     let duration = start.elapsed();
 
     info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. Formlines and contours generated in {:.1?}",
-        tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
+        "Tile {}. Formlines and contours generated in {:.1?}",
+        tile, duration
     );
 
     Ok(features)
@@ -784,11 +757,7 @@ fn get_point_elevation_from_dem_bilinear_interpolation(
 #[cfg(test)]
 mod tests {
     use super::{find_interior_point, point_in_polygon, pullautin_cull_formlines_render_contours};
-    use crate::{
-        config::Config,
-        constants::{BUFFER, INCH},
-        tile::Tile,
-    };
+    use crate::{config::Config, constants::BUFFER, render_transform::RenderTransform, tile::Tile};
 
     #[test]
     fn draws_contours_at_the_scale_and_width_of_the_dpi_resolution() {
@@ -811,20 +780,20 @@ mod tests {
             .collect();
         let y = vec![tile.min_y as f64 + 50.0; x.len()];
 
-        let side = |dpi: f32| (100.0 * dpi / INCH) as u32;
-        // The rows of the widest column of the line at `elevation`, form
-        // lines having gaps.
-        let stroke_rows = |dpi: f32, elevation: f64| -> Vec<u32> {
+        let transform = |dpi: f32| {
             let config = Config {
                 dpi_resolution: dpi,
                 ..Config::default()
             };
-            let side = side(dpi);
+            RenderTransform::for_tile(&tile, &config)
+        };
+        // The rows of the widest column of the line at `elevation`, form
+        // lines having gaps.
+        let stroke_rows = |dpi: f32, elevation: f64| -> Vec<u32> {
+            let transform = transform(dpi);
             pullautin_cull_formlines_render_contours(
                 &tile,
-                side,
-                side,
-                &config,
+                &transform,
                 &avg_alt,
                 vec![(x.clone(), y.clone(), elevation)],
             )
@@ -832,9 +801,9 @@ mod tests {
             let image = image::open(dir.path().join("contours.png"))
                 .unwrap()
                 .into_rgba8();
-            (0..side)
+            (0..transform.width())
                 .map(|column| {
-                    (0..side)
+                    (0..transform.height())
                         .filter(|&row| image.get_pixel(column, row)[3] > 0)
                         .collect::<Vec<u32>>()
                 })
@@ -849,11 +818,11 @@ mod tests {
             for dpi in [300.0, 600.0, 1200.0] {
                 let rows = stroke_rows(dpi, elevation);
                 let center = rows.iter().sum::<u32>() as f32 / rows.len() as f32;
-                let expected = side(dpi) as f32 - 50.0 * dpi / INCH;
+                let (_, expected) = transform(dpi).world_to_px(x[0], y[0]);
                 // The strokes are offset from -w to w - 1 pixels and
                 // truncated, which puts them up to 1.5 pixels north.
                 assert!(
-                    (center - expected).abs() < 2.0,
+                    (f64::from(center) - expected).abs() < 2.0,
                     "{elevation} m at {dpi} DPI: {rows:?}"
                 );
                 widths.push(rows.len());

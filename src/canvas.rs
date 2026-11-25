@@ -41,6 +41,14 @@ impl Canvas {
         })
     }
 
+    pub fn width(&self) -> i32 {
+        self.surface.width()
+    }
+
+    pub fn height(&self) -> i32 {
+        self.surface.height()
+    }
+
     #[inline]
     pub fn set_line_width(&mut self, width: f32) {
         self.paint.set_stroke_width(width);

@@ -144,10 +144,7 @@ const SEAM_JOIN_TOLERANCE: f64 = 1.0;
 /// Writes `features`, clipped to the tile extent, to `full-map.ocd` in the
 /// tile's render directory.
 pub fn write_ocd_file(tile: &Tile, template: &OcdTemplate, features: &[MapFeature]) -> Result<()> {
-    info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. Exporting map to OCAD",
-        tile.min_x, tile.min_y, tile.max_x, tile.max_y
-    );
+    info!("Tile {}. Exporting map to OCAD", tile);
 
     let start = Instant::now();
 
@@ -161,11 +158,8 @@ pub fn write_ocd_file(tile: &Tile, template: &OcdTemplate, features: &[MapFeatur
     let duration = start.elapsed();
 
     info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. {} objects exported to OCAD in {:.1?}",
-        tile.min_x,
-        tile.min_y,
-        tile.max_x,
-        tile.max_y,
+        "Tile {}. {} objects exported to OCAD in {:.1?}",
+        tile,
         objects.len(),
         duration
     );

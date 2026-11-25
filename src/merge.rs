@@ -4,10 +4,10 @@ use std::{path::Path, time::Instant};
 use crate::{
     canvas::Canvas,
     config::Config,
-    constants::{INCH, MAX_MERGED_PIXEL_WIDTH_AND_HEIGHT},
-    error::{Result, ResultContext},
+    constants::MAX_MERGED_PIXEL_WIDTH_AND_HEIGHT,
+    error::{CassiniError, Result, ResultContext},
+    render_transform::{PixelGrid, PixelRect, RenderTransform},
     tile::TileWithNeighbors,
-    world_file::create_world_file,
 };
 
 pub fn merge_maps(
@@ -45,8 +45,10 @@ pub fn merge_maps(
         }
     }
 
-    let total_width = ((max_x - min_x) as f32 * config.dpi_resolution / INCH).ceil() as i32;
-    let total_height = ((max_y - min_y) as f32 * config.dpi_resolution / INCH).ceil() as i32;
+    let grid = PixelGrid::from_config(config);
+    let merged_rect = grid.rect(min_x as f64, min_y as f64, max_x as f64, max_y as f64);
+    let total_width = merged_rect.width();
+    let total_height = merged_rect.height();
 
     let cols =
         (total_width + MAX_MERGED_PIXEL_WIDTH_AND_HEIGHT - 1) / MAX_MERGED_PIXEL_WIDTH_AND_HEIGHT;
@@ -54,10 +56,6 @@ pub fn merge_maps(
         (total_height + MAX_MERGED_PIXEL_WIDTH_AND_HEIGHT - 1) / MAX_MERGED_PIXEL_WIDTH_AND_HEIGHT;
     let num_chunks = cols * rows;
     let is_single_chunk = num_chunks == 1;
-
-    let resolution = INCH / config.dpi_resolution;
-    let geo_width = (max_x - min_x) as f32;
-    let geo_height = (max_y - min_y) as f32;
 
     info!(
         "Merged image: {}x{} px, split into {} chunk(s) ({}x{} grid)",
@@ -70,52 +68,53 @@ pub fn merge_maps(
         for col in 0..cols {
             chunk_index += 1;
 
-            // Pixel bounds of this chunk within the full merged image
-            let chunk_px_x0 = col * MAX_MERGED_PIXEL_WIDTH_AND_HEIGHT;
-            let chunk_px_y0 = row * MAX_MERGED_PIXEL_WIDTH_AND_HEIGHT;
-            let chunk_px_x1 = (chunk_px_x0 + MAX_MERGED_PIXEL_WIDTH_AND_HEIGHT).min(total_width);
-            let chunk_px_y1 = (chunk_px_y0 + MAX_MERGED_PIXEL_WIDTH_AND_HEIGHT).min(total_height);
-            let chunk_w = chunk_px_x1 - chunk_px_x0;
-            let chunk_h = chunk_px_y1 - chunk_px_y0;
+            // The pixels of this chunk on the grid of the tiles.
+            let left = merged_rect.left + col * MAX_MERGED_PIXEL_WIDTH_AND_HEIGHT;
+            let top = merged_rect.top + row * MAX_MERGED_PIXEL_WIDTH_AND_HEIGHT;
+            let chunk = RenderTransform::new(
+                grid,
+                PixelRect {
+                    left,
+                    top,
+                    right: (left + MAX_MERGED_PIXEL_WIDTH_AND_HEIGHT).min(merged_rect.right),
+                    bottom: (top + MAX_MERGED_PIXEL_WIDTH_AND_HEIGHT).min(merged_rect.bottom),
+                },
+            );
+            let chunk_rect = chunk.pixel_rect();
+            let chunk_w = chunk_rect.width();
+            let chunk_h = chunk_rect.height();
 
-            // Geographic bounds of this chunk
-            let chunk_geo_min_x =
-                min_x as f32 + (chunk_px_x0 as f32 / total_width as f32) * geo_width;
-            let chunk_geo_max_x =
-                min_x as f32 + (chunk_px_x1 as f32 / total_width as f32) * geo_width;
-            // Image Y=0 is the top (max_y in geo), Y increases downward
-            let chunk_geo_max_y =
-                max_y as f32 - (chunk_px_y0 as f32 / total_height as f32) * geo_height;
-            let chunk_geo_min_y =
-                max_y as f32 - (chunk_px_y1 as f32 / total_height as f32) * geo_height;
-
-            let mut chunk_canvas = Canvas::new(chunk_w, chunk_h)?;
+            let mut chunk_canvas = Canvas::new(chunk_w as i32, chunk_h as i32)?;
 
             for twn in &tiles_with_neighbors {
-                let t = &twn.tile;
-
-                // Skip tiles that don't overlap this chunk geographically
-                if (t.max_x as f32) <= chunk_geo_min_x
-                    || (t.min_x as f32) >= chunk_geo_max_x
-                    || (t.max_y as f32) <= chunk_geo_min_y
-                    || (t.min_y as f32) >= chunk_geo_max_y
-                {
+                let tile_rect = RenderTransform::for_tile(&twn.tile, config).pixel_rect();
+                if !tile_rect.intersects(&chunk_rect) {
                     continue;
                 }
 
-                let mut map = Canvas::load_from(&t.render_dir_path.join("full-map.png"))?;
-
-                // Tile pixel offset in the full merged image
-                let tile_full_px_x =
-                    ((t.min_x - min_x) as f32 * config.dpi_resolution / INCH).floor();
-                let tile_full_px_y =
-                    (((max_y - t.max_y) as f32) * config.dpi_resolution / INCH).floor();
-
-                // Offset relative to this chunk's origin
-                let overlay_x = tile_full_px_x - chunk_px_x0 as f32;
-                let overlay_y = tile_full_px_y - chunk_px_y0 as f32;
-
-                chunk_canvas.overlay(&mut map, overlay_x, overlay_y);
+                let map_path = twn.tile.render_dir_path.join("full-map.png");
+                let mut map = Canvas::load_from(&map_path)?;
+                // Another size would leave gaps or overlaps between the tiles.
+                if (i64::from(map.width()), i64::from(map.height()))
+                    != (tile_rect.width(), tile_rect.height())
+                {
+                    return Err(CassiniError::InvalidArtifact {
+                        path: map_path,
+                        message: format!(
+                            "the map is {}x{} pixels, but {}x{} at {} DPI",
+                            map.width(),
+                            map.height(),
+                            tile_rect.width(),
+                            tile_rect.height(),
+                            config.dpi_resolution
+                        ),
+                    });
+                }
+                chunk_canvas.overlay(
+                    &mut map,
+                    (tile_rect.left - chunk_rect.left) as f32,
+                    (tile_rect.top - chunk_rect.top) as f32,
+                );
             }
 
             let (png_name, pgw_name) = if is_single_chunk {
@@ -131,13 +130,9 @@ pub fn merge_maps(
             chunk_canvas.save_as(&png_path)?;
 
             let world_file_path = Path::new(output_dir).join(&pgw_name);
-            create_world_file(
-                chunk_geo_min_x,
-                chunk_geo_max_y,
-                resolution,
-                &world_file_path,
-            )
-            .context(format!("could not create `{}`", world_file_path.display()))?;
+            chunk
+                .write_world_file(&world_file_path)
+                .context(format!("could not create `{}`", world_file_path.display()))?;
 
             info!(
                 "Saved chunk {}/{}: {} ({}x{} px)",
@@ -149,4 +144,84 @@ pub fn merge_maps(
     let duration = start.elapsed();
     info!("Map merged in {:.1?}", duration);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::merge_maps;
+    use crate::{
+        config::Config,
+        error::CassiniError,
+        render_transform::{PixelGrid, RenderTransform},
+        tile::{Tile, TileWithNeighbors},
+    };
+    use image::{Rgba, RgbaImage};
+    use std::path::PathBuf;
+
+    #[test]
+    fn merges_tiles_without_seams_and_georeferences_the_merged_map() {
+        let dir = tempfile::tempdir().unwrap();
+        // 125.98 pixels per 1 km tile, which truncated sizes and offsets
+        // left a transparent column after.
+        let config = Config {
+            dpi_resolution: 32.0,
+            ..Config::default()
+        };
+        let mut tiles = vec![];
+        for column in 0..6 {
+            for row in 0..2 {
+                let (min_x, min_y) = (900_000 + column * 1000, 6_400_000 + row * 1000);
+                let dir_path = dir.path().join(format!("{min_x}_{min_y}"));
+                std::fs::create_dir(&dir_path).unwrap();
+                let tile = Tile {
+                    lidar_dir_path: dir_path.clone(),
+                    render_dir_path: dir_path.clone(),
+                    min_x,
+                    min_y,
+                    max_x: min_x + 1000,
+                    max_y: min_y + 1000,
+                };
+                let transform = RenderTransform::for_tile(&tile, &config);
+                RgbaImage::from_pixel(transform.width(), transform.height(), Rgba([0, 0, 0, 255]))
+                    .save(dir_path.join("full-map.png"))
+                    .unwrap();
+                tiles.push(TileWithNeighbors {
+                    laz_path: PathBuf::new(),
+                    dem_path: None,
+                    tile,
+                    neighbors: vec![],
+                });
+            }
+        }
+
+        merge_maps(dir.path().to_str().unwrap(), tiles.clone(), &config).unwrap();
+
+        let merged = image::open(dir.path().join("merged-map.png"))
+            .unwrap()
+            .into_rgba8();
+        let grid = PixelGrid::from_config(&config);
+        let rect = grid.rect(900_000.0, 6_400_000.0, 906_000.0, 6_402_000.0);
+        assert_eq!(
+            (i64::from(merged.width()), i64::from(merged.height())),
+            (rect.width(), rect.height())
+        );
+        let transparent = merged.pixels().filter(|pixel| pixel[3] == 0).count();
+        assert_eq!(transparent, 0);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("merged-map.pgw")).unwrap(),
+            RenderTransform::new(grid, rect).world_file().to_string()
+        );
+
+        // A map of a former version, a pixel narrower.
+        let map_path = tiles[3].tile.render_dir_path.join("full-map.png");
+        let transform = RenderTransform::for_tile(&tiles[3].tile, &config);
+        RgbaImage::new(transform.width() - 1, transform.height())
+            .save(&map_path)
+            .unwrap();
+        let error = merge_maps(dir.path().to_str().unwrap(), tiles, &config).unwrap_err();
+        assert!(
+            matches!(&error, CassiniError::InvalidArtifact { path, .. } if *path == map_path),
+            "{error}"
+        );
+    }
 }

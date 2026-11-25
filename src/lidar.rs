@@ -253,12 +253,6 @@ pub fn run_dem_pass(
         [bounds.min.x, bounds.min.y],
         [bounds.max.x, bounds.max.y],
     )?;
-    let TileId {
-        min_x,
-        min_y,
-        max_x,
-        max_y,
-    } = tile;
 
     // The output directory may hold the input files, which must survive the
     // cleanup below. The DEM is read before it, in case its name is not one
@@ -272,11 +266,8 @@ pub fn run_dem_pass(
     let with_vegetation = layers == VegetationLayers::LidarClass;
 
     info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. {}",
-        min_x,
-        min_y,
-        max_x,
-        max_y,
+        "Tile {}. {}",
+        tile,
         match (external_dem.is_some(), with_vegetation) {
             (true, true) => "Computing vegetation densities by LiDAR class",
             (true, false) => "Copying the DEM",
@@ -331,11 +322,8 @@ pub fn run_dem_pass(
     }
 
     info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. {} in {:.1?}",
-        min_x,
-        min_y,
-        max_x,
-        max_y,
+        "Tile {}. {} in {:.1?}",
+        tile,
         if with_vegetation {
             "DEM and vegetation densities computed"
         } else {
@@ -365,10 +353,7 @@ impl VegetationByHeightPass {
             output_dir_path,
         } = self;
         let start = Instant::now();
-        info!(
-            "Tile min_x={} min_y={} max_x={} max_y={}. Computing vegetation densities by height",
-            tile.min_x, tile.min_y, tile.max_x, tile.max_y
-        );
+        info!("Tile {}. Computing vegetation densities by height", tile);
 
         let mut reader = PointReader::open(&laz_path)?;
         let bounds = reader.header().bounds();
@@ -393,11 +378,8 @@ impl VegetationByHeightPass {
         )?;
 
         info!(
-            "Tile min_x={} min_y={} max_x={} max_y={}. Vegetation densities computed in {:.1?}",
-            tile.min_x,
-            tile.min_y,
-            tile.max_x,
-            tile.max_y,
+            "Tile {}. Vegetation densities computed in {:.1?}",
+            tile,
             start.elapsed()
         );
         Ok(())
@@ -459,8 +441,8 @@ fn write_vegetation(
             / cells
     });
     info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. Mean vegetation points per cell: {:.2} low, {:.2} medium, {:.2} high",
-        tile.min_x, tile.min_y, tile.max_x, tile.max_y, low, medium, high
+        "Tile {}. Mean vegetation points per cell: {:.2} low, {:.2} medium, {:.2} high",
+        tile, low, medium, high
     );
 
     let [low, medium, high] = grids;
@@ -930,9 +912,20 @@ pub mod test_tiles {
     /// 25 cm over it, edges included, at `ground_z`, then `points` shifted
     /// by `ground_z - 100` m.
     pub fn write_tile(path: &Path, offset_x: f64, ground_z: f64, points: &[(f64, f64, f64, u8)]) {
+        write_tile_at(path, (offset_x, 0.0), ground_z, points);
+    }
+
+    /// Writes the LAZ file of the tile at (`offset_x`, `offset_y`), as
+    /// `write_tile`.
+    pub fn write_tile_at(
+        path: &Path,
+        (offset_x, offset_y): (f64, f64),
+        ground_z: f64,
+        points: &[(f64, f64, f64, u8)],
+    ) {
         let point = |x: f64, y: f64, z: f64, classification: u8| Point {
             x: MIN_X + offset_x + x,
-            y: MIN_Y + y,
+            y: MIN_Y + offset_y + y,
             z,
             return_number: 1,
             number_of_returns: 1,

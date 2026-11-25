@@ -278,6 +278,16 @@ impl<T: Sample> Grid<T> {
         self.max_y - self.height as f64 * self.resolution
     }
 
+    pub fn extent(&self) -> GridExtent {
+        GridExtent {
+            min_x: self.min_x,
+            max_y: self.max_y,
+            resolution: self.resolution,
+            width: self.width,
+            height: self.height,
+        }
+    }
+
     /// The index in `values` of cell (`col`, `row`).
     pub fn index(&self, col: usize, row: usize) -> usize {
         debug_assert!(

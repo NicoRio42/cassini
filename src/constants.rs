@@ -4,7 +4,6 @@ use image::Rgba;
 pub const DEM_BLOCK_SIZE: f64 = 0.5;
 /// The vegetation density cell size, in metres.
 pub const VEGETATION_BLOCK_SIZE: f64 = 1.0;
-pub const INCH: f32 = 254.0;
 pub const BUFFER: usize = 200;
 pub const COASTLINE_EDGE_BUFFER: f32 = 10.; // Should be lower than osm download buffer
 
@@ -64,4 +63,4 @@ pub const POWERLINE_WIDTH: f32 = 0.14;
 pub const _MAJOR_POWERLINE_INNER_WIDTH: f32 = 0.4;
 pub const _MAJOR_POWERLINE_OUTER_WIDTH: f32 = 0.68;
 
-pub const MAX_MERGED_PIXEL_WIDTH_AND_HEIGHT: i32 = 15_000;
+pub const MAX_MERGED_PIXEL_WIDTH_AND_HEIGHT: i64 = 15_000;

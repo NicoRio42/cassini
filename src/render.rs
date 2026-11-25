@@ -1,5 +1,4 @@
 use crate::config::Config;
-use crate::constants::INCH;
 use crate::contours::generate_contours_with_pullautin_algorithme;
 use crate::error::{CassiniError, Result, ResultContext, TileId};
 use crate::files::{remove_artifacts, remove_shapefile_artifacts};
@@ -7,12 +6,12 @@ use crate::grid::Grid;
 use crate::map_features::MapFeature;
 use crate::ocad_export::{SPILLED_OBJECTS_FILE_NAME, TILE_OCD_FILE_NAME};
 use crate::ocd::OcdTemplate;
+use crate::render_transform::RenderTransform;
 use crate::vectors::{
     get_map_features_from_osm_file, get_map_features_from_osm_shapefiles,
     render_map_with_osm_vector_shapes,
 };
 use crate::vegetation_areas::get_vegetation_features;
-use crate::world_file::create_world_file;
 use crate::{
     cliff_features::get_cliff_features,
     cliffs::render_cliffs,
@@ -64,8 +63,7 @@ pub fn render_tile_map(
         });
     }
 
-    let image_width = (width as f32 * config.dpi_resolution / INCH) as u32;
-    let image_height = (height as f32 * config.dpi_resolution / INCH) as u32;
+    let transform = RenderTransform::for_tile(&tile, config);
 
     // Nothing of a previous render in the same directory may be left, not
     // even an optional layer that this run does not write.
@@ -75,8 +73,7 @@ pub fn render_tile_map(
     let vegetation_rasters = render_vegetation(
         &tile,
         &neighbor_tiles,
-        image_width,
-        image_height,
+        &transform,
         config,
         &options.undergrowth_mode,
     )?;
@@ -95,7 +92,7 @@ pub fn render_tile_map(
     let dem_with_buffer = read_dem_with_buffer(&tile)?;
     let raw_contours = create_contours_and_slopes(&tile, &dem_with_buffer)?;
     let slopes = Grid::<f32>::read_geotiff(&tile.render_dir_path.join("slopes.tif"))?;
-    render_cliffs(&tile, &slopes, image_width, image_height, config)?;
+    render_cliffs(&tile, &slopes, &transform, config)?;
     let cliff_features = match &options.ocad {
         Some(ocad) => get_cliff_features(
             &tile,
@@ -108,18 +105,10 @@ pub fn render_tile_map(
     };
     drop(slopes);
     drop(dem_with_buffer);
-    let contour_features = generate_contours_with_pullautin_algorithme(
-        &tile,
-        raw_contours,
-        image_width,
-        image_height,
-        config,
-    )?;
+    let contour_features =
+        generate_contours_with_pullautin_algorithme(&tile, raw_contours, &transform)?;
 
-    info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. Rendering map to PNG",
-        tile.min_x, tile.min_y, tile.max_x, tile.max_y
-    );
+    info!("Tile {}. Rendering map to PNG", tile);
 
     let start = Instant::now();
 
@@ -140,9 +129,7 @@ pub fn render_tile_map(
 
     render_map_with_osm_vector_shapes(
         &tile,
-        image_width,
-        image_height,
-        config,
+        &transform,
         &vegetation_path,
         &undergrowth_path,
         &contours_path,
@@ -150,23 +137,14 @@ pub fn render_tile_map(
         &osm_features,
     )?;
 
-    let resolution = INCH / (config.dpi_resolution);
     let world_file_path = tile.render_dir_path.join("full-map.pgw");
-
-    create_world_file(
-        tile.min_x as f32,
-        tile.max_y as f32,
-        resolution,
-        &world_file_path,
-    )
-    .context(format!("could not create `{}`", world_file_path.display()))?;
+    transform
+        .write_world_file(&world_file_path)
+        .context(format!("could not create `{}`", world_file_path.display()))?;
 
     let duration = start.elapsed();
 
-    info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. Map rendered to PNG in {:.1?}",
-        tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
-    );
+    info!("Tile {}. Map rendered to PNG in {:.1?}", tile, duration);
 
     if options.ocad.is_none() {
         return Ok(None);

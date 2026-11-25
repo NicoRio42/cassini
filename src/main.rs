@@ -26,6 +26,7 @@ mod point_reader;
 mod pullautin_contours_render;
 mod pullautin_smooth_contours;
 mod render;
+mod render_transform;
 mod tile;
 mod ui;
 mod update;

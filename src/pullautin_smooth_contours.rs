@@ -23,10 +23,7 @@ pub fn pullautin_smooth_contours(
     avg_alt: &[Vec<f64>],
     raw_contours: Vec<ContourLine>,
 ) -> Result<Vec<SmoothedContour>> {
-    info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. Smoothing contours",
-        tile.min_x, tile.min_y, tile.max_x, tile.max_y
-    );
+    info!("Tile {}. Smoothing contours", tile);
 
     let start = Instant::now();
 
@@ -269,10 +266,7 @@ pub fn pullautin_smooth_contours(
 
     let duration = start.elapsed();
 
-    info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. Contours smoothed in {:.1?}",
-        tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
-    );
+    info!("Tile {}. Contours smoothed in {:.1?}", tile, duration);
 
     Ok(smoothed_contours)
 }

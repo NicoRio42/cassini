@@ -6,7 +6,7 @@ use crate::{
         _MAJOR_POWERLINE_INNER_WIDTH, _MAJOR_POWERLINE_OUTER_WIDTH, BUILDING_OUTLINE_WIDTH,
         CROSSABLE_WATERCOURSE_WIDTH, DOUBLE_TRACK_WIDE_ROAD_INNER_WIDTH,
         DOUBLE_TRACK_WIDE_ROAD_OUTER_WIDTH, FOOTPATH_DASH_INTERVAL_LENGTH, FOOTPATH_DASH_LENGTH,
-        FOOTPATH_WIDTH, INCH, INCROSSABLE_BODY_OF_WATER_OUTLINE_WIDTH, MARSH_LINE_SPACING,
+        FOOTPATH_WIDTH, INCROSSABLE_BODY_OF_WATER_OUTLINE_WIDTH, MARSH_LINE_SPACING,
         MARSH_LINE_WIDTH, MINOR_WATERCOURSE_DASH_INTERVAL_LENGTH, MINOR_WATERCOURSE_DASH_LENGTH,
         MINOR_WATERCOURSE_WIDTH, POWERLINE_WIDTH, RAILWAY_DASH_INTERVAL_LENGTH,
         RAILWAY_DASH_LENGTH, RAILWAY_INNER_WIDTH, RAILWAY_OUTER_WIDTH, ROAD_WIDTH,
@@ -17,6 +17,7 @@ use crate::{
     },
     error::Result,
     map_features::get_polygon_areas,
+    render_transform::RenderTransform,
 };
 use shapefile::{
     record::{polygon::GenericPolygon, polyline::GenericPolyline},
@@ -43,32 +44,22 @@ pub struct MapRenderer {
     blue_lines_and_points_img: Canvas,
     cliffs_img: Canvas,
     black_img: Canvas,
-    min_x: i64,
-    min_y: i64,
-    image_width: u32,
-    image_height: u32,
-    scale_factor: f32,
-    dpi_resolution: f32,
+    transform: RenderTransform,
 }
 
 /// The outer ring and the holes of a polygon area, in pixels.
 type PixelArea = (Vec<(f32, f32)>, Vec<Vec<(f32, f32)>>);
 
 impl MapRenderer {
-    // To be replaced by a request struct (A8 in the 2026-11-25 audit).
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
-        min_x: i64,
-        min_y: i64,
-        image_width: u32,
-        image_height: u32,
-        scale_factor: f32,
-        dpi_resolution: f32,
+        transform: RenderTransform,
         vegetation_path: &Path,
         undergrowth_path: &Path,
         contours_path: &Path,
         cliffs_path: &Path,
     ) -> Result<MapRenderer> {
+        let image_width = transform.width();
+        let image_height = transform.height();
         let undergrowth_img = if undergrowth_path.is_file() {
             Some(Canvas::load_from(undergrowth_path)?)
         } else {
@@ -90,12 +81,7 @@ impl MapRenderer {
             blue_lines_and_points_img: Canvas::new(image_width as i32, image_height as i32)?,
             cliffs_img: Canvas::load_from(cliffs_path)?,
             black_img: Canvas::new(image_width as i32, image_height as i32)?,
-            min_x,
-            min_y,
-            image_width,
-            image_height,
-            scale_factor,
-            dpi_resolution,
+            transform,
         })
     }
 
@@ -106,7 +92,8 @@ impl MapRenderer {
         for (outer_geometry, holes) in self.get_outer_geometries_and_holes_from_polygon(polygon) {
             self.black_img.set_color(VECTOR_BLACK);
             self.black_img.set_line_width(
-                INCROSSABLE_BODY_OF_WATER_OUTLINE_WIDTH * self.dpi_resolution * 10.0 / INCH,
+                self.transform
+                    .mm_to_px(INCROSSABLE_BODY_OF_WATER_OUTLINE_WIDTH),
             );
             self.black_img.draw_polyline(&outer_geometry);
 
@@ -150,7 +137,8 @@ impl MapRenderer {
 
             self.black_img.set_color(VECTOR_BLACK);
             self.black_img.set_line_width(
-                INCROSSABLE_BODY_OF_WATER_OUTLINE_WIDTH * self.dpi_resolution * 10.0 / INCH,
+                self.transform
+                    .mm_to_px(INCROSSABLE_BODY_OF_WATER_OUTLINE_WIDTH),
             );
             self.black_img.draw_polyline(&points);
         }
@@ -165,7 +153,7 @@ impl MapRenderer {
 
             self.blue_lines_and_points_img.set_color(VECTOR_BLUE);
             self.blue_lines_and_points_img
-                .set_line_width(CROSSABLE_WATERCOURSE_WIDTH * self.dpi_resolution * 10.0 / INCH);
+                .set_line_width(self.transform.mm_to_px(CROSSABLE_WATERCOURSE_WIDTH));
             self.blue_lines_and_points_img.draw_polyline(&points);
         }
 
@@ -182,10 +170,11 @@ impl MapRenderer {
 
             self.blue_lines_and_points_img.set_color(VECTOR_BLUE);
             self.blue_lines_and_points_img
-                .set_line_width(MINOR_WATERCOURSE_WIDTH * self.dpi_resolution * 10.0 / INCH);
+                .set_line_width(self.transform.mm_to_px(MINOR_WATERCOURSE_WIDTH));
             self.blue_lines_and_points_img.set_dash(
-                MINOR_WATERCOURSE_DASH_LENGTH * self.dpi_resolution * 10.0 / INCH,
-                MINOR_WATERCOURSE_DASH_INTERVAL_LENGTH * self.dpi_resolution * 10.0 / INCH,
+                self.transform.mm_to_px(MINOR_WATERCOURSE_DASH_LENGTH),
+                self.transform
+                    .mm_to_px(MINOR_WATERCOURSE_DASH_INTERVAL_LENGTH),
             );
             self.blue_lines_and_points_img.draw_polyline(&points);
             self.blue_lines_and_points_img.unset_dash();
@@ -216,13 +205,13 @@ impl MapRenderer {
             let points = self.get_points_from_line_part(part);
             self.black_road_outlines_img.set_color(VECTOR_BLACK);
             self.black_road_outlines_img
-                .set_line_width(outer_width * self.dpi_resolution * 10.0 / INCH);
+                .set_line_width(self.transform.mm_to_px(outer_width));
             self.black_road_outlines_img.draw_polyline(&points);
 
             self.light_brown_road_infill_img
                 .set_color(VECTOR_PAVED_AREA_BROWN);
             self.light_brown_road_infill_img
-                .set_line_width(inner_width * self.dpi_resolution * 10.0 / INCH);
+                .set_line_width(self.transform.mm_to_px(inner_width));
             self.light_brown_road_infill_img.draw_polyline(&points);
         }
 
@@ -242,12 +231,12 @@ impl MapRenderer {
             self.black_tunnel_road_outlines_img
                 .set_color_with_alpha(VECTOR_BLACK, VECTOR_TUNNEL_ALPHA);
             self.black_tunnel_road_outlines_img
-                .set_line_width(outer_width * self.dpi_resolution * 10.0 / INCH);
+                .set_line_width(self.transform.mm_to_px(outer_width));
             self.black_tunnel_road_outlines_img.draw_polyline(&points);
 
             self.black_tunnel_road_outlines_img.set_transparent_color();
             self.black_tunnel_road_outlines_img
-                .set_line_width(inner_width * self.dpi_resolution * 10.0 / INCH);
+                .set_line_width(self.transform.mm_to_px(inner_width));
             self.black_tunnel_road_outlines_img.draw_polyline(&points);
         }
 
@@ -259,22 +248,20 @@ impl MapRenderer {
         for part in line.parts() {
             let points = self.get_points_from_line_part(part);
             self.black_road_outlines_img.set_color(VECTOR_BLACK);
-            self.black_road_outlines_img.set_line_width(
-                DOUBLE_TRACK_WIDE_ROAD_OUTER_WIDTH * self.dpi_resolution * 10.0 / INCH,
-            );
+            self.black_road_outlines_img
+                .set_line_width(self.transform.mm_to_px(DOUBLE_TRACK_WIDE_ROAD_OUTER_WIDTH));
             self.black_road_outlines_img.draw_polyline(&points);
 
             self.light_brown_road_infill_img
                 .set_color(VECTOR_PAVED_AREA_BROWN);
-            self.light_brown_road_infill_img.set_line_width(
-                DOUBLE_TRACK_WIDE_ROAD_INNER_WIDTH * self.dpi_resolution * 10.0 / INCH,
-            );
+            self.light_brown_road_infill_img
+                .set_line_width(self.transform.mm_to_px(DOUBLE_TRACK_WIDE_ROAD_INNER_WIDTH));
             self.light_brown_road_infill_img.draw_polyline(&points);
 
             // TODO
             // self.light_brown_img.set_transparent_color();
             // self.light_brown_img.set_line_width(
-            //     DOUBLE_TRACK_WIDE_ROAD_CENTRAL_WIDTH * self.dpi_resolution * 10.0 / INCH,
+            //     self.transform.mm_to_px(DOUBLE_TRACK_WIDE_ROAD_CENTRAL_WIDTH),
             // );
             // self.light_brown_img.draw_polyline(&points);
         }
@@ -328,7 +315,7 @@ impl MapRenderer {
 
             self.black_img.set_color(VECTOR_BLACK);
             self.black_img
-                .set_line_width(ROAD_WIDTH * self.dpi_resolution * 10.0 / INCH);
+                .set_line_width(self.transform.mm_to_px(ROAD_WIDTH));
             self.black_img.draw_polyline(&points);
         }
 
@@ -347,10 +334,10 @@ impl MapRenderer {
 
             self.black_img.set_color(VECTOR_BLACK);
             self.black_img
-                .set_line_width(FOOTPATH_WIDTH * self.dpi_resolution * 10.0 / INCH);
+                .set_line_width(self.transform.mm_to_px(FOOTPATH_WIDTH));
             self.black_img.set_dash(
-                FOOTPATH_DASH_LENGTH * self.dpi_resolution * 10.0 / INCH,
-                FOOTPATH_DASH_INTERVAL_LENGTH * self.dpi_resolution * 10.0 / INCH,
+                self.transform.mm_to_px(FOOTPATH_DASH_LENGTH),
+                self.transform.mm_to_px(FOOTPATH_DASH_INTERVAL_LENGTH),
             );
             self.black_img.draw_polyline(&points);
             self.black_img.unset_dash();
@@ -371,15 +358,15 @@ impl MapRenderer {
 
             self.black_img.set_color(VECTOR_BLACK);
             self.black_img
-                .set_line_width(RAILWAY_OUTER_WIDTH * self.dpi_resolution * 10.0 / INCH);
+                .set_line_width(self.transform.mm_to_px(RAILWAY_OUTER_WIDTH));
             self.black_img.draw_polyline(&points);
 
             self.black_img.set_color(VECTOR_WHITE);
             self.black_img
-                .set_line_width(RAILWAY_INNER_WIDTH * self.dpi_resolution * 10.0 / INCH);
+                .set_line_width(self.transform.mm_to_px(RAILWAY_INNER_WIDTH));
             self.black_img.set_dash(
-                RAILWAY_DASH_LENGTH * self.dpi_resolution * 10.0 / INCH,
-                RAILWAY_DASH_INTERVAL_LENGTH * self.dpi_resolution * 10.0 / INCH,
+                self.transform.mm_to_px(RAILWAY_DASH_LENGTH),
+                self.transform.mm_to_px(RAILWAY_DASH_INTERVAL_LENGTH),
             );
             self.black_img.draw_polyline(&points);
             self.black_img.unset_dash();
@@ -398,7 +385,7 @@ impl MapRenderer {
 
             self.black_img.set_color(VECTOR_BLACK);
             self.black_img
-                .set_line_width(POWERLINE_WIDTH * self.dpi_resolution * 10.0 / INCH);
+                .set_line_width(self.transform.mm_to_px(POWERLINE_WIDTH));
             self.black_img.draw_polyline(&points);
         }
 
@@ -411,12 +398,12 @@ impl MapRenderer {
             let points = self.get_points_from_line_part(part);
             self.black_img.set_color(VECTOR_BLACK);
             self.black_img
-                .set_line_width(_MAJOR_POWERLINE_OUTER_WIDTH * self.dpi_resolution * 10.0 / INCH);
+                .set_line_width(self.transform.mm_to_px(_MAJOR_POWERLINE_OUTER_WIDTH));
             self.black_img.draw_polyline(&points);
 
             self.black_img.set_transparent_color();
             self.black_img
-                .set_line_width(_MAJOR_POWERLINE_INNER_WIDTH * self.dpi_resolution * 10.0 / INCH);
+                .set_line_width(self.transform.mm_to_px(_MAJOR_POWERLINE_INNER_WIDTH));
             self.black_img.draw_polyline(&points);
         }
 
@@ -446,7 +433,7 @@ impl MapRenderer {
 
             self.black_img.set_color(VECTOR_BLACK);
             self.black_img
-                .set_line_width(BUILDING_OUTLINE_WIDTH * self.dpi_resolution * 10.0 / INCH);
+                .set_line_width(self.transform.mm_to_px(BUILDING_OUTLINE_WIDTH));
             self.black_img.draw_polyline(&outer_geometry);
 
             for hole in holes {
@@ -462,13 +449,8 @@ impl MapRenderer {
         line_part
             .iter()
             .map(|point| {
-                world_to_pixel(
-                    point,
-                    self.min_x,
-                    self.min_y,
-                    self.image_height,
-                    self.scale_factor,
-                )
+                let (x, y) = self.transform.world_to_px(point.x, point.y);
+                (x as f32, y as f32)
             })
             .collect()
     }
@@ -495,14 +477,13 @@ impl MapRenderer {
     #[inline]
     fn draw_stripes(
         image: &mut Canvas,
-        image_width: u32,
-        image_height: u32,
-        dpi_resolution: f32,
+        transform: &RenderTransform,
         line_width: f32,
         spacing: f32,
         direction: StripeDirection,
     ) {
-        let pixel_marsh_interval = (line_width + spacing) * dpi_resolution * 10.0 / INCH;
+        let (image_width, image_height) = (transform.width(), transform.height());
+        let pixel_marsh_interval = transform.mm_to_px(line_width + spacing);
         image.set_transparent_color();
 
         match direction {
@@ -511,7 +492,7 @@ impl MapRenderer {
 
                 for i in 0..number_of_stripes {
                     let min_y = i as f32 * pixel_marsh_interval;
-                    let max_y = min_y + spacing * dpi_resolution * 10.0 / INCH;
+                    let max_y = min_y + transform.mm_to_px(spacing);
 
                     image.draw_filled_polygon(&[
                         (0., min_y),
@@ -527,7 +508,7 @@ impl MapRenderer {
 
                 for i in 0..number_of_stripes {
                     let min_x = i as f32 * pixel_marsh_interval;
-                    let max_x = min_x + spacing * dpi_resolution * 10.0 / INCH;
+                    let max_x = min_x + transform.mm_to_px(spacing);
 
                     image.draw_filled_polygon(&[
                         (min_x, 0.),
@@ -545,9 +526,7 @@ impl MapRenderer {
     pub fn save_as(mut self, path: PathBuf) -> Result<()> {
         Self::draw_stripes(
             &mut self.striped_blue_img,
-            self.image_width,
-            self.image_height,
-            self.dpi_resolution,
+            &self.transform,
             MARSH_LINE_WIDTH,
             MARSH_LINE_SPACING,
             StripeDirection::Horizontal,
@@ -556,9 +535,7 @@ impl MapRenderer {
         if let Some(ref mut undergrowth_img) = self.undergrowth_img {
             Self::draw_stripes(
                 undergrowth_img,
-                self.image_width,
-                self.image_height,
-                self.dpi_resolution,
+                &self.transform,
                 UNDERGROWTH_LINE_WIDTH,
                 UNDERGROWTH_LINE_SPACING,
                 StripeDirection::Vertical,
@@ -588,46 +565,5 @@ impl MapRenderer {
         self.vegetation_img.overlay(&mut self.black_img, 0., 0.);
 
         self.vegetation_img.save_as(&path)
-    }
-}
-
-/// The position in the tile image, `image_height` pixels high, of `point`, in
-/// world coordinates, for a tile whose south-west corner is at (`min_x`,
-/// `min_y`) and `scale_factor` pixels per meter.
-fn world_to_pixel(
-    point: &Point,
-    min_x: i64,
-    min_y: i64,
-    image_height: u32,
-    scale_factor: f32,
-) -> (f32, f32) {
-    let scale_factor = f64::from(scale_factor);
-    (
-        ((point.x - min_x as f64) * scale_factor) as f32,
-        (f64::from(image_height) - (point.y - min_y as f64) * scale_factor) as f32,
-    )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::world_to_pixel;
-    use shapefile::Point;
-
-    #[test]
-    fn places_points_at_their_exact_position_in_the_tile_image() {
-        let scale_factor = 600.0 / 254.0;
-        let (x, y) = world_to_pixel(
-            &Point::new(900_010.75, 6_400_090.25),
-            900_000,
-            6_400_000,
-            2362,
-            scale_factor,
-        );
-        let scale_factor = f64::from(scale_factor);
-        assert!((f64::from(x) - 10.75 * scale_factor).abs() < 1e-3, "{x}");
-        assert!(
-            (f64::from(y) - (2362.0 - 90.25 * scale_factor)).abs() < 1e-3,
-            "{y}"
-        );
     }
 }

@@ -2,10 +2,11 @@ use crate::{
     buffer::create_tif_with_buffer,
     config::Config,
     constants::{
-        BUFFER, GREEN_1, GREEN_2, GREEN_3, INCH, TRANSPARENT, VEGETATION_BLOCK_SIZE, WHITE, YELLOW,
+        BUFFER, GREEN_1, GREEN_2, GREEN_3, TRANSPARENT, VEGETATION_BLOCK_SIZE, WHITE, YELLOW,
     },
     error::{CassiniError, Result, ResultContext},
-    grid::Grid,
+    grid::{Grid, GridExtent},
+    render_transform::RenderTransform,
     tile::Tile,
 };
 use image::{imageops, RgbaImage};
@@ -32,6 +33,8 @@ pub enum UndergrowthMode {
 
 /// The buffered 1 m vegetation density rasters of a tile.
 pub struct VegetationRasters {
+    /// Where the cells of the three rasters are.
+    extent: GridExtent,
     high: TifImage,
     medium: TifImage,
     low: TifImage,
@@ -80,10 +83,37 @@ impl VegetationRasters {
             height,
         };
         Self {
+            extent: GridExtent {
+                min_x: 0.0,
+                max_y: f64::from(height),
+                resolution: VEGETATION_BLOCK_SIZE,
+                width: width as usize,
+                height: height as usize,
+            },
             high: image(high),
             medium: image(medium),
             low: image(low),
         }
+    }
+
+    /// Where the cells of `window` are.
+    fn window_extent(&self, window: RasterInterior) -> GridExtent {
+        let resolution = self.extent.resolution;
+        GridExtent {
+            min_x: self.extent.min_x + window.x as f64 * resolution,
+            max_y: self.extent.max_y - window.y as f64 * resolution,
+            resolution,
+            width: window.width,
+            height: window.height,
+        }
+    }
+
+    /// Whether the cell at `x` and `y` has LiDAR data in the three rasters.
+    fn has_data(&self, x: usize, y: usize) -> bool {
+        let index = y * self.high.width as usize + x;
+        [&self.high, &self.medium, &self.low]
+            .iter()
+            .all(|image| image.pixels[index] != NO_DATA)
     }
 
     /// Computes the densities the vegetation is classified from, for both the
@@ -180,58 +210,76 @@ impl VegetationRasters {
 pub fn render_vegetation(
     tile: &Tile,
     neighbor_tiles: &[PathBuf],
-    image_width: u32,
-    image_height: u32,
+    transform: &RenderTransform,
     config: &Config,
     undergrowth_mode: &UndergrowthMode,
 ) -> Result<VegetationRasters> {
-    info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. Rendering vegetation",
-        tile.min_x, tile.min_y, tile.max_x, tile.max_y
-    );
+    info!("Tile {}. Rendering vegetation", tile);
 
     let start = Instant::now();
 
-    let vegetation_block_size_pixel = VEGETATION_BLOCK_SIZE as f32 * config.dpi_resolution / INCH;
-    let casted_base_vegetation_block_size_pixel = (vegetation_block_size_pixel * 2.).ceil() as i32;
-    let casted_green_block_size_pixel = (vegetation_block_size_pixel).ceil() as u32;
+    let pixels_per_metre = transform.grid().pixels_per_metre();
+    // The radius of the clearing of open land around high vegetation.
+    let high_radius = (2.0 * VEGETATION_BLOCK_SIZE * pixels_per_metre).ceil() as i32;
 
     let buffered = |name: &str| {
         create_tif_with_buffer::<u8>(tile, neighbor_tiles, name, VEGETATION_BLOCK_SIZE)
-            .map(TifImage::from)
     };
+    let high = buffered("high_vegetation")?;
     let rasters = VegetationRasters {
-        high: buffered("high_vegetation")?,
-        medium: buffered("medium_vegetation")?,
-        low: buffered("low_vegetation")?,
+        extent: high.extent(),
+        high: high.into(),
+        medium: buffered("medium_vegetation")?.into(),
+        low: buffered("low_vegetation")?.into(),
     };
 
+    let (image_width, image_height) = (transform.width(), transform.height());
     let mut base_vegetation_img = RgbaImage::from_pixel(image_width, image_height, YELLOW);
     let mut green_vegetation_img = RgbaImage::from_pixel(image_width, image_height, TRANSPARENT);
     let mut undergrowth_vegetation_img =
         RgbaImage::from_pixel(image_width, image_height, TRANSPARENT);
 
     let interior = vegetation_interior(tile, &rasters)?;
-    let classification = classify_vegetation(&rasters, interior, config, undergrowth_mode);
+    // The clearings around the high vegetation of the cells next to the tile
+    // reach into the image, for the open land across tile edges to be whole
+    // in the merged map. The blurs need cells beyond the margin.
+    let margin =
+        (((f64::from(high_radius) + 1.0) / pixels_per_metre / VEGETATION_BLOCK_SIZE).ceil()
+            as usize)
+            .min(BUFFER - LOW_DENSITY_BLUR_RADIUS.max(MEDIUM_DENSITY_BLUR_RADIUS) - 1);
+    let window = interior.expanded(margin);
+    let classification = classify_vegetation(&rasters, window, config, undergrowth_mode);
+    let window_extent = rasters.window_extent(window);
+    let is_in_tile = |x: usize, y: usize| {
+        (margin..margin + interior.width).contains(&x)
+            && (margin..margin + interior.height).contains(&y)
+    };
 
-    // High vegetation and undergrowth use a single color per layer, so they can
-    // be rasterized in cache-friendly row-major order without changing overlap
-    // precedence.
+    // The cells cover each pixel of the image once, so the drawing order does
+    // not matter.
     for y in 0..classification.height {
-        let y_pixel = (y as f32 * vegetation_block_size_pixel) as i32;
         for x in 0..classification.width {
             let index = y * classification.width + x;
-            let x_pixel = (x as f32 * vegetation_block_size_pixel) as i32;
 
-            if classification.high[index] != 0 {
+            // Without data next to the tile, nothing is known to clear.
+            if classification.high[index] != 0
+                && (is_in_tile(x, y) || rasters.has_data(window.x + x, window.y + y))
+            {
                 draw_filled_ellipse_mut(
                     &mut base_vegetation_img,
-                    (x_pixel, y_pixel),
-                    casted_base_vegetation_block_size_pixel,
-                    casted_base_vegetation_block_size_pixel,
+                    transform.cell_center_pixel(&window_extent, x, y),
+                    high_radius,
+                    high_radius,
                     WHITE,
                 );
             }
+
+            let cell = transform.cell_rect(&window_extent, x, y);
+            if cell.is_empty() {
+                continue;
+            }
+            let cell = Rect::at(cell.left as i32, cell.top as i32)
+                .of_size(cell.width() as u32, cell.height() as u32);
 
             if classification.undergrowth[index] != 0 {
                 let color = match undergrowth_mode {
@@ -239,36 +287,16 @@ pub fn render_vegetation(
                     UndergrowthMode::Symbol409 => GREEN_3,
                     UndergrowthMode::None | UndergrowthMode::Merge => unreachable!(),
                 };
-                draw_filled_rect_mut(
-                    &mut undergrowth_vegetation_img,
-                    Rect::at(x_pixel, y_pixel)
-                        .of_size(casted_green_block_size_pixel, casted_green_block_size_pixel),
-                    color,
-                );
+                draw_filled_rect_mut(&mut undergrowth_vegetation_img, cell, color);
             }
-        }
-    }
 
-    // Green rectangles may overlap after DPI scaling and have different colors.
-    // Keep the original x-major drawing order so existing color precedence is
-    // unchanged even though classification now traverses source pixels by row.
-    for x in 0..classification.width {
-        let x_pixel = (x as f32 * vegetation_block_size_pixel) as i32;
-        for y in 0..classification.height {
-            let index = y * classification.width + x;
             let color = match classification.green[index] {
                 1 => GREEN_1,
                 2 => GREEN_2,
                 3 => GREEN_3,
                 _ => continue,
             };
-            let y_pixel = (y as f32 * vegetation_block_size_pixel) as i32;
-            draw_filled_rect_mut(
-                &mut green_vegetation_img,
-                Rect::at(x_pixel, y_pixel)
-                    .of_size(casted_green_block_size_pixel, casted_green_block_size_pixel),
-                color,
-            );
+            draw_filled_rect_mut(&mut green_vegetation_img, cell, color);
         }
     }
 
@@ -301,10 +329,7 @@ pub fn render_vegetation(
 
     let duration = start.elapsed();
 
-    info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. Vegetation rendered in {:.1?}",
-        tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
-    );
+    info!("Tile {}. Vegetation rendered in {:.1?}", tile, duration);
 
     Ok(rasters)
 }
@@ -315,6 +340,19 @@ pub(crate) struct RasterInterior {
     pub y: usize,
     pub width: usize,
     pub height: usize,
+}
+
+impl RasterInterior {
+    /// The window extending this one by `margin` cells on each side, which
+    /// must be at most `x` and `y`.
+    pub(crate) fn expanded(self, margin: usize) -> Self {
+        Self {
+            x: self.x - margin,
+            y: self.y - margin,
+            width: self.width + 2 * margin,
+            height: self.height + 2 * margin,
+        }
+    }
 }
 
 struct VegetationClassification {
@@ -740,16 +778,14 @@ mod tests {
         let config = Config::default();
         // Covers every class with the default thresholds, of each mode
         for value in 0..=7 {
-            let image = || TifImage {
-                pixels: vec![value; width * height],
-                width: width as u32,
-                height: height as u32,
-            };
-            let rasters = VegetationRasters {
-                high: image(),
-                medium: image(),
-                low: image(),
-            };
+            let image = || vec![value; width * height];
+            let rasters = VegetationRasters::from_pixels(
+                width as u32,
+                height as u32,
+                image(),
+                image(),
+                image(),
+            );
             for mode in [
                 UndergrowthMode::None,
                 UndergrowthMode::Merge,
@@ -831,11 +867,13 @@ mod tests {
             .and_then(|value| value.parse().ok())
             .unwrap_or(5);
         let input_size = size + 2 * BUFFER;
-        let rasters = VegetationRasters {
-            high: synthetic_image(input_size, input_size, 11),
-            medium: synthetic_image(input_size, input_size, 22),
-            low: synthetic_image(input_size, input_size, 33),
-        };
+        let rasters = VegetationRasters::from_pixels(
+            input_size as u32,
+            input_size as u32,
+            synthetic_image(input_size, input_size, 11).pixels,
+            synthetic_image(input_size, input_size, 22).pixels,
+            synthetic_image(input_size, input_size, 33).pixels,
+        );
         let interior = RasterInterior {
             x: BUFFER,
             y: BUFFER,

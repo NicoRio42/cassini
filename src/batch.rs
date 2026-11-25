@@ -20,7 +20,7 @@ use crate::{
 };
 use log::{info, warn};
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fs::read_dir,
     path::{Path, PathBuf},
     sync::Arc,
@@ -131,10 +131,7 @@ pub fn batch(
         chunk_size,
         Stage::Render,
         move |tile: TileWithNeighbors| {
-            info!(
-                "Tile min_x={} min_y={} max_x={} max_y={}. Rendering map",
-                tile.tile.min_x, tile.tile.min_y, tile.tile.max_x, tile.tile.max_y
-            );
+            info!("Tile {}. Rendering map", tile.tile);
 
             let features =
                 render_tile_map(tile.tile.clone(), tile.neighbors, &options, &render_config)?;
@@ -180,10 +177,7 @@ fn run_lidar_stage(
         chunk_size,
         Stage::Lidar,
         move |tile: TileWithNeighbors| {
-            info!(
-                "Tile min_x={} min_y={} max_x={} max_y={}. Generating raw rasters",
-                tile.tile.min_x, tile.tile.min_y, tile.tile.max_x, tile.tile.max_y
-            );
+            info!("Tile {}. Generating raw rasters", tile.tile);
 
             let dem_pass = run_dem_pass(
                 &tile.laz_path,
@@ -424,7 +418,8 @@ pub fn get_tiles_with_neighbors(
     let paths =
         read_dir(input_dir).context(format!("could not read input directory `{input_dir}`"))?;
     let mut tiles: Vec<TileWithNeighbors> = vec![];
-    let mut tiles_map = HashMap::<(i64, i64, i64, i64), PathBuf>::new();
+    // Ordered, for the same merged map, OCAD file and logs on every run.
+    let mut tiles_map = BTreeMap::<(i64, i64, i64, i64), PathBuf>::new();
 
     for dir_entry in paths {
         let path = dir_entry
@@ -655,7 +650,7 @@ fn find_dems(input_dir: &str, tiles: &[TileId]) -> Result<HashMap<TileId, PathBu
 }
 
 fn get_neighbor_tile_from_hash_map(
-    tiles_map: &HashMap<(i64, i64, i64, i64), PathBuf>,
+    tiles_map: &BTreeMap<(i64, i64, i64, i64), PathBuf>,
     output_dir: &str,
     min_x: i64,
     min_y: i64,
@@ -674,20 +669,26 @@ mod tests {
     };
     use crate::{
         config::Config,
+        constants::{WHITE, YELLOW},
         dem::{read_dem_with_buffer, DEM_WITH_BUFFER_FILE_NAME},
         error::{CassiniError, TileId},
         grid::{Compression, Grid},
         lidar::{
             test_tiles::{
-                counts_in, vegetation_counts, write_tile, CELLS, MIN_X, MIN_Y, POINTS, SIDE,
+                counts_in, vegetation_counts, write_tile, write_tile_at, CELLS, MIN_X, MIN_Y,
+                POINTS, SIDE,
             },
             VegetationLayers, VEGETATION_LAYERS_FILE_NAME,
         },
         render::RenderOptions,
+        render_transform::RenderTransform,
         tile::{Tile, TileWithNeighbors},
         vegetation::UndergrowthMode,
     };
-    use std::{collections::HashMap, path::Path};
+    use std::{
+        collections::HashMap,
+        path::{Path, PathBuf},
+    };
 
     /// The 1 km tile with its south-west corner at (`min_x`, `min_y`).
     fn tile(min_x: i64, min_y: i64) -> TileId {
@@ -761,11 +762,7 @@ mod tests {
         write_tile(&input.join("a.laz"), 0.0, 100.0, &POINTS);
         write_tile(&input.join("b.laz"), SIDE, 110.0, &[]);
         let output = dir.join("out");
-        let mut tiles =
-            get_tiles_with_neighbors(input.to_str().unwrap(), output.to_str().unwrap(), true)
-                .unwrap();
-        tiles.sort_by_key(|tile| tile.tile.min_x);
-        tiles
+        get_tiles_with_neighbors(input.to_str().unwrap(), output.to_str().unwrap(), true).unwrap()
     }
 
     #[test]
@@ -785,6 +782,178 @@ mod tests {
 
         let laz_paths: Vec<_> = tiles.iter().map(|tile| &tile.laz_path).collect();
         assert_eq!(laz_paths, [&input.join("a.LAZ")]);
+    }
+
+    #[test]
+    fn lists_the_tiles_west_to_east_then_south_to_north_whatever_the_file_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("in");
+        std::fs::create_dir(&input).unwrap();
+        for (name, offset) in [
+            ("a", (2, 1)),
+            ("b", (0, 1)),
+            ("c", (1, 0)),
+            ("d", (0, 0)),
+            ("e", (2, 0)),
+            ("f", (1, 1)),
+        ] {
+            write_tile_at(
+                &input.join(format!("{name}.laz")),
+                (offset.0 as f64 * SIDE, offset.1 as f64 * SIDE),
+                100.0,
+                &[],
+            );
+        }
+        let output = dir.path().join("out");
+
+        let tiles =
+            get_tiles_with_neighbors(input.to_str().unwrap(), output.to_str().unwrap(), false)
+                .unwrap();
+
+        let corners: Vec<(i64, i64)> = tiles
+            .iter()
+            .map(|tile| (tile.tile.min_x, tile.tile.min_y))
+            .collect();
+        let (x, y) = (MIN_X as i64, MIN_Y as i64);
+        let side = SIDE as i64;
+        assert_eq!(
+            corners,
+            [
+                (x, y),
+                (x, y + side),
+                (x + side, y),
+                (x + side, y + side),
+                (x + 2 * side, y),
+                (x + 2 * side, y + side),
+            ]
+        );
+    }
+
+    /// Runs a batch without vectors on the tiles of `dir/in`, to `dir/out`.
+    fn render_batch(dir: &Path, config: Config) -> PathBuf {
+        let output = dir.join("out");
+        std::fs::create_dir(&output).unwrap();
+        batch(
+            dir.join("in").to_str().unwrap(),
+            output.to_str().unwrap(),
+            2,
+            false,
+            VegetationLayers::Height,
+            RenderOptions {
+                skip_vector: true,
+                skip_520: false,
+                undergrowth_mode: UndergrowthMode::None,
+                shapefiles_dir: None,
+                ocad: None,
+            },
+            config,
+        )
+        .unwrap();
+        output
+    }
+
+    /// Four points 20 m above the ground in each cell of `columns`, in
+    /// distinct 0.5 m voxels.
+    fn high_vegetation(columns: std::ops::Range<usize>) -> Vec<(f64, f64, f64, u8)> {
+        columns
+            .flat_map(|col| (0..SIDE as usize).map(move |row| (col as f64, row as f64)))
+            .flat_map(|(col, row)| {
+                [(0.25, 0.25), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75)]
+                    .map(|(dx, dy)| (col + dx, row + dy, 120.0, 1))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_open_land_around_high_vegetation_reaches_across_tile_edges() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("in");
+        std::fs::create_dir(&input).unwrap();
+        // High vegetation up to the east edge of the west tile, whose cells
+        // next to the edge see the column of the east tile.
+        write_tile(&input.join("a.laz"), 0.0, 101.0, &high_vegetation(6..10));
+        write_tile(&input.join("b.laz"), SIDE, 101.0, &high_vegetation(0..1));
+        let config = Config::default();
+
+        let output = render_batch(dir.path(), config.clone());
+
+        let merged = image::open(output.join("merged-map.png"))
+            .unwrap()
+            .into_rgba8();
+        let tile_at = |min_x: f64| Tile {
+            lidar_dir_path: PathBuf::new(),
+            render_dir_path: PathBuf::new(),
+            min_x: min_x as i64,
+            min_y: MIN_Y as i64,
+            max_x: (min_x + SIDE) as i64,
+            max_y: (MIN_Y + SIDE) as i64,
+        };
+        let seam = RenderTransform::for_tile(&tile_at(MIN_X + SIDE), &config)
+            .pixel_rect()
+            .left
+            - RenderTransform::for_tile(&tile_at(MIN_X), &config)
+                .pixel_rect()
+                .left;
+        // The clearing of the high vegetation 0.5 m west of the edge reaches
+        // about 1.6 m, or 3.8 pixels, east of it.
+        let row = merged.height() / 2;
+        for col in seam as u32..seam as u32 + 3 {
+            assert_eq!(*merged.get_pixel(col, row), WHITE, "column {col}");
+        }
+    }
+
+    #[test]
+    fn the_merged_map_has_no_seam_between_the_tiles_at_any_dpi_resolution() {
+        // Dense medium vegetation in every 1 m cell, on flat ground at 101 m,
+        // away from any contour.
+        let points: Vec<(f64, f64, f64, u8)> = (0..SIDE as usize)
+            .flat_map(|col| (0..SIDE as usize).map(move |row| (col as f64, row as f64)))
+            .flat_map(|(col, row)| {
+                (0..36).map(move |i| {
+                    let (dx, dy) = ((i % 6) as f64, (i / 6) as f64);
+                    (col + 0.05 + 0.15 * dx, row + 0.05 + 0.15 * dy, 103.0, 1)
+                })
+            })
+            .collect();
+        // At 210 and 940 DPI, vegetation cells of fixed pixel size left the
+        // last column or row of some of these tiles uncovered.
+        for dpi in [210.0, 300.0, 600.0, 940.0] {
+            let dir = tempfile::tempdir().unwrap();
+            let input = dir.path().join("in");
+            std::fs::create_dir(&input).unwrap();
+            for (col, row) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                write_tile_at(
+                    &input.join(format!("{col}_{row}.laz")),
+                    (col as f64 * SIDE, row as f64 * SIDE),
+                    101.0,
+                    &points,
+                );
+            }
+            let output = render_batch(
+                dir.path(),
+                Config {
+                    dpi_resolution: dpi,
+                    ..Config::default()
+                },
+            );
+
+            let merged = image::open(output.join("merged-map.png"))
+                .unwrap()
+                .into_rgba8();
+            let uncovered = merged
+                .enumerate_pixels()
+                .filter(|(_, _, pixel)| pixel[3] != 255 || **pixel == YELLOW)
+                .map(|(x, y, _)| (x, y))
+                .collect::<Vec<_>>();
+            assert!(
+                uncovered.is_empty(),
+                "{dpi} DPI, {}x{} px: {} pixels without vegetation, from {:?}",
+                merged.width(),
+                merged.height(),
+                uncovered.len(),
+                uncovered.first()
+            );
+        }
     }
 
     #[test]

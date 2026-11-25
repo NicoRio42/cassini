@@ -17,7 +17,7 @@ use crate::{
     tile::Tile,
     vectorization::{FeatureSink, Shapes, Tracer, NUDGE, SLIVER_AREA},
     vegetation::{
-        vegetation_interior, NoDataHandling, RasterInterior, UndergrowthMode, VegetationRasters,
+        vegetation_interior, NoDataHandling, UndergrowthMode, VegetationRasters,
         LOW_DENSITY_BLUR_RADIUS, MEDIUM_DENSITY_BLUR_RADIUS,
     },
 };
@@ -110,10 +110,7 @@ pub fn get_vegetation_features(
     undergrowth_mode: &UndergrowthMode,
     simplify_tolerance: f64,
 ) -> Result<Vec<MapFeature>> {
-    info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. Vectorizing vegetation",
-        tile.min_x, tile.min_y, tile.max_x, tile.max_y
-    );
+    info!("Tile {}. Vectorizing vegetation", tile);
 
     let start = Instant::now();
 
@@ -187,11 +184,8 @@ pub fn get_vegetation_features(
     let duration = start.elapsed();
 
     info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. {} vegetation areas vectorized in {:.1?}",
-        tile.min_x,
-        tile.min_y,
-        tile.max_x,
-        tile.max_y,
+        "Tile {}. {} vegetation areas vectorized in {:.1?}",
+        tile,
         features.len(),
         duration
     );
@@ -334,12 +328,7 @@ impl VegetationFields {
         undergrowth_mode: &UndergrowthMode,
     ) -> Result<Self> {
         let interior = vegetation_interior(tile, rasters)?;
-        let window = RasterInterior {
-            x: interior.x - MARGIN,
-            y: interior.y - MARGIN,
-            width: interior.width + 2 * MARGIN,
-            height: interior.height + 2 * MARGIN,
-        };
+        let window = interior.expanded(MARGIN);
         let grid = Window {
             width: window.width,
             height: window.height,
