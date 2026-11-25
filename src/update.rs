@@ -57,15 +57,27 @@ struct Release {
 
 #[derive(Serialize, Deserialize)]
 struct CheckCache {
-    /// Seconds since the Unix epoch.
-    checked_at: u64,
-    latest_version: String,
+    /// Last attempt, including failed or interrupted checks, in Unix seconds.
+    #[serde(alias = "checked_at")]
+    attempted_at: u64,
+    /// The last successfully fetched version, if any.
+    latest_version: Option<String>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum InstallLayout {
+    #[default]
+    Flat,
+    CargoHome,
 }
 
 /// The fields of the install receipt that dist's install scripts write.
 #[derive(Deserialize)]
 struct InstallReceipt {
     install_prefix: PathBuf,
+    #[serde(default)]
+    install_layout: InstallLayout,
     #[serde(default = "default_modify_path")]
     modify_path: bool,
 }
@@ -119,33 +131,58 @@ pub fn start_update_check() -> Option<UpdateCheck> {
     }
 
     let cache_path = cache_dir().map(|dir| dir.join(CACHE_FILE_NAME));
+    Some(start_cached_check(cache_path, unix_now(), || {
+        fetch_latest_release(CHECK_TIMEOUT)
+    }))
+}
+
+fn start_cached_check(
+    cache_path: Option<PathBuf>,
+    now: u64,
+    fetch: impl FnOnce() -> Result<Release> + Send + 'static,
+) -> UpdateCheck {
     let cache = cache_path.as_deref().and_then(read_cache);
     let cached = cache
         .as_ref()
-        .and_then(|cache| Version::parse(&cache.latest_version).ok());
+        .and_then(|cache| cache.latest_version.as_deref())
+        .and_then(|version| Version::parse(version).ok());
 
-    if cache.is_some_and(|cache| is_fresh(cache.checked_at, unix_now())) {
-        return Some(UpdateCheck {
+    if cache
+        .as_ref()
+        .is_some_and(|cache| is_fresh(cache.attempted_at, now))
+    {
+        return UpdateCheck {
             cached,
             receiver: None,
-        });
+        };
+    }
+
+    let mut cache = CheckCache {
+        attempted_at: now,
+        latest_version: cache.and_then(|cache| cache.latest_version),
+    };
+    // Save before spawning: even a short-lived command or failed request must
+    // not cause the next invocation to immediately try again.
+    if let Some(path) = &cache_path {
+        write_cache(path, &cache);
     }
 
     let (sender, receiver) = mpsc::channel();
     thread::spawn(move || {
         // A failed check is ignored: it must not get in the way.
-        if let Ok(release) = fetch_latest_release(CHECK_TIMEOUT) {
+        if let Ok(release) = fetch() {
+            cache.latest_version = Some(release.version.to_string());
             if let Some(path) = &cache_path {
-                write_cache(path, &release.version);
+                write_cache(path, &cache);
             }
             let _ = sender.send(release.version);
         }
     });
 
-    Some(UpdateCheck {
+    UpdateCheck {
         cached,
         receiver: Some(receiver),
-    })
+    }
 }
 
 /// Installs the latest version of Cassini, by running the install script of
@@ -158,12 +195,19 @@ pub fn upgrade() -> Result<()> {
     }
 
     let receipt = load_receipt()?;
-    let install_dir = check_executable_is_installed(&receipt)?;
+    let exe = env::current_exe().context("could not find the path of the Cassini executable")?;
+    check_executable_is_installed(&receipt, &exe)?;
 
     info!("Looking for the latest version of Cassini");
     let release = fetch_latest_release(UPGRADE_TIMEOUT)?;
     if let Some(dir) = cache_dir() {
-        write_cache(&dir.join(CACHE_FILE_NAME), &release.version);
+        write_cache(
+            &dir.join(CACHE_FILE_NAME),
+            &CheckCache {
+                attempted_at: unix_now(),
+                latest_version: Some(release.version.to_string()),
+            },
+        );
     }
 
     let current = current_version();
@@ -174,7 +218,7 @@ pub fn upgrade() -> Result<()> {
 
     info!("Upgrading Cassini from {current} to {}", release.version);
     let installer = download_installer(&release.tag)?;
-    let result = run_installer(&installer, &install_dir, receipt.modify_path);
+    let result = run_installer(&installer, &receipt);
     let _ = fs::remove_file(&installer);
     result?;
 
@@ -285,12 +329,8 @@ fn read_cache(path: &Path) -> Option<CheckCache> {
     serde_json::from_slice(&content).ok()
 }
 
-fn write_cache(path: &Path, latest: &Version) {
-    let cache = CheckCache {
-        checked_at: unix_now(),
-        latest_version: latest.to_string(),
-    };
-    if let (Some(dir), Ok(content)) = (path.parent(), serde_json::to_vec(&cache)) {
+fn write_cache(path: &Path, cache: &CheckCache) {
+    if let (Some(dir), Ok(content)) = (path.parent(), serde_json::to_vec(cache)) {
         let _ = fs::create_dir_all(dir).and_then(|()| fs::write(path, content));
     }
 }
@@ -339,15 +379,16 @@ fn load_receipt() -> Result<InstallReceipt> {
 
 /// Checks that the running executable is the one that the install script
 /// installed, rather than for example one built from source while an
-/// installed one is also present. Returns the install directory.
-fn check_executable_is_installed(receipt: &InstallReceipt) -> Result<PathBuf> {
-    let exe = env::current_exe()
-        .and_then(|exe| exe.canonicalize())
-        .context("could not find the path of the Cassini executable")?;
-    let install_dir = receipt
-        .install_prefix
+/// installed one is also present.
+fn check_executable_is_installed(receipt: &InstallReceipt, exe: &Path) -> Result<()> {
+    let exe = exe
         .canonicalize()
-        .unwrap_or_else(|_| receipt.install_prefix.clone());
+        .context("could not find the path of the Cassini executable")?;
+    let install_dir = match receipt.install_layout {
+        InstallLayout::Flat => receipt.install_prefix.clone(),
+        InstallLayout::CargoHome => receipt.install_prefix.join("bin"),
+    };
+    let install_dir = install_dir.canonicalize().unwrap_or(install_dir);
 
     if exe.parent() != Some(install_dir.as_path()) {
         return Err(CassiniError::Upgrade {
@@ -359,7 +400,7 @@ fn check_executable_is_installed(receipt: &InstallReceipt) -> Result<PathBuf> {
         });
     }
 
-    Ok(install_dir)
+    Ok(())
 }
 
 fn download_installer(tag: &str) -> Result<PathBuf> {
@@ -402,7 +443,7 @@ fn previous_executable_path(exe: &Path) -> PathBuf {
     exe.with_extension("previous.exe")
 }
 
-fn run_installer(installer: &Path, install_dir: &Path, modify_path: bool) -> Result<()> {
+fn run_installer(installer: &Path, receipt: &InstallReceipt) -> Result<()> {
     let mut command = if cfg!(windows) {
         let mut command = Command::new("powershell");
         command
@@ -417,8 +458,13 @@ fn run_installer(installer: &Path, install_dir: &Path, modify_path: bool) -> Res
         command.arg(installer);
         command
     };
-    command.env("CASSINI_INSTALL_DIR", install_dir);
-    if !modify_path {
+    command.env("CASSINI_INSTALL_DIR", &receipt.install_prefix);
+    if matches!(receipt.install_layout, InstallLayout::CargoHome) {
+        // dist recognizes this layout by comparing the prefix with CARGO_HOME.
+        // Preserve it even if the user's CARGO_HOME has changed since install.
+        command.env("CARGO_HOME", &receipt.install_prefix);
+    }
+    if !receipt.modify_path {
         command.env("CASSINI_NO_MODIFY_PATH", "1");
     }
 
@@ -453,8 +499,150 @@ fn run_installer(installer: &Path, install_dir: &Path, modify_path: bool) -> Res
 
 #[cfg(test)]
 mod tests {
-    use super::{is_fresh, parse_tag, InstallReceipt, CHECK_INTERVAL};
+    use super::*;
     use semver::Version;
+
+    #[test]
+    fn failed_checks_are_throttled_with_or_without_a_previous_version() {
+        for previous_version in [None, Some("0.20.0")] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join(CACHE_FILE_NAME);
+            if let Some(version) = previous_version {
+                // Also exercise migration from the original cache format.
+                fs::write(
+                    &path,
+                    format!(r#"{{"checked_at":1000,"latest_version":"{version}"}}"#),
+                )
+                .unwrap();
+            }
+            let now = 1_000 + CHECK_INTERVAL.as_secs();
+            let check = start_cached_check(Some(path.clone()), now, || {
+                Err(CassiniError::Upgrade {
+                    message: "simulated network failure".into(),
+                })
+            });
+            assert!(check.receiver.unwrap().recv().is_err());
+            let cache = read_cache(&path).unwrap();
+            assert_eq!(cache.attempted_at, now);
+            assert_eq!(cache.latest_version.as_deref(), previous_version);
+
+            let check = start_cached_check(Some(path.clone()), now + 1, || {
+                panic!("a failed check must not be retried before the interval expires")
+            });
+            assert!(check.receiver.is_none());
+            assert_eq!(check.cached, previous_version.and_then(parse_tag));
+
+            let check =
+                start_cached_check(Some(path.clone()), now + CHECK_INTERVAL.as_secs(), || {
+                    Ok(Release {
+                        tag: "0.21.0".into(),
+                        version: Version::new(0, 21, 0),
+                    })
+                });
+            assert_eq!(
+                check.receiver.unwrap().recv().unwrap(),
+                Version::new(0, 21, 0)
+            );
+            assert_eq!(
+                read_cache(&path).unwrap().latest_version.as_deref(),
+                Some("0.21.0")
+            );
+        }
+    }
+
+    #[test]
+    fn records_an_attempt_before_the_background_request_finishes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(CACHE_FILE_NAME);
+        let (finish, wait) = mpsc::channel();
+        let check = start_cached_check(Some(path.clone()), 1_000, move || {
+            wait.recv().unwrap();
+            Ok(Release {
+                tag: "0.20.0".into(),
+                version: Version::new(0, 20, 0),
+            })
+        });
+        let cache = read_cache(&path).unwrap();
+        assert_eq!(cache.attempted_at, 1_000);
+        assert!(cache.latest_version.is_none());
+        let next = start_cached_check(Some(path), 1_001, || {
+            panic!("an unfinished check must also be throttled")
+        });
+        assert!(next.receiver.is_none());
+        finish.send(()).unwrap();
+        assert_eq!(
+            check.receiver.unwrap().recv().unwrap(),
+            Version::new(0, 20, 0)
+        );
+    }
+
+    #[test]
+    fn reuses_a_fresh_legacy_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(CACHE_FILE_NAME);
+        fs::write(&path, r#"{"checked_at":1000,"latest_version":"0.20.0"}"#).unwrap();
+        let check = start_cached_check(Some(path), 1_001, || {
+            panic!("a fresh legacy cache should still be reused")
+        });
+        assert!(check.receiver.is_none());
+        assert_eq!(check.cached, Some(Version::new(0, 20, 0)));
+    }
+
+    #[test]
+    fn validates_the_executable_directory_for_each_install_layout() {
+        for layout in ["flat", "cargo-home"] {
+            let dir = tempfile::tempdir().unwrap();
+            let prefix = dir.path().join("install");
+            fs::create_dir_all(prefix.join("bin")).unwrap();
+            let receipt: InstallReceipt = serde_json::from_value(serde_json::json!({
+                "install_prefix": prefix,
+                "install_layout": layout,
+            }))
+            .unwrap();
+            let flat_exe = prefix.join("cassini");
+            let cargo_exe = prefix.join("bin").join("cassini");
+            let unrelated_exe = dir.path().join("cassini");
+            for exe in [&flat_exe, &cargo_exe, &unrelated_exe] {
+                fs::write(exe, b"test executable").unwrap();
+            }
+            let (installed, wrong_layout) = if layout == "flat" {
+                (&flat_exe, &cargo_exe)
+            } else {
+                (&cargo_exe, &flat_exe)
+            };
+            check_executable_is_installed(&receipt, installed).unwrap();
+            assert!(check_executable_is_installed(&receipt, wrong_layout).is_err());
+            assert!(check_executable_is_installed(&receipt, &unrelated_exe).is_err());
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn passes_the_original_cargo_home_prefix_to_the_installer() {
+        let dir = tempfile::tempdir().unwrap();
+        let installer = dir.path().join("installer.sh");
+        fs::write(
+            &installer,
+            "printf '%s\\n' \"$CASSINI_INSTALL_DIR\" \"$CARGO_HOME\" \"$CASSINI_NO_MODIFY_PATH\" > \"$0.env\"\n",
+        )
+        .unwrap();
+        let receipt = InstallReceipt {
+            install_prefix: dir.path().join("cargo home"),
+            install_layout: InstallLayout::CargoHome,
+            modify_path: false,
+        };
+        run_installer(&installer, &receipt).unwrap();
+        let prefix = receipt.install_prefix.display();
+        assert_eq!(
+            fs::read_to_string(dir.path().join("installer.sh.env")).unwrap(),
+            format!("{prefix}\n{prefix}\n1\n"),
+        );
+        fs::write(&installer, "exit 7\n").unwrap();
+        assert!(matches!(
+            run_installer(&installer, &receipt),
+            Err(CassiniError::Upgrade { .. })
+        ));
+    }
 
     #[test]
     fn parses_release_tags() {
