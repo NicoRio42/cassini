@@ -8,8 +8,9 @@
 //! For each tile (a directory with an `extent.txt`), within the tile extent:
 //!
 //! - the share of `DEM_BLOCK_SIZE` cells of `dem_with_buffer.tif` whose
-//!   centre falls in a `dem.tif` cell with data, and the share filled by
-//!   `fill_nodata`,
+//!   centre falls in a `dem.tif` cell with data (a cell with ground points
+//!   or, since the 1 m fallback, a cell whose 1 m block has some), and the
+//!   share filled by `fill_nodata`,
 //! - the cliff pixels of `cliffs.png` (pixels that are not transparent),
 //! - the length and number of lines of `contours-raw/contours-raw.shp` and
 //!   `contours/contours.shp`, per level and in all, clipped to the tile.
@@ -228,6 +229,14 @@ fn clipped_length(
     (t1 - t0) * dx.hypot(dy)
 }
 
+/// The OCD 12 layout, as `src/ocd.rs` writes it: the header field holding
+/// the offset of the first object index block, the entries of a block, and
+/// the size of an entry and the offset of its object record in it.
+const HEADER_FIRST_OBJECT_BLOCK: usize = 12;
+const INDEX_BLOCK_ENTRIES: usize = 256;
+const OBJECT_ENTRY_SIZE: usize = 40;
+const OBJECT_ENTRY_POSITION: usize = 16;
+
 /// The number of 202 and 205 objects of an OCD 12 file.
 fn count_ocd_cliffs(path: &Path) -> Result<(usize, usize), String> {
     let bytes = fs::read(path).map_err(|error| format!("{}: {error}", path.display()))?;
@@ -238,7 +247,7 @@ fn count_ocd_cliffs(path: &Path) -> Result<(usize, usize), String> {
             .ok_or_else(|| format!("{}: truncated at {pos}", path.display()))
     };
     let (mut cliffs, mut boulders) = (0, 0);
-    let mut block = u32_at(12)?;
+    let mut block = u32_at(HEADER_FIRST_OBJECT_BLOCK)?;
     let mut blocks = 0;
     while block != 0 {
         blocks += 1;
@@ -248,8 +257,8 @@ fn count_ocd_cliffs(path: &Path) -> Result<(usize, usize), String> {
                 path.display()
             ));
         }
-        for entry in 0..256 {
-            let pos = u32_at(block + 4 + entry * 40 + 16)?;
+        for entry in 0..INDEX_BLOCK_ENTRIES {
+            let pos = u32_at(block + 4 + entry * OBJECT_ENTRY_SIZE + OBJECT_ENTRY_POSITION)?;
             if pos == 0 {
                 continue;
             }

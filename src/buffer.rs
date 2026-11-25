@@ -240,8 +240,9 @@ mod tests {
         for dir in [&tile_dir, &east_dir, &west_dir] {
             std::fs::create_dir_all(dir).unwrap();
         }
-        let raster =
-            |min_x: f64, value: f32| Grid::new(min_x, 1000.0, 100.0, 10, 10, Some(-9999.0), value);
+        let raster = |min_x: f64, value: f32| {
+            Grid::new(min_x, 1000.0, 100.0, 10, 10, Some(-9999.0), value)
+        };
         raster(0.0, 1.0)
             .write_geotiff(&tile_dir.join("dem.tif"), Compression::None)
             .unwrap();
@@ -271,8 +272,6 @@ mod tests {
             -9999.0, -9999.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 2.0, 2.0,
         ]);
         // The north buffer has no data.
-        assert!(mosaic.values[..2 * 14]
-            .iter()
-            .all(|&value| value == -9999.0));
+        assert!(mosaic.values[..2 * 14].iter().all(|&value| value == -9999.0));
     }
 }

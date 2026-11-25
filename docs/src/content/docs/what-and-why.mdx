@@ -76,8 +76,8 @@ To solve the edges artifacts problem, it uses a much more efficient approach tha
 These <GlossaryLink slug="raster" label="rasters" /> are not subject to the edges artifacts problem because:
 
 - The tile's extent area is clipped to half a meter by half a meter cells for the <GlossaryLink slug="dem" />, and to one meter by one meter cells for the vegetation densities.
-- A value is attributed to each of these cells depending only on the points that it contains.
-- Thus the value does not depend on the neighborhood of the cell.
+- A value is attributed to each of these cells depending only on the points that it contains. A <GlossaryLink slug="dem" /> cell without ground points takes the mean of the ground points of the one meter by one meter block it belongs to, which lies inside the tile too.
+- Thus the value does not depend on the neighborhood of the cell outside the tile.
 
 In a second step, Cassini generates the final map from these <GlossaryLink slug="raster" label="rasters" />. It uses the <GlossaryLink slug="dem" /> to generate <GlossaryLink slug="contours" /> and cliffs, and the vegetation density <GlossaryLink slug="raster" label="rasters" /> to generate the vegetation map.
 
