@@ -30,7 +30,7 @@ Three changes, each one changing the render, so each is measured on its own:
 |---|---|---|---|
 | 1 | 0.5 m DEM from the ground points | – | Done |
 | 2 | IGN DEM input (`lidar`, `process`, `batch`) | 1 | Done |
-| 3 | Vegetation layers from height above ground | 2 | Not started |
+| 3 | Vegetation layers from height above ground | 2 | Done |
 
 ## Shared context
 
@@ -269,3 +269,42 @@ _Each session appends findings here: decisions, measured differences, timings, s
   - **`TileRasters`** holds a `TileDem` enum (`External(Grid)` / `Ground(GroundDem)`) instead of a `bool` and two `Option`s, so `dem.tif` is always written.
   - **CRS check:** a user-defined CRS whose `ProjectionGeoKey` (3074) names an EPSG projection must name Lambert-93's (18085).
   - **Tests:** the `external_dem` and `grid` temp files use `tempfile`.
+
+### Step 3 (branch `dem-vegetation/step-3-vegetation-height`, cut from `develop`)
+
+- **Code:**
+  - [point_reader.rs](../../src/point_reader.rs) opens LAS/LAZ files: LAZ through `laz::ParLasZipDecompressor::selective` (X, Y, Z, classification; `laz` 0.13 is now a direct dependency), `.las` through `las::Reader`. It fills a `las::PointData` (`resize_for`), so the records are parsed by `las`'s own accessors rather than by hand: same values, same order. It asks the decompressor for at most the points left, as `las` does.
+  - [lidar.rs](../../src/lidar.rs): `generate_dem_tiff_image_from_laz_file` (DEM pass; also the vegetation in `lidar-class` mode, the previous single pass), `generate_vegetation_density_tiff_images_from_laz_file` (height pass over a filled buffered DEM) and `generate_dem_and_vegetation_density_tiff_images_from_laz_file` (single tile: both, with the tile's DEM pasted onto its buffered grid without neighbours by `buffer::paste_with_buffer` and filled, in memory). `extent.txt` is written after the vegetation in both modes. In `height` mode with a DEM file the only pass is the vegetation one. `TileCells` now holds an `f64` origin, so `GroundElevations` bins points into the buffered DEM with the same `floor` rule (exact: `x - min_x` is exact by Sterbenz, so the buffered cell is the tile cell shifted by 400; a test checks it on a 1 cm grid). Height bands are `VEGETATION_LAYER_HEIGHTS = [0, 1, 4, 30]`, `(lower, upper]`.
+  - [dem.rs](../../src/dem.rs): `create_dem_with_buffer` (mosaic, fill, write), `fill_dem_with_buffer`, `read_dem_with_buffer`, `create_contours_and_slopes`. [render.rs](../../src/render.rs): `render_tile_map` takes `DemWithBuffer::Mosaic` (`process`, `render`) or `Existing` (batch). `dem_with_buffer.tif` left `RENDER_STEP_FILES`.
+  - [batch.rs](../../src/batch.rs): stages DEM → (barrier) filled DEM + height vegetation → render, through a shared `run_stage` helper. `--skip-lidar` checks every tile's `dem_with_buffer.tif` before cleaning anything, and errors listing the missing ones.
+  - The vegetation pass logs the mean points per cell of each layer.
+- **CLI change for mapant:** `cassini lidar <laz> [--dem <dem.tif>] [--vegetation-layers height|lidar-class] …`, default `height`. `lidar` alone has no neighbours, so its heights are above the tile's own DEM filled without them. On 907000_6454000 its height-mode rasters differ from the batch's on very few cells (mean absolute difference ≤ 6.3e-5 points per cell from the points DEM, ≤ 1.3e-4 with IGN's). Pass `--vegetation-layers lidar-class` to keep the previous vegetation. `render` unchanged. `process` and `batch` take the same option.
+- **Outputs:** binary `out-baseline/cassini-dem-step3`, batches `out-s3-<lidar-class|height>-[ign-]<dataset>` (full, `--ocad`, `PATH=/nonexistent`, from copies of `out-dem-step1-fallback-<dataset>` / `out-ign-<dataset>`), logs next to them. `out-s3full-*.log` are the same batches with a build decoding every field (outputs deleted: byte-identical to the selective ones).
+- **Acceptance:**
+  - `lidar-class` against step 2, both DEM sources, both datasets: vegetation rasters, `dem.tif`, `dem_with_buffer.tif`, 2 m DEM, slopes, contours, form lines, every tile PNG and `merged-map.png` byte-identical (100 files per batch). `merged-map.ocd` differs, but **the step 2 binary also writes a different `merged-map.ocd` on every run** (same size, bytes reordered; two `--skip-lidar --ocad` runs of `cassini-dem-step2-ign`). Pre-existing, not investigated; `ocad_merge.rs` uses `HashMap`s.
+  - `height` against `lidar-class`: `dem.tif`, `dem_with_buffer.tif`, 2 m DEM, slopes, contours (raw and smoothed), `cliffs.png`, `contours.png` byte-identical, all 4 batches.
+  - Selective against full decoding: vegetation and terrain files byte-identical in all 8 batches.
+  - `lidar` single tile: `lidar-class` output byte-identical to the batch's; no `dem_with_buffer.tif` written. `--skip-lidar` on a height batch: PNGs and merged map identical.
+- **Timings** (per tile, 4 tiles, 3 threads, 12 cores; full decode → selective; LiDAR passes only, the filled DEM between them is 0.5–0.8 s):
+
+  | | poussebout | arselle |
+  |---|---|---|
+  | points, `lidar-class` | 6.2–7.3 → 4.8–5.6 s | 6.0–8.7 → 4.4–6.2 s |
+  | points, `height` (two passes) | 13.2–15.9 → 8.2–9.4 s | 10.4–12.9 → 7.6–11.6 s |
+  | IGN, `lidar-class` | 6.8–8.0 → 5.8–6.9 s | 6.3–8.9 → 4.6–5.8 s |
+  | IGN, `height` (DEM copy 0.8–1.0 s + one pass) | 7.3–8.3 → 5.5–6.2 s | 6.1–8.8 → 4.3–7.0 s |
+
+  Full batches (selective): poussebout 18.2 / 26.8 / 20.1 / 20.0 s, arselle 19.2 / 28.3 / 19.1 / 21.8 s (same row order). Step 2 was 20.4 s (poussebout, IGN) / 18.2 s (arselle, IGN); step 1 fallback 20.2 / 19.7 s. Single `lidar` on 907000_6454000: `lidar-class` 4.2 s, `height` 6.9 s (2.8 + fill 0.5 + 3.6), `height --dem` 4.9 s.
+- **Mean points per 1 m cell** (low / medium / high), `lidar-class` (same for both DEM sources) → `height` points DEM → `height` IGN DEM:
+  - poussebout 907000_6454000: 1.01 / 0.68 / 12.72 → 1.03 / 3.09 / 10.03 → 1.08 / 3.06 / 10.08
+  - poussebout 907000_6455000: 0.60 / 0.34 / 10.92 → 0.66 / 1.24 / 9.86 → 0.67 / 1.24 / 9.85
+  - poussebout 908000_6454000: 0.43 / 0.21 / 16.37 → 0.43 / 0.80 / 15.50 → 0.48 / 0.79 / 15.53
+  - poussebout 908000_6455000: 0.56 / 0.35 / 14.45 → 0.65 / 1.15 / 13.48 → 0.65 / 1.15 / 13.49
+  - arselle 926000_6448000: 0.48 / 0.25 / 6.97 → 0.55 / 0.99 / 6.13 → 0.54 / 1.00 / 6.12
+  - arselle 926000_6449000: 0.56 / 0.33 / 5.39 → 0.67 / 1.25 / 4.37 → 0.64 / 1.25 / 4.38
+  - arselle 927000_6448000: 1.18 / 0.50 / 12.05 → 1.03 / 1.45 / 10.73 → 1.12 / 1.55 / 10.83
+  - arselle 927000_6449000: 0.78 / 0.64 / 9.82 → 0.92 / 2.49 / 7.71 → 0.86 / 2.51 / 7.75
+
+  Medium vegetation is 2–5× denser by height (LiDAR HD classes much of the 1–4 m vegetation as high), high 5–20% sparser, low about the same. The DEM source barely matters. PDAL's estimate for 907000_6454000 was 1.2 / 2.8 / 10.4.
+- **Crops** (step 1 areas, `lidar-class` | `height` | diff, `vegetation.png` and `full-map.png`): `full-map.png` differs on 1.6–1.9% of the flat crops, 2.7–12.5% of the steep ones (mostly hidden under cliffs), 12.7% (poussebout) and 54% (arselle) of the corner crops; the maps are much greener in `height` mode (medium green). No seam at tile corners. The thresholds are unchanged; the user retunes them from the densities above.
+- **Release:** `CHANGELOG.md` created (entry 0.19.0 for the three steps), version 0.19.0, `RELEASING.md` points to the changelog. Docs: `--vegetation-layers` in the CLI reference (and `--skip-lidar`'s reuse of `dem_with_buffer.tif`, its error, and rerunning after adding or removing tiles), "Vegetation layers" sections in the single-tile and batch guides, `what-and-why.mdx` (selective decompression, two passes in `height` mode).

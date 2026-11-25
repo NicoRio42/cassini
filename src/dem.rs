@@ -2,7 +2,7 @@ use crate::{
     buffer::mosaic_with_buffer,
     constants::DEM_BLOCK_SIZE,
     contour_shapefile::write_contour_shapefile,
-    error::{Result, ResultContext},
+    error::{CassiniError, Result, ResultContext, TileId},
     fill_nodata::{fill_nodata, DEFAULT_MAX_SEARCH_DISTANCE},
     grid::{Compression, Grid},
     marching_squares::{contour_lines, ContourLine},
@@ -27,14 +27,14 @@ const _: () = assert!(
 /// The nodata value of `slopes.tif`, as `gdaldem slope` writes it.
 const SLOPE_NODATA: f32 = -9999.0;
 
-/// Writes the filled DEM of the buffered tile (`dem_with_buffer.tif`), its
-/// 2 m version (`dem_2m_with_buffer.tif`), the contours extracted from it
-/// (`contours-raw/contours-raw.shp`) and the slopes (`slopes.tif`), and
-/// returns the contours.
-pub fn create_dem_contours_and_slopes(
-    tile: &Tile,
-    neighbor_tiles: &[PathBuf],
-) -> Result<Vec<ContourLine>> {
+/// The name of the filled DEM of the buffered tile, in the tile's render
+/// directory.
+pub const DEM_WITH_BUFFER_FILE_NAME: &str = "dem_with_buffer.tif";
+
+/// Writes the filled DEM of the buffered tile (`dem_with_buffer.tif`): the
+/// `dem.tif` rasters of the tile and its neighbours, mosaicked and filled.
+/// Returns it.
+pub fn create_dem_with_buffer(tile: &Tile, neighbor_tiles: &[PathBuf]) -> Result<Grid<f32>> {
     info!(
         "Tile min_x={} min_y={} max_x={} max_y={}. Generating dem with buffer",
         tile.min_x, tile.min_y, tile.max_x, tile.max_y
@@ -42,25 +42,10 @@ pub fn create_dem_contours_and_slopes(
 
     let start = Instant::now();
 
-    let dem_with_buffer_path = tile.render_dir_path.join("dem_with_buffer.tif");
+    let dem_with_buffer_path = tile.render_dir_path.join(DEM_WITH_BUFFER_FILE_NAME);
     let mut dem_with_buffer =
         mosaic_with_buffer::<f32>(tile, neighbor_tiles, "dem", DEM_BLOCK_SIZE)?;
-
-    // Filling holes
-    let fill_start = Instant::now();
-    let (nodata_cells, tile_cells) = count_tile_nodata(&dem_with_buffer, tile);
-    fill_nodata(&mut dem_with_buffer, DEFAULT_MAX_SEARCH_DISTANCE);
-    info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. Filled {} of the {} DEM cells of the tile without data, out of {}, in {:.1?}",
-        tile.min_x,
-        tile.min_y,
-        tile.max_x,
-        tile.max_y,
-        nodata_cells - count_tile_nodata(&dem_with_buffer, tile).0,
-        nodata_cells,
-        tile_cells,
-        fill_start.elapsed()
-    );
+    fill_dem_with_buffer(&mut dem_with_buffer, &TileId::from(tile));
     dem_with_buffer.write_geotiff(&dem_with_buffer_path, Compression::None)?;
 
     let duration = start.elapsed();
@@ -70,6 +55,50 @@ pub fn create_dem_contours_and_slopes(
         tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
     );
 
+    Ok(dem_with_buffer)
+}
+
+/// Fills the holes of the buffered DEM of `tile`.
+pub fn fill_dem_with_buffer(dem_with_buffer: &mut Grid<f32>, tile: &TileId) {
+    let fill_start = Instant::now();
+    let (nodata_cells, tile_cells) = count_tile_nodata(dem_with_buffer, tile);
+    fill_nodata(dem_with_buffer, DEFAULT_MAX_SEARCH_DISTANCE);
+    info!(
+        "Tile min_x={} min_y={} max_x={} max_y={}. Filled {} of the {} DEM cells of the tile without data, out of {}, in {:.1?}",
+        tile.min_x,
+        tile.min_y,
+        tile.max_x,
+        tile.max_y,
+        nodata_cells - count_tile_nodata(dem_with_buffer, tile).0,
+        nodata_cells,
+        tile_cells,
+        fill_start.elapsed()
+    );
+}
+
+/// Reads the `dem_with_buffer.tif` of the tile that an earlier run wrote.
+pub fn read_dem_with_buffer(tile: &Tile) -> Result<Grid<f32>> {
+    let path = tile.render_dir_path.join(DEM_WITH_BUFFER_FILE_NAME);
+    if !path.exists() {
+        return Err(CassiniError::InvalidInput {
+            message: format!(
+                "`{}` does not exist: the LiDAR stage of a batch writes it since Cassini 0.19, \
+                 run the batch once without `--skip-lidar`",
+                path.display()
+            ),
+        });
+    }
+    Grid::read_geotiff(&path)
+}
+
+/// Writes the 2 m version of the filled DEM of the buffered tile
+/// (`dem_2m_with_buffer.tif`), the contours extracted from it
+/// (`contours-raw/contours-raw.shp`) and the slopes (`slopes.tif`), and
+/// returns the contours.
+pub fn create_contours_and_slopes(
+    tile: &Tile,
+    dem_with_buffer: &Grid<f32>,
+) -> Result<Vec<ContourLine>> {
     info!(
         "Tile min_x={} min_y={} max_x={} max_y={}. Generating contours shapefiles",
         tile.min_x, tile.min_y, tile.max_x, tile.max_y
@@ -85,7 +114,7 @@ pub fn create_dem_contours_and_slopes(
     let contours_raw_path = contours_raw_dir.join("contours-raw.shp");
     let dem_2m_with_buffer_path = tile.render_dir_path.join("dem_2m_with_buffer.tif");
 
-    let dem_2m_with_buffer = downsample_average(&dem_with_buffer, CONTOUR_DEM_FACTOR);
+    let dem_2m_with_buffer = downsample_average(dem_with_buffer, CONTOUR_DEM_FACTOR);
     dem_2m_with_buffer.write_geotiff(&dem_2m_with_buffer_path, Compression::None)?;
 
     let contours = contour_lines(&dem_2m_with_buffer, CONTOUR_INTERVAL);
@@ -107,7 +136,7 @@ pub fn create_dem_contours_and_slopes(
 
     let slopes_path = tile.render_dir_path.join("slopes.tif");
 
-    slopes_in_degrees(&dem_with_buffer).write_geotiff(&slopes_path, Compression::None)?;
+    slopes_in_degrees(dem_with_buffer).write_geotiff(&slopes_path, Compression::None)?;
 
     let duration = start.elapsed();
 
@@ -122,7 +151,7 @@ pub fn create_dem_contours_and_slopes(
 /// The number of nodata cells of `grid` whose centre is in `tile`, and the
 /// number of its cells there. The buffer is left out: on the edge of a batch,
 /// it is mostly cells that no tile covers.
-fn count_tile_nodata(grid: &Grid<f32>, tile: &Tile) -> (usize, usize) {
+fn count_tile_nodata(grid: &Grid<f32>, tile: &TileId) -> (usize, usize) {
     let (mut nodata, mut cells) = (0, 0);
     for row in 0..grid.height {
         for col in 0..grid.width {

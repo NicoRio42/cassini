@@ -21,6 +21,7 @@ mod merge;
 mod ocad_export;
 mod ocad_merge;
 mod ocd;
+mod point_reader;
 mod pullautin_contours_render;
 mod pullautin_smooth_contours;
 mod render;
@@ -37,11 +38,11 @@ use clap::{CommandFactory, Parser, Subcommand};
 use config::{default_config, get_config, Config};
 use download::download_osm_file;
 use error::{CassiniError, Result, ResultContext};
-use lidar::generate_dem_and_vegetation_density_tiff_images_from_laz_file;
+use lidar::{generate_dem_and_vegetation_density_tiff_images_from_laz_file, VegetationLayers};
 use log::info;
 use ocad_export::{check_template, write_ocd_file};
 use ocd::OcdTemplate;
-use render::{render_tile_map, OcadOptions, RenderOptions};
+use render::{render_tile_map, DemWithBuffer, OcadOptions, RenderOptions};
 use std::{
     fs::create_dir_all,
     num::NonZeroUsize,
@@ -78,6 +79,14 @@ enum Commands {
             help = "A GeoTIFF DEM in Lambert-93 to use instead of computing the DEM from the ground points, such as an IGN MNT LiDAR HD tile"
         )]
         dem: Option<PathBuf>,
+
+        #[arg(
+            long,
+            value_enum,
+            help = "How the vegetation points are sorted into the low, medium and high vegetation layers: by height above the ground, or by LiDAR classification",
+            default_value = "height"
+        )]
+        vegetation_layers: VegetationLayers,
 
         #[arg(
             long,
@@ -125,6 +134,14 @@ enum Commands {
             help = "A GeoTIFF DEM in Lambert-93 to use instead of computing the DEM from the ground points, such as an IGN MNT LiDAR HD tile. The LiDAR file is then read for the vegetation only"
         )]
         dem: Option<PathBuf>,
+
+        #[arg(
+            long,
+            value_enum,
+            help = "How the vegetation points are sorted into the low, medium and high vegetation layers: by height above the ground, or by LiDAR classification",
+            default_value = "height"
+        )]
+        vegetation_layers: VegetationLayers,
 
         #[arg(
             long,
@@ -223,6 +240,14 @@ enum Commands {
         )]
         skip_lidar: bool,
 
+        #[arg(
+            long,
+            value_enum,
+            help = "How the vegetation points are sorted into the low, medium and high vegetation layers: by height above the ground, or by LiDAR classification. No effect with --skip-lidar",
+            default_value = "height"
+        )]
+        vegetation_layers: VegetationLayers,
+
         #[arg(long, help = "Skip the vector processing stage of the pipeline")]
         skip_vector: bool,
 
@@ -285,6 +310,7 @@ fn parse_simplify_tolerance(value: &str) -> std::result::Result<f64, String> {
 fn process_single_tile(
     file_path: &Path,
     dem_path: Option<&Path>,
+    vegetation_layers: VegetationLayers,
     output_dir_path: &Path,
     options: RenderOptions,
 ) -> Result<()> {
@@ -294,6 +320,7 @@ fn process_single_tile(
         file_path,
         dem_path,
         output_dir_path,
+        vegetation_layers,
     )?;
     let tile = Tile {
         lidar_dir_path: output_dir_path.to_path_buf(),
@@ -314,6 +341,7 @@ fn process_single_tile(
 fn process_single_tile_lidar_step(
     file_path: &Path,
     dem_path: Option<&Path>,
+    vegetation_layers: VegetationLayers,
     output_dir_path: &Path,
     config_path: Option<&Path>,
 ) -> Result<()> {
@@ -325,6 +353,7 @@ fn process_single_tile_lidar_step(
         file_path,
         dem_path,
         output_dir_path,
+        vegetation_layers,
     )
     .map(|_| ())
 }
@@ -367,7 +396,13 @@ fn render_and_export_tile(
     options: &RenderOptions,
     config: &Config,
 ) -> Result<()> {
-    let features = render_tile_map(tile.clone(), neighbor_tiles, options, config)?;
+    let features = render_tile_map(
+        tile.clone(),
+        neighbor_tiles,
+        DemWithBuffer::Mosaic,
+        options,
+        config,
+    )?;
 
     match (&options.ocad, features) {
         (Some(ocad), Some(features)) => write_ocd_file(&tile, &ocad.template, &features),
@@ -412,6 +447,7 @@ fn batch_process_tiles(
     output_dir: &str,
     number_of_threads: usize,
     skip_lidar: bool,
+    vegetation_layers: VegetationLayers,
     options: RenderOptions,
     config_path: Option<&Path>,
 ) -> Result<()> {
@@ -421,6 +457,7 @@ fn batch_process_tiles(
         output_dir,
         number_of_threads,
         skip_lidar,
+        vegetation_layers,
         options,
         config,
     )
@@ -462,6 +499,7 @@ fn run() -> Result<()> {
             Commands::Process {
                 file_path,
                 dem,
+                vegetation_layers,
                 output_dir: maybe_output_dir,
                 skip_vector,
                 skip_520,
@@ -483,7 +521,13 @@ fn run() -> Result<()> {
                 let output_dir = maybe_output_dir.unwrap_or("tile".to_owned());
                 let laz_path = Path::new(&file_path).to_path_buf();
                 let dir_path = Path::new(&output_dir).to_path_buf();
-                process_single_tile(&laz_path, dem.as_deref(), &dir_path, options)?;
+                process_single_tile(
+                    &laz_path,
+                    dem.as_deref(),
+                    vegetation_layers,
+                    &dir_path,
+                    options,
+                )?;
 
                 let duration = start.elapsed();
                 info!("Tile generated in {:.1?}", duration);
@@ -492,6 +536,7 @@ fn run() -> Result<()> {
             Commands::Lidar {
                 file_path,
                 dem,
+                vegetation_layers,
                 output_dir: maybe_output_dir,
                 config,
             } => {
@@ -504,6 +549,7 @@ fn run() -> Result<()> {
                 process_single_tile_lidar_step(
                     &laz_path,
                     dem.as_deref(),
+                    vegetation_layers,
                     &dir_path,
                     config.as_deref(),
                 )?;
@@ -570,6 +616,7 @@ fn run() -> Result<()> {
                 output_dir: maybe_output_dir,
                 threads: maybe_threads,
                 skip_lidar,
+                vegetation_layers,
                 skip_vector,
                 skip_520,
                 undergrowth,
@@ -595,6 +642,7 @@ fn run() -> Result<()> {
                     &output_dir,
                     threads,
                     skip_lidar,
+                    vegetation_layers,
                     options,
                     config.as_deref(),
                 )?;
@@ -642,7 +690,7 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{Args, Commands, DEFAULT_OCAD_SIMPLIFY_TOLERANCE};
+    use super::{Args, Commands, VegetationLayers, DEFAULT_OCAD_SIMPLIFY_TOLERANCE};
     use clap::Parser;
     use std::path::PathBuf;
 
@@ -689,6 +737,50 @@ mod tests {
         assert_eq!(dem("lidar", &[]), None);
         assert_eq!(dem("process", &[]), None);
         assert!(Args::try_parse_from(["cassini", "render", "input", "--dem", "dem.tif"]).is_err());
+    }
+
+    #[test]
+    fn vegetation_layers_option_defaults_to_height() {
+        let vegetation_layers = |command: &str, options: &[&str]| {
+            let args = ["cassini", command, "input"]
+                .into_iter()
+                .chain(options.iter().copied());
+            match Args::try_parse_from(args).unwrap().command.unwrap() {
+                Commands::Lidar {
+                    vegetation_layers, ..
+                }
+                | Commands::Process {
+                    vegetation_layers, ..
+                }
+                | Commands::Batch {
+                    vegetation_layers, ..
+                } => vegetation_layers,
+                _ => panic!("unexpected command"),
+            }
+        };
+        for command in ["lidar", "process", "batch"] {
+            assert_eq!(vegetation_layers(command, &[]), VegetationLayers::Height);
+            assert_eq!(
+                vegetation_layers(command, &["--vegetation-layers", "lidar-class"]),
+                VegetationLayers::LidarClass
+            );
+            assert!(Args::try_parse_from([
+                "cassini",
+                command,
+                "input",
+                "--vegetation-layers",
+                "class"
+            ])
+            .is_err());
+        }
+        assert!(Args::try_parse_from([
+            "cassini",
+            "render",
+            "input",
+            "--vegetation-layers",
+            "height"
+        ])
+        .is_err());
     }
 
     #[test]

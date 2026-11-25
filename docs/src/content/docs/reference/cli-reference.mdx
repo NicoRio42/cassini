@@ -71,7 +71,7 @@ Optional path to a GeoTIFF <GlossaryLink slug="dem" /> in Lambert-93 to use inst
 
 Optional path to a directory containing shapefiles to use instead of downloading from OpenStreetMap.
 
-This subcommand also accepts the [common rendering options](#common-rendering-options) and the [OCAD export options](#ocad-export-options).
+This subcommand also accepts the [`--vegetation-layers` option](#--vegetation-layers), the [common rendering options](#common-rendering-options) and the [OCAD export options](#ocad-export-options).
 
 ## `cassini lidar`
 
@@ -135,6 +135,8 @@ Optional path to a GeoTIFF <GlossaryLink slug="dem" /> in Lambert-93 to use inst
 </p>
 
 The path to the configuration file to use. If omitted, Cassini uses `./config.json` when it exists, or the built-in defaults otherwise.
+
+This subcommand also accepts the [`--vegetation-layers` option](#--vegetation-layers).
 
 ## `cassini render`
 
@@ -267,9 +269,11 @@ cassini batch --threads 6
 
 </p>
 
-The `--skip-lidar` option will skip the <GlossaryLink slug="lidar" /> processing stage of the pipeline. It will only work if you allready ran `cassini` once with the same input files, as it will reuse some temp files, including the <GlossaryLink slug="dem" label="DEMs" />.
+The `--skip-lidar` option will skip the <GlossaryLink slug="lidar" /> processing stage of the pipeline. It will only work if you already ran `cassini batch` once with the same input files, as it reuses the files of that run: the <GlossaryLink slug="dem" label="DEMs" />, the filled <GlossaryLink slug="dem" /> of each tile and its surroundings (`dem_with_buffer.tif`, written by the <GlossaryLink slug="lidar" /> stage since Cassini 0.19.0) and the vegetation densities. Cassini stops before deleting anything if a tile has no `dem_with_buffer.tif`. `--vegetation-layers` has no effect with `--skip-lidar`.
 
-This subcommand also accepts the [common rendering options](#common-rendering-options) and the [OCAD export options](#ocad-export-options).
+The filled <GlossaryLink slug="dem" /> of a tile is built from the <GlossaryLink slug="dem" label="DEMs" /> of its neighbours in that run. If you add or remove tiles in the input directory, run the batch again without `--skip-lidar`: the tiles next to them would keep their old surroundings.
+
+This subcommand also accepts the [`--vegetation-layers` option](#--vegetation-layers), the [common rendering options](#common-rendering-options) and the [OCAD export options](#ocad-export-options).
 
 ## `cassini config`
 
@@ -314,6 +318,22 @@ Options:
 ```
 
 The help message is olso printed if cassini is called without any arguments.
+
+## `--vegetation-layers`
+
+<p>
+
+**Type:** `height | lidar-class`<br />
+**Default:** `height`
+
+</p>
+
+How the <GlossaryLink slug="lidar" /> points are sorted into the low, medium and high vegetation layers, whose densities give the vegetation of the map. This option is available for the `process`, `lidar` and `batch` subcommands, whatever the <GlossaryLink slug="dem" /> comes from. The possible values are:
+
+- `height`: by height above the ground, the filled <GlossaryLink slug="dem" /> of the tile and its surroundings. Only the unclassified points and the vegetation points (classes 1, 3, 4 and 5) count, never the ground, the buildings, the water or the bridges. The low vegetation is the points up to 1 m above the ground, the medium vegetation the points from 1 m to 4 m, and the high vegetation the points from 4 m to 30 m. Points on or below the ground, or more than 30 m above it, are left out. This reads the <GlossaryLink slug="lidar" /> file twice, once for the <GlossaryLink slug="dem" /> and once for the vegetation, unless the <GlossaryLink slug="dem" /> comes from a file (`--dem`, or a <GlossaryLink slug="dem" /> in the input directory of `batch`).
+- `lidar-class`: by the low, medium and high vegetation classes of the <GlossaryLink slug="lidar" /> classification (classes 3, 4 and 5), whatever their height. This was the only mode before Cassini 0.19.0.
+
+`process` and `lidar` process the tile alone: in `height` mode, the heights near its edges are taken above a <GlossaryLink slug="dem" /> filled without the neighbouring tiles, so they can differ from a `batch` run. With a <GlossaryLink slug="dem" /> computed from the ground points, this concerns the cells next to holes in the ground points near the edges; with an IGN <GlossaryLink slug="dem" />, only the last quarter meter of the tile on its east and south sides.
 
 ## Common rendering options
 

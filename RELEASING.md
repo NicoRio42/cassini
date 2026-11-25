@@ -12,7 +12,7 @@ The version in `Cargo.toml` is the source of truth: changing it on `main` makes 
    - builds the binaries for `x86_64-unknown-linux-gnu` (on `ubuntu-22.04`, so it needs glibc 2.35 or later), `aarch64-apple-darwin` (`macos-15`), `x86_64-apple-darwin` (`macos-15-intel`) and `x86_64-pc-windows-msvc` (`windows-2022`), failing if `Cargo.lock` is out of date;
    - creates the tag on the commit it built, and the GitHub Release with the archives, their SHA-256 checksums, and the `cassini-installer.sh` and `cassini-installer.ps1` install scripts;
    - for a non-prerelease, pushes the Docker image `<DOCKER_USERNAME>/cassini:<version>` and `:latest` to Docker Hub ([publish-docker.yml](.github/workflows/publish-docker.yml)), using the `DOCKER_USERNAME` and `DOCKER_PASSWORD` repository secrets.
-4. Edit the release notes on GitHub. dist writes them from a `CHANGELOG.md` when there is one.
+4. Edit the release notes on GitHub if needed. dist writes them from the entry of the version in [CHANGELOG.md](CHANGELOG.md), so add it before bumping the version.
 
 Pushing a tag by hand doesn't start a release. To release without a push to `main` (for example to retry a failed release), run the `Release` workflow from the Actions tab with the version as the tag; `dry-run` builds without publishing. The tag must equal the version in `Cargo.toml` at the commit it runs on.
 

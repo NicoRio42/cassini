@@ -1,18 +1,21 @@
 use crate::{
     config::Config,
+    dem::{create_dem_with_buffer, DEM_WITH_BUFFER_FILE_NAME},
     download::download_osm_file,
     error::{CassiniError, Result, ResultContext, Stage, TileId},
     grid::GridExtent,
     helpers::remove_if_exists,
-    lidar::{generate_dem_and_vegetation_density_tiff_images_from_laz_file, read_tile_id},
+    lidar::{
+        generate_dem_tiff_image_from_laz_file,
+        generate_vegetation_density_tiff_images_from_laz_file, read_tile_id, VegetationLayers,
+    },
     merge::merge_maps,
     ocad_export::{
         get_batch_georeferencing, prepare_tile_for_merge, write_merged_ocd_file,
         MERGED_OCD_FILE_NAME,
     },
-    ocad_merge::TileObjects,
     ocd::{Georeferencing, OcdTemplate},
-    render::{cleanup_render_step_files, render_tile_map, RenderOptions},
+    render::{cleanup_render_step_files, render_tile_map, DemWithBuffer, RenderOptions},
     tile::{Tile, TileWithNeighbors},
 };
 use log::{info, warn};
@@ -41,6 +44,7 @@ pub fn batch(
     output_dir: &str,
     number_of_threads: usize,
     skip_lidar: bool,
+    vegetation_layers: VegetationLayers,
     options: RenderOptions,
     config: Config,
 ) -> Result<()> {
@@ -67,7 +71,6 @@ pub fn batch(
         }
     }
 
-    let tiles_arc = Arc::new(tiles.clone());
     let chunk_size = tiles.len().div_ceil(number_of_threads);
 
     let ocad_export = options
@@ -87,48 +90,42 @@ pub fn batch(
     ))?;
 
     if skip_lidar {
+        check_dems_with_buffer(&tiles)?;
         cleanup_render_step_files(&tiles, output_dir)?;
     } else {
-        let tiles_chunks: Vec<Vec<TileWithNeighbors>> = tiles_arc
-            .chunks(chunk_size)
-            .map(|chunk| chunk.to_vec())
-            .collect();
+        // In `LidarClass` mode, the vegetation densities are computed in the
+        // same pass over the points as the DEM.
+        run_stage(&tiles, chunk_size, Stage::Lidar, move |tile| {
+            info!(
+                "Tile min_x={} min_y={} max_x={} max_y={}. Generating raw rasters",
+                tile.tile.min_x, tile.tile.min_y, tile.tile.max_x, tile.tile.max_y
+            );
 
-        let mut handles: Vec<Worker<()>> = Vec::with_capacity(number_of_threads);
+            generate_dem_tiff_image_from_laz_file(
+                &tile.laz_path,
+                tile.dem_path.as_deref(),
+                &tile.tile.lidar_dir_path,
+                vegetation_layers,
+            )
+            .map(|_| ())
+        })?;
 
-        for chunk in tiles_chunks {
-            let first_tile = chunk.first().map(|tile| TileId::from(&tile.tile));
-            let chunk = Arc::new(chunk);
-
-            let spawned_thread = spawn(move || {
-                chunk
-                    .iter()
-                    .map(|tile| {
-                        info!(
-                            "Tile min_x={} min_y={} max_x={} max_y={}. Generating raw rasters",
-                            tile.tile.min_x, tile.tile.min_y, tile.tile.max_x, tile.tile.max_y
-                        );
-
-                        generate_dem_and_vegetation_density_tiff_images_from_laz_file(
-                            &tile.laz_path,
-                            tile.dem_path.as_deref(),
-                            &tile.tile.lidar_dir_path,
-                        )
-                        .map(|_| ())
-                    })
-                    .collect()
-            });
-
-            handles.push((first_tile, spawned_thread));
-        }
-
-        let (_, failures) = collect_worker_results(handles, Stage::Lidar);
-        if !failures.is_empty() {
-            return Err(CassiniError::Batch {
-                failure_count: failures.len(),
-                failures,
-            });
-        }
+        // Every DEM is written, so each tile's can be mosaicked with its
+        // neighbours'. The render stage reads `dem_with_buffer.tif`, so
+        // that the vegetation heights and the contours and cliffs come from
+        // the same filled DEM.
+        run_stage(&tiles, chunk_size, Stage::Lidar, move |tile| {
+            let dem_with_buffer = create_dem_with_buffer(&tile.tile, &tile.neighbors)?;
+            if vegetation_layers == VegetationLayers::Height {
+                generate_vegetation_density_tiff_images_from_laz_file(
+                    &tile.laz_path,
+                    &TileId::from(&tile.tile),
+                    &dem_with_buffer,
+                    &tile.tile.lidar_dir_path,
+                )?;
+            }
+            Ok(())
+        })?;
     }
 
     if !options.skip_vector {
@@ -150,58 +147,30 @@ pub fn batch(
         }
     }
 
-    let tiles_chunks: Vec<Vec<TileWithNeighbors>> = tiles_arc
-        .chunks(chunk_size)
-        .map(|chunk| chunk.to_vec())
-        .collect();
+    let render_config = config.clone();
+    let render_ocad_export = ocad_export.clone();
+    let seam_objects = run_stage(&tiles, chunk_size, Stage::Render, move |tile| {
+        info!(
+            "Tile min_x={} min_y={} max_x={} max_y={}. Rendering map",
+            tile.tile.min_x, tile.tile.min_y, tile.tile.max_x, tile.tile.max_y
+        );
 
-    let mut handles: Vec<Worker<Option<TileObjects>>> = Vec::with_capacity(number_of_threads);
+        let features = render_tile_map(
+            tile.tile.clone(),
+            tile.neighbors.clone(),
+            DemWithBuffer::Existing,
+            &options,
+            &render_config,
+        )?;
 
-    for chunk in tiles_chunks {
-        let first_tile = chunk.first().map(|tile| TileId::from(&tile.tile));
-        let chunk = Arc::new(chunk);
-
-        let cloned_options = options.clone();
-        let cloned_config = config.clone();
-        let cloned_ocad_export = ocad_export.clone();
-
-        let spawned_thread = spawn(move || {
-            chunk
-                .iter()
-                .map(|tile| {
-                    info!(
-                        "Tile min_x={} min_y={} max_x={} max_y={}. Rendering map",
-                        tile.tile.min_x, tile.tile.min_y, tile.tile.max_x, tile.tile.max_y
-                    );
-
-                    let features = render_tile_map(
-                        tile.tile.clone(),
-                        tile.neighbors.clone(),
-                        &cloned_options,
-                        &cloned_config,
-                    )?;
-
-                    cloned_ocad_export
-                        .as_ref()
-                        .zip(features)
-                        .map(|(export, features)| {
-                            prepare_tile_for_merge(&tile.tile, &export.georeferencing, &features)
-                        })
-                        .transpose()
-                })
-                .collect()
-        });
-
-        handles.push((first_tile, spawned_thread));
-    }
-
-    let (seam_objects, failures) = collect_worker_results(handles, Stage::Render);
-    if !failures.is_empty() {
-        return Err(CassiniError::Batch {
-            failure_count: failures.len(),
-            failures,
-        });
-    }
+        render_ocad_export
+            .as_ref()
+            .zip(features)
+            .map(|(export, features)| {
+                prepare_tile_for_merge(&tile.tile, &export.georeferencing, &features)
+            })
+            .transpose()
+    })?;
 
     if let Some(export) = &ocad_export {
         write_merged_ocd_file(
@@ -216,6 +185,64 @@ pub fn batch(
     merge_maps(output_dir, tiles, &config)?;
 
     Ok(())
+}
+
+/// Fails unless every tile has the `dem_with_buffer.tif` that `--skip-lidar`
+/// renders from, before anything is deleted.
+fn check_dems_with_buffer(tiles: &[TileWithNeighbors]) -> Result<()> {
+    let missing: Vec<String> = tiles
+        .iter()
+        .map(|tile| tile.tile.render_dir_path.join(DEM_WITH_BUFFER_FILE_NAME))
+        .filter(|path| !path.exists())
+        .map(|path| format!("`{}`", path.display()))
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    Err(CassiniError::InvalidInput {
+        message: format!(
+            "`--skip-lidar` renders from the filled DEMs the LiDAR stage wrote, and {} of the {} \
+             tiles have none: {}. Run the batch once without `--skip-lidar`",
+            missing.len(),
+            tiles.len(),
+            missing.join(", ")
+        ),
+    })
+}
+
+/// Runs `process` on each of `tiles`, on worker threads taking `chunk_size`
+/// tiles each, and returns the results in tile order, or the failures of
+/// every tile that failed.
+fn run_stage<T, F>(
+    tiles: &[TileWithNeighbors],
+    chunk_size: usize,
+    stage: Stage,
+    process: F,
+) -> Result<Vec<T>>
+where
+    T: Send + 'static,
+    F: Fn(&TileWithNeighbors) -> Result<T> + Send + Sync + 'static,
+{
+    let process = Arc::new(process);
+    let handles: Vec<Worker<T>> = tiles
+        .chunks(chunk_size)
+        .map(|chunk| {
+            let chunk = chunk.to_vec();
+            let first_tile = chunk.first().map(|tile| TileId::from(&tile.tile));
+            let process = process.clone();
+            let spawned_thread = spawn(move || chunk.iter().map(|tile| process(tile)).collect());
+            (first_tile, spawned_thread)
+        })
+        .collect();
+
+    let (values, failures) = collect_worker_results(handles, stage);
+    if !failures.is_empty() {
+        return Err(CassiniError::Batch {
+            failure_count: failures.len(),
+            failures,
+        });
+    }
+    Ok(values)
 }
 
 /// The extent covering every tile, as min x, min y, max x, max y.
@@ -541,12 +568,14 @@ fn get_neighbor_tile_from_hash_map(
 
 #[cfg(test)]
 mod tests {
-    use super::{batch, find_dems};
+    use super::{batch, check_dems_with_buffer, find_dems};
     use crate::{
         config::Config,
         error::{CassiniError, TileId},
         grid::{Compression, Grid},
+        lidar::VegetationLayers,
         render::RenderOptions,
+        tile::{Tile, TileWithNeighbors},
         vegetation::UndergrowthMode,
     };
     use std::{collections::HashMap, path::Path};
@@ -614,12 +643,49 @@ mod tests {
     }
 
     #[test]
+    fn skip_lidar_needs_the_dem_with_buffer_of_every_tile() {
+        let dir = tempfile::tempdir().unwrap();
+        let tiles: Vec<TileWithNeighbors> = ["a", "b"]
+            .into_iter()
+            .map(|name| {
+                let tile_dir = dir.path().join(name);
+                std::fs::create_dir(&tile_dir).unwrap();
+                TileWithNeighbors {
+                    laz_path: tile_dir.join("tile.laz"),
+                    dem_path: None,
+                    tile: Tile {
+                        lidar_dir_path: tile_dir.clone(),
+                        render_dir_path: tile_dir,
+                        min_x: 0,
+                        min_y: 0,
+                        max_x: 1000,
+                        max_y: 1000,
+                    },
+                    neighbors: vec![],
+                }
+            })
+            .collect();
+        std::fs::write(dir.path().join("a").join("dem_with_buffer.tif"), "").unwrap();
+
+        let message = check_dems_with_buffer(&tiles).unwrap_err().to_string();
+        assert!(message.contains("1 of the 2 tiles"), "{message}");
+        assert!(
+            message.contains(&dir.path().join("b").display().to_string()),
+            "{message}"
+        );
+
+        std::fs::write(dir.path().join("b").join("dem_with_buffer.tif"), "").unwrap();
+        assert!(check_dems_with_buffer(&tiles).is_ok());
+    }
+
+    #[test]
     fn rejects_zero_threads_before_reading_input() {
         let error = batch(
             "this-directory-does-not-need-to-exist",
             "unused",
             0,
             false,
+            VegetationLayers::Height,
             RenderOptions {
                 skip_vector: false,
                 skip_520: false,

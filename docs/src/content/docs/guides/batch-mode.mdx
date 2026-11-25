@@ -19,6 +19,8 @@ If you are not happy with the result (too few cliffs, too much green...), you ca
 cassini batch --skip-lidar
 ```
 
+`--skip-lidar` reuses the files of the previous run, including the filled <GlossaryLink slug="dem" /> of each tile and its surroundings, which a batch of a version before 0.19.0 does not write: run the batch once without `--skip-lidar` after upgrading. If you add or remove tiles, run it without `--skip-lidar` too, as the tiles next to them would keep the surroundings of the previous run.
+
 ## Use IGN DEMs
 
 By default, Cassini computes the <GlossaryLink slug="dem" /> from the ground points of the <GlossaryLink slug="lidar" /> files. In France, IGN publishes a <GlossaryLink slug="dem" /> computed from the same LiDAR HD points, the MNT LiDAR HD, with half a meter by half a meter cells and no holes. To use it, put one IGN <GlossaryLink slug="dem" /> tile per <GlossaryLink slug="lidar" /> file in the input directory, next to the <GlossaryLink slug="lidar" /> files. Cassini then reads the points for the vegetation only.
@@ -36,6 +38,14 @@ For another tile, take its minimum and maximum x and y, and set `BBOX` to `min_x
 The IGN <GlossaryLink slug="dem" /> is smoother than the one Cassini computes from the points, especially on rock faces, so it gives fewer cliffs: about a quarter to half fewer on our test areas, mostly isolated dots around the main cliff bands. The contours stay about the same.
 
 With `--skip-lidar`, Cassini reuses the <GlossaryLink slug="dem" /> of the previous run, whatever the input directory holds, and warns if it holds GeoTIFF files.
+
+## Vegetation layers
+
+By default, Cassini sorts the vegetation points into low, medium and high vegetation by their height above the ground. To use the vegetation classes of the <GlossaryLink slug="lidar" /> files instead, as Cassini did before version 0.19.0, add the `--vegetation-layers lidar-class` option. Check the [`--vegetation-layers` reference](/reference/cli-reference#--vegetation-layers) for the details.
+
+```sh frame="none"
+cassini batch --vegetation-layers lidar-class
+```
 
 ## Export to OCAD
 
