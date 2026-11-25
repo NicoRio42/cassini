@@ -23,7 +23,7 @@ cassini batch --skip-lidar
 
 By default, Cassini computes the <GlossaryLink slug="dem" /> from the ground points of the <GlossaryLink slug="lidar" /> files. In France, IGN publishes a <GlossaryLink slug="dem" /> computed from the same LiDAR HD points, the MNT LiDAR HD, with half a meter by half a meter cells and no holes. To use it, put one IGN <GlossaryLink slug="dem" /> tile per <GlossaryLink slug="lidar" /> file in the input directory, next to the <GlossaryLink slug="lidar" /> files. Cassini then reads the points for the vegetation only.
 
-Each GeoTIFF file (`.tif` or `.tiff`) of the input directory is used as the <GlossaryLink slug="dem" /> of the <GlossaryLink slug="lidar" /> tile containing the centre of its extent, whatever its name. It must be in Lambert-93. Two <GlossaryLink slug="dem" label="DEMs" /> for the same tile, or a file Cassini cannot read, stop the batch with an error. A <GlossaryLink slug="dem" /> matching no tile is ignored with a warning. Tiles without a <GlossaryLink slug="dem" /> get theirs from their ground points, with a warning: the contours may show seams between the two kinds of <GlossaryLink slug="dem" />.
+Each GeoTIFF file (`.tif` or `.tiff`) of the input directory is used as the <GlossaryLink slug="dem" /> of the <GlossaryLink slug="lidar" /> tile containing the centre of its extent, whatever its name. It must be in Lambert-93, and only its cells that intersect the tile are used. Two <GlossaryLink slug="dem" label="DEMs" /> for the same tile stop the batch with an error. A file Cassini cannot read as a <GlossaryLink slug="dem" /> in Lambert-93, such as an orthophoto, and a <GlossaryLink slug="dem" /> matching no tile are ignored with a warning. Hidden files, such as the `._` files macOS writes on some drives, are ignored. Tiles without a <GlossaryLink slug="dem" /> get theirs from their ground points, with a warning: the contours may show seams between the two kinds of <GlossaryLink slug="dem" />.
 
 You can download an IGN <GlossaryLink slug="dem" /> tile from the Géoplateforme. For the 1 km LiDAR HD tile `LHD_FXX_0907_6456_PTS_LAMB93_IGN69.copc.laz`, covering x from 907000 to 908000 and y from 6455000 to 6456000:
 
@@ -35,7 +35,7 @@ For another tile, take its minimum and maximum x and y, and set `BBOX` to `min_x
 
 The IGN <GlossaryLink slug="dem" /> is smoother than the one Cassini computes from the points, especially on rock faces, so it gives fewer cliffs: about a quarter to half fewer on our test areas, mostly isolated dots around the main cliff bands. The contours stay about the same.
 
-With `--skip-lidar`, Cassini reuses the <GlossaryLink slug="dem" /> of the previous run, whatever the input directory holds.
+With `--skip-lidar`, Cassini reuses the <GlossaryLink slug="dem" /> of the previous run, whatever the input directory holds, and warns if it holds GeoTIFF files.
 
 ## Export to OCAD
 

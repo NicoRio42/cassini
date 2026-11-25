@@ -94,7 +94,7 @@ cassini process ./path/to/my/tile.laz --dem ./path/to/my/dem.tif
   </TabItem>
 </Tabs>
 
-An IGN <GlossaryLink slug="dem" /> tile is offset by 25 cm from its <GlossaryLink slug="lidar" /> tile, so a single tile misses a 25 cm strip on its east and south edges, which Cassini interpolates. In batch mode, these strips come from the neighbouring tiles.
+An IGN <GlossaryLink slug="dem" /> tile is offset by 25 cm from its <GlossaryLink slug="lidar" /> tile, so a single tile misses a 25 cm strip on its east and south edges, which Cassini interpolates. In batch mode, these strips come from the neighbouring tiles. Only the cells of the <GlossaryLink slug="dem" /> that intersect the tile are used, so a <GlossaryLink slug="dem" /> covering a larger area does not fill the buffer around the tile.
 
 ## Export to OCAD
 

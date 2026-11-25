@@ -149,21 +149,14 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
         .map(|((x, y), z)| [x, y, z])
         .next()
         .unwrap_or_default();
-    let mut rasters = TileRasters::new(
-        &tile,
-        VoxelSet::new(first_point, &bounds),
-        external_dem.is_none(),
-    );
+    let mut rasters = TileRasters::new(&tile, VoxelSet::new(first_point, &bounds), external_dem);
     while count > 0 {
         rasters.add_points(&points);
         count = fill_points(&mut reader, &mut points, laz_path)?;
     }
-    let (ground_dem, [low, medium, high]) = rasters.into_grids();
+    let (dem, [low, medium, high]) = rasters.into_grids();
 
-    // The ground DEM is computed only without a DEM file, so one is set.
-    if let Some(dem) = external_dem.as_ref().or(ground_dem.as_ref()) {
-        dem.write_geotiff(&output_dir_path.join("dem.tif"), Compression::Deflate)?;
-    }
+    dem.write_geotiff(&output_dir_path.join("dem.tif"), Compression::Deflate)?;
     for (grid, name) in [
         (low, "low_vegetation.tif"),
         (medium, "medium_vegetation.tif"),
@@ -273,11 +266,10 @@ fn fill_points(reader: &mut Reader, points: &mut PointData, laz_path: &Path) -> 
         ))
 }
 
-/// The rasters of a tile, accumulated point by point: the DEM at
-/// `DEM_BLOCK_SIZE`, unless the tile has a DEM file, and the vegetation
-/// densities at `VEGETATION_BLOCK_SIZE`.
+/// The rasters of a tile, accumulated point by point: the DEM, and the
+/// vegetation densities at `VEGETATION_BLOCK_SIZE`.
 struct TileRasters {
-    ground_dem: Option<GroundDem>,
+    dem: TileDem,
     vegetation_cells: TileCells,
     /// The number of low, medium and high vegetation points of each
     /// vegetation cell.
@@ -287,12 +279,16 @@ struct TileRasters {
 
 impl TileRasters {
     /// The empty rasters of `tile`, whose points are thinned with `voxels`,
-    /// with the DEM of its ground points if `ground_dem`.
-    fn new(tile: &TileId, voxels: VoxelSet, ground_dem: bool) -> Self {
+    /// with `external_dem` as the DEM if given, else that of the ground
+    /// points.
+    fn new(tile: &TileId, voxels: VoxelSet, external_dem: Option<Grid<f32>>) -> Self {
         let vegetation_cells = TileCells::new(tile, VEGETATION_BLOCK_SIZE);
         let vegetation_len = vegetation_cells.width * vegetation_cells.height;
         Self {
-            ground_dem: ground_dem.then(|| GroundDem::new(tile)),
+            dem: match external_dem {
+                Some(dem) => TileDem::External(dem),
+                None => TileDem::Ground(GroundDem::new(tile)),
+            },
             vegetation_cells,
             vegetation_counts: [(); 3].map(|_| vec![0; vegetation_len]),
             voxels,
@@ -316,7 +312,7 @@ impl TileRasters {
     fn add_point(&mut self, x: f64, y: f64, z: f64, classification: u8) {
         // The DEM writer comes before the thinning, so it gets every point.
         if classification == GROUND {
-            if let Some(ground_dem) = &mut self.ground_dem {
+            if let TileDem::Ground(ground_dem) = &mut self.dem {
                 ground_dem.add_point(x, y, z);
             }
         }
@@ -337,10 +333,12 @@ impl TileRasters {
         }
     }
 
-    /// The DEM of the ground points if computed, and the low, medium and
-    /// high vegetation densities.
-    fn into_grids(self) -> (Option<Grid<f32>>, [Grid<u8>; 3]) {
-        let dem = self.ground_dem.map(|ground_dem| ground_dem.grid());
+    /// The DEM, and the low, medium and high vegetation densities.
+    fn into_grids(self) -> (Grid<f32>, [Grid<u8>; 3]) {
+        let dem = match self.dem {
+            TileDem::External(dem) => dem,
+            TileDem::Ground(ground_dem) => ground_dem.grid(),
+        };
         let vegetation_cells = self.vegetation_cells;
         (
             dem,
@@ -348,6 +346,14 @@ impl TileRasters {
                 .map(|counts| vegetation_cells.grid(counts, NO_DATA_COUNT)),
         )
     }
+}
+
+/// Where the DEM of a tile comes from.
+enum TileDem {
+    /// A DEM file, such as IGN's, read before the points.
+    External(Grid<f32>),
+    /// The ground points, at `DEM_BLOCK_SIZE`.
+    Ground(GroundDem),
 }
 
 /// The DEM of a tile's ground points, accumulated point by point.
@@ -604,24 +610,32 @@ mod tests {
         Bounds { min, max }
     }
 
+    const RASTERS_TILE: TileId = TileId {
+        min_x: 1000,
+        min_y: 2000,
+        max_x: 1003,
+        max_y: 2002,
+    };
+
     fn rasters() -> TileRasters {
-        rasters_with(true)
+        rasters_with(None)
     }
 
-    fn rasters_with(ground_dem: bool) -> TileRasters {
-        let tile = TileId {
-            min_x: 1000,
-            min_y: 2000,
-            max_x: 1003,
-            max_y: 2002,
-        };
+    fn rasters_with(external_dem: Option<Grid<f32>>) -> TileRasters {
         let bounds = bounds([1000.0, 2000.0, 0.0], [1003.0, 2002.0, 50.0]);
         // The first point of `dem_is_the_mean_of_ground_points_and_vegetation_the_class_counts`.
         TileRasters::new(
-            &tile,
+            &RASTERS_TILE,
             VoxelSet::new([1000.2, 2001.5, 10.0], &bounds),
-            ground_dem,
+            external_dem,
         )
+    }
+
+    fn ground_dem(rasters: &TileRasters) -> &GroundDem {
+        match &rasters.dem {
+            TileDem::Ground(ground_dem) => ground_dem,
+            TileDem::External(_) => panic!("expected the DEM of the ground points"),
+        }
     }
 
     #[test]
@@ -660,7 +674,7 @@ mod tests {
         assert_eq!(vegetation.bin_index(999.99, 2001.0), None);
         assert_eq!(vegetation.bin_index(f64::NAN, 2001.0), None);
 
-        let dem = rasters.ground_dem.unwrap().cells;
+        let dem = ground_dem(&rasters).cells;
         assert_eq!((dem.width, dem.height), (6, 4));
         assert_eq!(dem.bin_index(1000.0, 2000.0), Some(18));
         assert_eq!(dem.bin_index(1000.5, 2001.0), Some(7));
@@ -673,7 +687,7 @@ mod tests {
     #[test]
     fn dem_cells_lie_inside_the_vegetation_cell_of_their_points() {
         let rasters = rasters();
-        let (dem, vegetation) = (rasters.ground_dem.unwrap().cells, rasters.vegetation_cells);
+        let (dem, vegetation) = (ground_dem(&rasters).cells, rasters.vegetation_cells);
         // A 1 cm grid of points over the tile, edges included, as in LiDAR HD.
         for x in 99_990..=100_310 {
             for y in 199_990..=200_210 {
@@ -720,7 +734,6 @@ mod tests {
             rasters.add_point(x, y, z, classification);
         }
         let (dem, [low, medium, high]) = rasters.into_grids();
-        let dem = dem.unwrap();
         let n = NO_DATA_ELEVATION;
         // The cells without ground points take the mean of the ground points
         // of their 1 m block, (10 + 11 + 15) / 3 in the north-west one.
@@ -753,15 +766,16 @@ mod tests {
     }
 
     #[test]
-    fn vegetation_is_the_same_without_the_ground_dem() {
-        let (mut with_dem, mut without_dem) = (rasters_with(true), rasters_with(false));
+    fn vegetation_is_the_same_with_an_external_dem() {
+        let external_dem = Grid::new(999.75, 2002.25, 0.5, 6, 4, Some(-9999.0), 7.0f32);
+        let (mut ground, mut external) = (rasters(), rasters_with(Some(external_dem.clone())));
         for (x, y, z, classification) in POINTS {
-            with_dem.add_point(x, y, z, classification);
-            without_dem.add_point(x, y, z, classification);
+            ground.add_point(x, y, z, classification);
+            external.add_point(x, y, z, classification);
         }
-        let (dem, vegetation) = with_dem.into_grids();
-        assert!(dem.is_some());
-        assert_eq!(without_dem.into_grids(), (None, vegetation));
+        let (_, vegetation) = ground.into_grids();
+        // The DEM is the external one, untouched by the ground points.
+        assert_eq!(external.into_grids(), (external_dem, vegetation));
     }
 
     #[test]

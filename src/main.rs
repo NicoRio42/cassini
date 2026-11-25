@@ -122,9 +122,9 @@ enum Commands {
         #[arg(
             long,
             value_name = "FILE",
-            help = "The GeoTIFF DEM in Lambert-93 of the tile, such as an IGN MNT LiDAR HD tile. The LiDAR file is read for the vegetation only"
+            help = "A GeoTIFF DEM in Lambert-93 to use instead of computing the DEM from the ground points, such as an IGN MNT LiDAR HD tile. The LiDAR file is then read for the vegetation only"
         )]
-        dem: PathBuf,
+        dem: Option<PathBuf>,
 
         #[arg(
             long,
@@ -313,7 +313,7 @@ fn process_single_tile(
 
 fn process_single_tile_lidar_step(
     file_path: &Path,
-    dem_path: &Path,
+    dem_path: Option<&Path>,
     output_dir_path: &Path,
     config_path: Option<&Path>,
 ) -> Result<()> {
@@ -323,7 +323,7 @@ fn process_single_tile_lidar_step(
 
     generate_dem_and_vegetation_density_tiff_images_from_laz_file(
         file_path,
-        Some(dem_path),
+        dem_path,
         output_dir_path,
     )
     .map(|_| ())
@@ -501,7 +501,12 @@ fn run() -> Result<()> {
                 let output_dir = maybe_output_dir.unwrap_or("lidar".to_owned());
                 let laz_path = Path::new(&file_path).to_path_buf();
                 let dir_path = Path::new(&output_dir).to_path_buf();
-                process_single_tile_lidar_step(&laz_path, &dem, &dir_path, config.as_deref())?;
+                process_single_tile_lidar_step(
+                    &laz_path,
+                    dem.as_deref(),
+                    &dir_path,
+                    config.as_deref(),
+                )?;
 
                 let duration = start.elapsed();
                 info!("LiDAR file processed in {:.1?}", duration);
@@ -642,11 +647,8 @@ mod tests {
     use std::path::PathBuf;
 
     fn parsed_config(command: &str, option: &str) -> Option<PathBuf> {
-        let mut args = vec!["cassini", command, "input", option, "custom.json"];
-        if command == "lidar" {
-            args.extend(["--dem", "dem.tif"]);
-        }
-        let args = Args::try_parse_from(args).expect("command should accept a config path");
+        let args = Args::try_parse_from(["cassini", command, "input", option, "custom.json"])
+            .expect("command should accept a config path");
 
         match args.command.unwrap() {
             Commands::Lidar { config, .. }
@@ -671,21 +673,20 @@ mod tests {
     }
 
     #[test]
-    fn dem_option_is_required_by_lidar_and_optional_for_process() {
-        assert!(Args::try_parse_from(["cassini", "lidar", "input"]).is_err());
+    fn dem_option_is_optional_for_lidar_and_process() {
         let dem = |command: &str, options: &[&str]| {
             let args = ["cassini", command, "input"]
                 .into_iter()
                 .chain(options.iter().copied());
             match Args::try_parse_from(args).unwrap().command.unwrap() {
-                Commands::Lidar { dem, .. } => Some(dem),
-                Commands::Process { dem, .. } => dem,
+                Commands::Lidar { dem, .. } | Commands::Process { dem, .. } => dem,
                 _ => panic!("unexpected command"),
             }
         };
         let dem_file = Some(PathBuf::from("dem.tif"));
         assert_eq!(dem("lidar", &["--dem", "dem.tif"]), dem_file);
         assert_eq!(dem("process", &["--dem", "dem.tif"]), dem_file);
+        assert_eq!(dem("lidar", &[]), None);
         assert_eq!(dem("process", &[]), None);
         assert!(Args::try_parse_from(["cassini", "render", "input", "--dem", "dem.tif"]).is_err());
     }

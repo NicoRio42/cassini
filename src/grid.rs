@@ -22,6 +22,7 @@ const LAMBERT_93_EPSG: u16 = 2154;
 const GT_MODEL_TYPE_GEO_KEY: u16 = 1024;
 const GT_RASTER_TYPE_GEO_KEY: u16 = 1025;
 const PROJECTED_CRS_GEO_KEY: u16 = 3072;
+const PROJECTION_GEO_KEY: u16 = 3074;
 const PROJ_COORD_TRANS_GEO_KEY: u16 = 3075;
 const PROJ_LINEAR_UNITS_GEO_KEY: u16 = 3076;
 const MODEL_TYPE_PROJECTED: u16 = 1;
@@ -30,6 +31,8 @@ const RASTER_PIXEL_IS_AREA: u16 = 1;
 const RASTER_PIXEL_IS_POINT: u16 = 2;
 const USER_DEFINED: u16 = 32767;
 const CT_LAMBERT_CONF_CONIC_2SP: u16 = 8;
+/// The EPSG code of the Lambert-93 projection, without its datum.
+const LAMBERT_93_PROJECTION: u16 = 18085;
 const LINEAR_METER: u16 = 9001;
 
 /// The parameters of Lambert-93, as GeoKeys: each with the keys a
@@ -295,6 +298,32 @@ impl<T: Sample> Grid<T> {
         self.values[index] = value;
     }
 
+    /// The `width` x `height` cells from cell (`col`, `row`), which must be
+    /// in the grid.
+    pub fn window(&self, col: usize, row: usize, width: usize, height: usize) -> Self {
+        assert!(
+            col + width <= self.width && row + height <= self.height,
+            "window of {width} x {height} cells from ({col}, {row}) is outside the {} x {} grid",
+            self.width,
+            self.height
+        );
+        let values = (row..row + height)
+            .flat_map(|row| {
+                let start = row * self.width + col;
+                self.values[start..start + width].iter().copied()
+            })
+            .collect();
+        Self {
+            min_x: self.min_x + col as f64 * self.resolution,
+            max_y: self.max_y - row as f64 * self.resolution,
+            resolution: self.resolution,
+            width,
+            height,
+            nodata: self.nodata,
+            values,
+        }
+    }
+
     /// Whether `value` is a cell with data: neither NaN nor the nodata value.
     pub fn has_data(&self, value: T) -> bool {
         !value.is_nan() && self.nodata != Some(value)
@@ -512,10 +541,10 @@ fn open_geotiff(path: &Path) -> Result<(Decoder<File>, GridExtent)> {
 /// Checks that the GeoKeys `directory`, with the double parameters
 /// `doubles`, describe Lambert-93.
 ///
-/// A user-defined CRS is accepted if its projection is Lambert-93's, as in
-/// the IGN DEMs, whose GeoKeys spell out Lambert-93 instead of naming
-/// EPSG:2154. A user-defined CRS without a projection, or no CRS at all, is
-/// assumed to be Lambert-93.
+/// A user-defined CRS is accepted if its projection is Lambert-93's, named by
+/// its EPSG code or spelled out as in the IGN DEMs, whose GeoKeys do so
+/// instead of naming EPSG:2154. A user-defined CRS without a projection, or
+/// no CRS at all, is assumed to be Lambert-93.
 fn check_lambert_93(directory: &[u16], doubles: &[f64]) -> std::result::Result<(), String> {
     if geo_key(directory, GT_MODEL_TYPE_GEO_KEY) == Some(MODEL_TYPE_GEOGRAPHIC) {
         return Err("expected Lambert-93 (EPSG:2154), found geographic coordinates".to_owned());
@@ -537,6 +566,11 @@ fn check_lambert_93(directory: &[u16], doubles: &[f64]) -> std::result::Result<(
         geo_key(directory, PROJ_LINEAR_UNITS_GEO_KEY).filter(|&units| units != LINEAR_METER)
     {
         return Err(user_defined(format!("linear units {units}")));
+    }
+    match geo_key(directory, PROJECTION_GEO_KEY) {
+        None | Some(USER_DEFINED) => {}
+        Some(LAMBERT_93_PROJECTION) => return Ok(()),
+        Some(projection) => return Err(user_defined(format!("projection EPSG:{projection}"))),
     }
     match geo_key(directory, PROJ_COORD_TRANS_GEO_KEY) {
         None => return Ok(()),
@@ -596,36 +630,27 @@ fn geo_key_entry(directory: &[u16], key: u16) -> Option<[u16; 3]> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{
-        path::PathBuf,
-        process::Command,
-        time::{SystemTime, UNIX_EPOCH},
-    };
+    use std::{path::PathBuf, process::Command};
 
-    /// A temporary file path, the file being removed on drop.
-    struct TempFile(PathBuf);
+    /// A temporary file path, in a directory removed on drop.
+    struct TempFile {
+        _dir: tempfile::TempDir,
+        path: PathBuf,
+    }
 
     impl TempFile {
         fn new(name: &str) -> Self {
-            let unique = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos();
-            Self(std::env::temp_dir().join(format!("cassini-grid-{unique}-{name}")))
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join(name);
+            Self { _dir: dir, path }
         }
 
         fn path(&self) -> &Path {
-            &self.0
+            &self.path
         }
 
         fn str(&self) -> &str {
-            self.0.to_str().unwrap()
-        }
-    }
-
-    impl Drop for TempFile {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_file(&self.0);
+            self.path.to_str().unwrap()
         }
     }
 
@@ -849,6 +874,23 @@ mod tests {
         image.write_data(&[1.0f32, 2.0, -9999.0, 4.0]).unwrap();
     }
 
+    /// `IGN_GEO_KEYS` with the inline `key` set to `value`.
+    fn ign_geo_keys_with(key: u16, value: u16) -> [u16; 80] {
+        let mut keys = IGN_GEO_KEYS;
+        let entry = keys.chunks_mut(4).find(|entry| entry[0] == key).unwrap();
+        entry[3] = value;
+        keys
+    }
+
+    #[test]
+    fn reads_user_defined_crs_naming_the_lambert_93_projection() {
+        let file = TempFile::new("projection.tif");
+        // The EPSG code of the projection makes its parameters unnecessary.
+        let keys = ign_geo_keys_with(3074, 18085);
+        write_with_geo_keys(file.path(), 0.0, 0.0, &keys, &[]);
+        assert!(GridExtent::read_geotiff(file.path()).is_ok());
+    }
+
     #[test]
     fn reads_the_user_defined_lambert_93_of_ign_dems() {
         let file = TempFile::new("ign.tif");
@@ -887,17 +929,14 @@ mod tests {
     #[test]
     fn rejects_user_defined_crs_other_than_lambert_93() {
         let file = TempFile::new("user-defined.tif");
-        let with = |key: u16, value: u16| {
-            let mut keys = IGN_GEO_KEYS;
-            let entry = keys.chunks_mut(4).find(|entry| entry[0] == key).unwrap();
-            entry[3] = value;
-            keys
-        };
+        let with = ign_geo_keys_with;
         // Lambert-93 parameters but another projection: Transverse Mercator,
         // and feet.
         for (keys, message) in [
             (with(3075, 1), "coordinate transformation 1"),
             (with(3076, 9002), "linear units 9002"),
+            // UTM zone 31N.
+            (with(3074, 16031), "projection EPSG:16031"),
         ] {
             write_with_geo_keys(file.path(), 0.0, 0.0, &keys, &IGN_GEO_DOUBLES);
             let error = Grid::<f32>::read_geotiff(file.path()).unwrap_err();
