@@ -11,4 +11,5 @@
 
 ### Added
 
+- The install scripts remove the `cassini` function that the installation guide used to have Docker users add to their `.bashrc` or PowerShell profile, which would otherwise keep running the Docker image instead of the installed executable. They keep a copy of each file they change, with a `.cassini-backup` extension.
 - **IGN DEMs.** Put IGN's MNT LiDAR HD tiles next to the LiDAR files to use them instead of the DEM computed from the ground points, or pass one with `--dem` to `process` or `lidar`. See [Use IGN DEMs](https://cassini-map.com/guides/batch-mode#use-ign-dems). They give fewer cliffs, mostly isolated dots around the main cliff bands.

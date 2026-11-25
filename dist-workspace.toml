@@ -29,8 +29,17 @@ msvc-crt-static = false
 # Fails the build if Cargo.lock is out of date, as `--locked` would: dist
 # has no option to pass it to `cargo build`.
 github-build-setup = "../build-setup.yml"
-# Pushes the Docker image once the release is published (not for prereleases).
-publish-jobs = ["./publish-docker"]
+# Once the release is published, adds the removal of the Docker `cassini`
+# shortcut to the install scripts, which dist has no hook for, and pushes the
+# Docker image.
+publish-jobs = ["./patch-installers", "./publish-docker"]
+# Runs the publish jobs for prereleases too, so that their install scripts
+# get patched. publish-docker.yml skips them itself.
+publish-prereleases = true
+
+[dist.github-custom-job-permissions]
+# To replace the install scripts of the release.
+patch-installers = { contents = "write" }
 
 [dist.github-custom-runners]
 # The oldest supported Ubuntu runner, for the widest glibc compatibility
