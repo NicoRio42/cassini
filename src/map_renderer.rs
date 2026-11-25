@@ -51,7 +51,12 @@ pub struct MapRenderer {
     dpi_resolution: f32,
 }
 
+/// The outer ring and the holes of a polygon area, in pixels.
+type PixelArea = (Vec<(f32, f32)>, Vec<Vec<(f32, f32)>>);
+
 impl MapRenderer {
+    // To be replaced by a request struct (A8 in the 2026-11-25 audit).
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         min_x: i64,
         min_y: i64,
@@ -96,7 +101,7 @@ impl MapRenderer {
 
     #[inline]
     pub fn uncrossable_body_of_water_301(mut self, polygon: &GenericPolygon<Point>) -> MapRenderer {
-        self = self.uncrossable_body_of_water_area_301_1(&polygon);
+        self = self.uncrossable_body_of_water_area_301_1(polygon);
 
         for (outer_geometry, holes) in self.get_outer_geometries_and_holes_from_polygon(polygon) {
             self.black_img.set_color(VECTOR_BLACK);
@@ -110,7 +115,7 @@ impl MapRenderer {
             }
         }
 
-        return self;
+        self
     }
 
     #[inline]
@@ -132,7 +137,7 @@ impl MapRenderer {
                 .draw_filled_polygon_with_holes(&outer_geometry, &holes);
         }
 
-        return self;
+        self
     }
 
     #[inline]
@@ -150,7 +155,7 @@ impl MapRenderer {
             self.black_img.draw_polyline(&points);
         }
 
-        return self;
+        self
     }
 
     #[inline]
@@ -164,7 +169,7 @@ impl MapRenderer {
             self.blue_lines_and_points_img.draw_polyline(&points);
         }
 
-        return self;
+        self
     }
 
     #[inline]
@@ -186,7 +191,7 @@ impl MapRenderer {
             self.blue_lines_and_points_img.unset_dash();
         }
 
-        return self;
+        self
     }
 
     #[inline]
@@ -197,7 +202,7 @@ impl MapRenderer {
                 .draw_filled_polygon_with_holes(&outer_geometry, &holes);
         }
 
-        return self;
+        self
     }
 
     #[inline]
@@ -221,7 +226,7 @@ impl MapRenderer {
             self.light_brown_road_infill_img.draw_polyline(&points);
         }
 
-        return self;
+        self
     }
 
     #[inline]
@@ -246,7 +251,7 @@ impl MapRenderer {
             self.black_tunnel_road_outlines_img.draw_polyline(&points);
         }
 
-        return self;
+        self
     }
 
     #[inline]
@@ -274,46 +279,46 @@ impl MapRenderer {
             // self.light_brown_img.draw_polyline(&points);
         }
 
-        return self;
+        self
     }
 
     #[inline]
     pub fn tunnel_double_track_wide_road_502(self, line: &GenericPolyline<Point>) -> MapRenderer {
-        return self.tunnel_wide_road(
+        self.tunnel_wide_road(
             line,
             DOUBLE_TRACK_WIDE_ROAD_INNER_WIDTH,
             DOUBLE_TRACK_WIDE_ROAD_OUTER_WIDTH,
-        );
+        )
     }
 
     #[inline]
     pub fn wide_road_502(self, line: &GenericPolyline<Point>) -> MapRenderer {
-        return self.wide_road(line, WIDE_ROAD_INNER_WIDTH, WIDE_ROAD_OUTER_WIDTH);
+        self.wide_road(line, WIDE_ROAD_INNER_WIDTH, WIDE_ROAD_OUTER_WIDTH)
     }
 
     #[inline]
     pub fn tunnel_wide_road_502(self, line: &GenericPolyline<Point>) -> MapRenderer {
-        return self.tunnel_wide_road(line, WIDE_ROAD_INNER_WIDTH, WIDE_ROAD_OUTER_WIDTH);
+        self.tunnel_wide_road(line, WIDE_ROAD_INNER_WIDTH, WIDE_ROAD_OUTER_WIDTH)
     }
 
     #[inline]
     pub fn xl_wide_road_502(self, line: &GenericPolyline<Point>) -> MapRenderer {
-        return self.wide_road(line, XL_WIDE_ROAD_INNER_WIDTH, XL_WIDE_ROAD_OUTER_WIDTH);
+        self.wide_road(line, XL_WIDE_ROAD_INNER_WIDTH, XL_WIDE_ROAD_OUTER_WIDTH)
     }
 
     #[inline]
     pub fn tunnel_xl_wide_road_502(self, line: &GenericPolyline<Point>) -> MapRenderer {
-        return self.tunnel_wide_road(line, XL_WIDE_ROAD_INNER_WIDTH, XL_WIDE_ROAD_OUTER_WIDTH);
+        self.tunnel_wide_road(line, XL_WIDE_ROAD_INNER_WIDTH, XL_WIDE_ROAD_OUTER_WIDTH)
     }
 
     #[inline]
     pub fn xxl_wide_road_502(self, line: &GenericPolyline<Point>) -> MapRenderer {
-        return self.wide_road(line, XXL_WIDE_ROAD_INNER_WIDTH, XXL_WIDE_ROAD_OUTER_WIDTH);
+        self.wide_road(line, XXL_WIDE_ROAD_INNER_WIDTH, XXL_WIDE_ROAD_OUTER_WIDTH)
     }
 
     #[inline]
     pub fn tunnel_xxl_wide_road_502(self, line: &GenericPolyline<Point>) -> MapRenderer {
-        return self.tunnel_wide_road(line, XXL_WIDE_ROAD_INNER_WIDTH, XXL_WIDE_ROAD_OUTER_WIDTH);
+        self.tunnel_wide_road(line, XXL_WIDE_ROAD_INNER_WIDTH, XXL_WIDE_ROAD_OUTER_WIDTH)
     }
 
     #[inline]
@@ -327,12 +332,12 @@ impl MapRenderer {
             self.black_img.draw_polyline(&points);
         }
 
-        return self;
+        self
     }
 
     #[inline]
     pub fn tunnel_road_503(self, _line: &GenericPolyline<Point>) -> MapRenderer {
-        return self;
+        self
     }
 
     #[inline]
@@ -351,12 +356,12 @@ impl MapRenderer {
             self.black_img.unset_dash();
         }
 
-        return self;
+        self
     }
 
     #[inline]
     pub fn tunnel_footpath_505(self, _line: &GenericPolyline<Point>) -> MapRenderer {
-        return self;
+        self
     }
 
     #[inline]
@@ -380,7 +385,7 @@ impl MapRenderer {
             self.black_img.unset_dash();
         }
 
-        return self;
+        self
     }
 
     #[inline]
@@ -397,7 +402,7 @@ impl MapRenderer {
             self.black_img.draw_polyline(&points);
         }
 
-        return self;
+        self
     }
 
     #[inline]
@@ -415,7 +420,7 @@ impl MapRenderer {
             self.black_img.draw_polyline(&points);
         }
 
-        return self;
+        self
     }
 
     #[inline]
@@ -429,7 +434,7 @@ impl MapRenderer {
                 .draw_filled_polygon_with_holes(&outer_geometry, &holes);
         }
 
-        return self;
+        self
     }
 
     #[inline]
@@ -449,29 +454,30 @@ impl MapRenderer {
             }
         }
 
-        return self;
+        self
     }
 
     #[inline]
     fn get_points_from_line_part(&self, line_part: &[Point]) -> Vec<(f32, f32)> {
-        let mut points: Vec<(f32, f32)> = vec![];
-
-        for point in line_part {
-            points.push((
-                (point.x as i64 - self.min_x) as f32 * self.scale_factor,
-                (self.image_height as f32
-                    - ((point.y as i64 - self.min_y) as f32 * self.scale_factor)),
-            ))
-        }
-
-        return points;
+        line_part
+            .iter()
+            .map(|point| {
+                world_to_pixel(
+                    point,
+                    self.min_x,
+                    self.min_y,
+                    self.image_height,
+                    self.scale_factor,
+                )
+            })
+            .collect()
     }
 
     #[inline]
     fn get_outer_geometries_and_holes_from_polygon(
         &self,
         polygon: &GenericPolygon<Point>,
-    ) -> Vec<(Vec<(f32, f32)>, Vec<Vec<(f32, f32)>>)> {
+    ) -> Vec<PixelArea> {
         get_polygon_areas(polygon)
             .into_iter()
             .map(|area| {
@@ -507,7 +513,7 @@ impl MapRenderer {
                     let min_y = i as f32 * pixel_marsh_interval;
                     let max_y = min_y + spacing * dpi_resolution * 10.0 / INCH;
 
-                    image.draw_filled_polygon(&vec![
+                    image.draw_filled_polygon(&[
                         (0., min_y),
                         (image_width as f32, min_y),
                         (image_width as f32, max_y),
@@ -523,7 +529,7 @@ impl MapRenderer {
                     let min_x = i as f32 * pixel_marsh_interval;
                     let max_x = min_x + spacing * dpi_resolution * 10.0 / INCH;
 
-                    image.draw_filled_polygon(&vec![
+                    image.draw_filled_polygon(&[
                         (min_x, 0.),
                         (max_x, 0.),
                         (max_x, image_height as f32),
@@ -582,5 +588,46 @@ impl MapRenderer {
         self.vegetation_img.overlay(&mut self.black_img, 0., 0.);
 
         self.vegetation_img.save_as(&path)
+    }
+}
+
+/// The position in the tile image, `image_height` pixels high, of `point`, in
+/// world coordinates, for a tile whose south-west corner is at (`min_x`,
+/// `min_y`) and `scale_factor` pixels per meter.
+fn world_to_pixel(
+    point: &Point,
+    min_x: i64,
+    min_y: i64,
+    image_height: u32,
+    scale_factor: f32,
+) -> (f32, f32) {
+    let scale_factor = f64::from(scale_factor);
+    (
+        ((point.x - min_x as f64) * scale_factor) as f32,
+        (f64::from(image_height) - (point.y - min_y as f64) * scale_factor) as f32,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::world_to_pixel;
+    use shapefile::Point;
+
+    #[test]
+    fn places_points_at_their_exact_position_in_the_tile_image() {
+        let scale_factor = 600.0 / 254.0;
+        let (x, y) = world_to_pixel(
+            &Point::new(900_010.75, 6_400_090.25),
+            900_000,
+            6_400_000,
+            2362,
+            scale_factor,
+        );
+        let scale_factor = f64::from(scale_factor);
+        assert!((f64::from(x) - 10.75 * scale_factor).abs() < 1e-3, "{x}");
+        assert!(
+            (f64::from(y) - (2362.0 - 90.25 * scale_factor)).abs() < 1e-3,
+            "{y}"
+        );
     }
 }

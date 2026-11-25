@@ -285,12 +285,13 @@ cassini config
 
 ```json
 {
-  "yellow_threshold": 0.5,
-  "green_threshold_1": 0.2,
-  "green_threshold_2": 1.0,
-  "green_threshold_3": 2.0,
-  "cliff_threshold_1": 45.0,
-  "cliff_threshold_2": 55.0,
+  "yellow_threshold": 1.0,
+  "green_threshold_1": 2.0,
+  "green_threshold_2": 4.0,
+  "green_threshold_3": 6.0,
+  "low_vegetation_density_threshold": 1.0,
+  "cliff_threshold_1": 60.0,
+  "cliff_threshold_2": 60.0,
   "dpi_resolution": 600.0
 }
 ```
@@ -451,5 +452,5 @@ Same than `cassini help` or `cassini`
 Print the `cassini` version
 
 ```
-cassini 0.4.0
+cassini 0.19.0
 ```

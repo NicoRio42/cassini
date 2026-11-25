@@ -57,17 +57,14 @@ pub fn render_cliffs(
             cliff_thickness = Some(CLIFF_THICKNESS_1);
         }
 
-        match cliff_thickness {
-            Some(thickness) => {
-                draw_filled_ellipse_mut(
-                    &mut cliffs_layer_canvas,
-                    (x_pixel, y_pixel),
-                    (thickness * config.dpi_resolution * 10.0 / INCH / 2.0) as i32,
-                    (thickness * config.dpi_resolution * 10.0 / INCH / 2.0) as i32,
-                    BLACK,
-                );
-            }
-            _ => (),
+        if let Some(thickness) = cliff_thickness {
+            draw_filled_ellipse_mut(
+                &mut cliffs_layer_canvas,
+                (x_pixel, y_pixel),
+                (thickness * config.dpi_resolution * 10.0 / INCH / 2.0) as i32,
+                (thickness * config.dpi_resolution * 10.0 / INCH / 2.0) as i32,
+                BLACK,
+            );
         }
     }
 

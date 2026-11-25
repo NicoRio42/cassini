@@ -314,7 +314,10 @@ pub fn simplify_ring(
         .find(|index| is_pinned(ring[*index]))
         .unwrap_or_else(|| {
             (0..ring.len())
-                .min_by(|a, b| ring[*a].partial_cmp(&ring[*b]).unwrap())
+                .min_by(|a, b| {
+                    let ([ax, ay], [bx, by]) = (ring[*a], ring[*b]);
+                    ax.total_cmp(&bx).then(ay.total_cmp(&by))
+                })
                 .unwrap()
         });
     let closed: Vec<[f64; 2]> = ring[first..]

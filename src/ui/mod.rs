@@ -26,6 +26,7 @@ use tiny_http::{Header, Method, Request, Response, Server};
 use crate::{
     config::Config,
     error::{CassiniError, Result, ResultContext},
+    files::{is_input_file, LAZ_EXTENSIONS},
     projection::lambert93_to_wgs84,
 };
 use ign::{tiles_in_geometry, Geometry, IgnTile};
@@ -301,8 +302,8 @@ fn laz_files_in(dir: &Path) -> Vec<String> {
         .into_iter()
         .flatten()
         .flatten()
+        .filter(|entry| is_input_file(&entry.path(), &LAZ_EXTENSIONS))
         .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .filter(|name| name.to_lowercase().ends_with(".laz"))
         .collect();
     files.sort();
     files

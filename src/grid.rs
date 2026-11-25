@@ -432,8 +432,8 @@ impl<T: Sample> Grid<T> {
             }
         }
 
-        let mut image =
-            encoder.new_image::<T::Color>(u32::try_from(self.width)?, u32::try_from(self.height)?)?;
+        let mut image = encoder
+            .new_image::<T::Color>(u32::try_from(self.width)?, u32::try_from(self.height)?)?;
         let directory = image.encoder();
         directory.write_tag(
             Tag::ModelPixelScaleTag,
@@ -694,7 +694,8 @@ mod tests {
     fn converts_to_wider_types_on_read() {
         let grid = sample_grid(255u8, |i| i as u8);
         let file = TempFile::new("convert.tif");
-        grid.write_geotiff(file.path(), Compression::Deflate).unwrap();
+        grid.write_geotiff(file.path(), Compression::Deflate)
+            .unwrap();
         let (read, sample_type) = Grid::<f64>::read_geotiff_with_type(file.path()).unwrap();
         assert_eq!(sample_type, SampleType::Byte);
         assert_eq!(read.nodata, Some(255.0));
@@ -772,7 +773,8 @@ mod tests {
     fn gdalinfo_reads_the_georeferencing() {
         let grid = sample_grid(-9999.0f32, |i| i as f32);
         let file = TempFile::new("gdalinfo.tif");
-        grid.write_geotiff(file.path(), Compression::Deflate).unwrap();
+        grid.write_geotiff(file.path(), Compression::Deflate)
+            .unwrap();
         let Some(output) = run("gdalinfo", &["-json", file.str()]) else {
             return;
         };
@@ -803,7 +805,8 @@ mod tests {
         let grid = sample_grid(-9999.0f64, |i| 500.0 + i as f64 / 3.0);
         let source = TempFile::new("predictor-source.tif");
         let translated = TempFile::new("predictor-translated.tif");
-        grid.write_geotiff(source.path(), Compression::None).unwrap();
+        grid.write_geotiff(source.path(), Compression::None)
+            .unwrap();
         let args = ["-co", "COMPRESS=DEFLATE", "-co", "PREDICTOR=3"];
         if gdal_translate(&source, &translated, &args) {
             assert_eq!(Grid::<f64>::read_geotiff(translated.path()).unwrap(), grid);
@@ -815,7 +818,8 @@ mod tests {
         let grid = sample_grid(-9999.0f32, |i| i as f32);
         let source = TempFile::new("point-source.tif");
         let translated = TempFile::new("point-translated.tif");
-        grid.write_geotiff(source.path(), Compression::None).unwrap();
+        grid.write_geotiff(source.path(), Compression::None)
+            .unwrap();
         // GDAL keeps the extent and writes the tiepoint at the cell centre.
         if gdal_translate(&source, &translated, &["-mo", "AREA_OR_POINT=Point"]) {
             assert_eq!(Grid::<f32>::read_geotiff(translated.path()).unwrap(), grid);
@@ -964,7 +968,8 @@ mod tests {
         let grid = sample_grid(-9999.0f32, |i| i as f32);
         let source = TempFile::new("crs-source.tif");
         let translated = TempFile::new("crs-translated.tif");
-        grid.write_geotiff(source.path(), Compression::None).unwrap();
+        grid.write_geotiff(source.path(), Compression::None)
+            .unwrap();
         for (srs, message) in [
             ("EPSG:2056", "found EPSG:2056"),
             ("EPSG:4326", "found geographic coordinates"),

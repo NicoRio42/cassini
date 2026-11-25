@@ -702,8 +702,13 @@ mod tests {
             dir.path(),
         );
         let (mut stream, _) = listener.accept().unwrap();
-        let mut request = [0; 4096];
-        stream.read(&mut request).unwrap();
+        // The request has no body, so it ends with its first blank line.
+        let mut request = BufReader::new(&stream);
+        let mut line = String::new();
+        while line != "\r\n" {
+            line.clear();
+            assert_ne!(request.read_line(&mut line).unwrap(), 0);
+        }
         stream
             .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\npartial")
             .unwrap();

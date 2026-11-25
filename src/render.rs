@@ -2,12 +2,11 @@ use crate::config::Config;
 use crate::constants::INCH;
 use crate::contours::generate_contours_with_pullautin_algorithme;
 use crate::error::{CassiniError, Result, ResultContext, TileId};
+use crate::files::{remove_artifacts, remove_shapefile_artifacts};
 use crate::grid::Grid;
-use crate::helpers::remove_if_exists;
 use crate::map_features::MapFeature;
 use crate::ocad_export::{SPILLED_OBJECTS_FILE_NAME, TILE_OCD_FILE_NAME};
 use crate::ocd::OcdTemplate;
-use crate::tile::TileWithNeighbors;
 use crate::vectors::{
     get_map_features_from_osm_file, get_map_features_from_osm_shapefiles,
     render_map_with_osm_vector_shapes,
@@ -22,7 +21,7 @@ use crate::{
     vegetation::{render_vegetation, UndergrowthMode},
 };
 use log::info;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -68,16 +67,10 @@ pub fn render_tile_map(
     let image_width = (width as f32 * config.dpi_resolution / INCH) as u32;
     let image_height = (height as f32 * config.dpi_resolution / INCH) as u32;
 
-    // Optional layers must belong to this run, not a previous render in the same directory.
+    // Nothing of a previous render in the same directory may be left, not
+    // even an optional layer that this run does not write.
+    remove_render_step_files(&tile.render_dir_path)?;
     let undergrowth_path = tile.render_dir_path.join("undergrowth.png");
-    let ocd_path = tile.render_dir_path.join(TILE_OCD_FILE_NAME);
-    let spilled_objects_path = tile.render_dir_path.join(SPILLED_OBJECTS_FILE_NAME);
-    for optional_path in [&undergrowth_path, &ocd_path, &spilled_objects_path] {
-        remove_if_exists(optional_path).context(format!(
-            "could not remove stale optional layer `{}`",
-            optional_path.display()
-        ))?;
-    }
 
     let vegetation_rasters = render_vegetation(
         &tile,
@@ -188,13 +181,10 @@ pub fn render_tile_map(
 
 /// The files the render step writes. `dem_with_buffer.tif` is not one of
 /// them: the render step reads it, and `--skip-lidar` reuses it.
-const RENDER_STEP_FILES: [&str; 17] = [
+pub const RENDER_STEP_FILES: [&str; 13] = [
     "cliffs.png",
-    "contours",
     "contours.png",
-    "contours-raw",
     "dem_2m_with_buffer.tif",
-    "formlines",
     TILE_OCD_FILE_NAME,
     "full-map.pgw",
     "full-map.png",
@@ -202,43 +192,119 @@ const RENDER_STEP_FILES: [&str; 17] = [
     "low_vegetation_with_buffer.tif",
     "medium_vegetation_with_buffer.tif",
     SPILLED_OBJECTS_FILE_NAME,
-    // Written by the versions that converted the OSM file with `ogr2ogr`.
-    "shapes",
     "slopes.tif",
     "undergrowth.png",
     "vegetation.png",
 ];
 
-pub fn cleanup_render_step_files(tiles: &[TileWithNeighbors], output_dir: &str) -> Result<()> {
-    for tile in tiles {
-        cleanup_render_step_files_for_single_tile(tile)?;
-    }
+/// The shapefiles the render step writes, without extension. Their
+/// directories can hold other files, which are kept.
+const RENDER_STEP_SHAPEFILES: [&str; 3] = [
+    "contours/contours",
+    "contours-raw/contours-raw",
+    "formlines/formlines",
+];
 
-    let entries = std::fs::read_dir(output_dir)
-        .context(format!("could not read output directory `{output_dir}`"))?;
-    for entry in entries {
-        let entry = entry.context(format!("could not read an entry in `{output_dir}`"))?;
-        if entry
-            .file_name()
-            .to_string_lossy()
-            .starts_with("merged-map")
-        {
-            std::fs::remove_file(entry.path()).context(format!(
-                "could not remove stale merged map `{}`",
-                entry.path().display()
-            ))?;
-        }
-    }
-    Ok(())
+/// Removes the files the render step writes from `dir_path`, leaving any
+/// other file in place.
+pub fn remove_render_step_files(dir_path: &Path) -> Result<()> {
+    remove_artifacts(dir_path, &RENDER_STEP_FILES)?;
+    remove_shapefile_artifacts(dir_path, &RENDER_STEP_SHAPEFILES)
 }
 
-pub fn cleanup_render_step_files_for_single_tile(tile: &TileWithNeighbors) -> Result<()> {
-    for path in RENDER_STEP_FILES {
-        let artifact = tile.tile.render_dir_path.join(path);
-        remove_if_exists(&artifact).context(format!(
-            "could not remove stale artifact `{}`",
-            artifact.display()
-        ))?;
+#[cfg(test)]
+mod tests {
+    use super::{
+        remove_render_step_files, render_tile_map, RenderOptions, RENDER_STEP_FILES,
+        RENDER_STEP_SHAPEFILES,
+    };
+    use crate::{
+        config::Config,
+        lidar::{
+            generate_dem_and_vegetation_density_tiff_images_from_laz_file,
+            test_tiles::{write_tile, POINTS},
+            VegetationLayers,
+        },
+        tile::Tile,
+        vegetation::UndergrowthMode,
+    };
+    use std::{collections::BTreeSet, path::Path};
+
+    /// The relative paths of the entries of `dir`, recursively.
+    fn entries(dir: &Path) -> BTreeSet<String> {
+        let mut paths = BTreeSet::new();
+        let mut dirs = vec![dir.to_path_buf()];
+        while let Some(current) = dirs.pop() {
+            for entry in std::fs::read_dir(&current).unwrap() {
+                let path = entry.unwrap().path();
+                let relative = path.strip_prefix(dir).unwrap();
+                paths.insert(relative.to_str().unwrap().replace('\\', "/"));
+                if path.is_dir() {
+                    dirs.push(path);
+                }
+            }
+        }
+        paths
     }
-    Ok(())
+
+    #[test]
+    fn the_render_step_replaces_only_its_own_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let laz_path = dir.path().join("tile.laz");
+        write_tile(&laz_path, 0.0, 100.0, &POINTS);
+        let tile_id = generate_dem_and_vegetation_density_tiff_images_from_laz_file(
+            &laz_path,
+            None,
+            dir.path(),
+            VegetationLayers::Height,
+            true,
+        )
+        .unwrap();
+        // Files of the user, in directories named as those of the render step.
+        for name in [
+            "contours/notes.txt",
+            "formlines/formlines.qml",
+            "shapes/roads.shp",
+        ] {
+            let path = dir.path().join(name);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, name).unwrap();
+        }
+        let before = entries(dir.path());
+        let tile = Tile {
+            lidar_dir_path: dir.path().to_path_buf(),
+            render_dir_path: dir.path().to_path_buf(),
+            min_x: tile_id.min_x,
+            min_y: tile_id.min_y,
+            max_x: tile_id.max_x,
+            max_y: tile_id.max_y,
+        };
+        let options = RenderOptions {
+            skip_vector: true,
+            skip_520: false,
+            undergrowth_mode: UndergrowthMode::Symbol406,
+            shapefiles_dir: None,
+            ocad: None,
+        };
+
+        // The second render replaces the output of the first.
+        for _ in 0..2 {
+            render_tile_map(tile.clone(), vec![], &options, &Config::default()).unwrap();
+        }
+
+        let after = entries(dir.path());
+        let written: Vec<&String> = after.difference(&before).collect();
+        assert!(written.contains(&&"full-map.png".to_owned()));
+        for path in &written {
+            let is_listed = RENDER_STEP_FILES.contains(&path.as_str())
+                || RENDER_STEP_SHAPEFILES.iter().any(|shapefile| {
+                    path.strip_prefix(shapefile)
+                        .is_some_and(|extension| extension.starts_with('.'))
+                        || shapefile.starts_with(&format!("{path}/"))
+                });
+            assert!(is_listed, "`{path}` is not a render step file");
+        }
+        remove_render_step_files(dir.path()).unwrap();
+        assert_eq!(entries(dir.path()), before);
+    }
 }

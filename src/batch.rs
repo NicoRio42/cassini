@@ -3,8 +3,8 @@ use crate::{
     dem::{check_dem_with_buffer, create_dem_with_buffer},
     download::download_osm_file,
     error::{CassiniError, Result, ResultContext, Stage, TileId},
+    files::{is_input_file, remove_if_exists, GEOTIFF_EXTENSIONS, LAZ_EXTENSIONS},
     grid::GridExtent,
-    helpers::remove_if_exists,
     lidar::{
         read_tile_id, read_vegetation_layers, run_dem_pass, VegetationByHeightPass,
         VegetationLayers, VEGETATION_LAYERS_FILE_NAME,
@@ -15,7 +15,7 @@ use crate::{
         MERGED_OCD_FILE_NAME,
     },
     ocd::{Georeferencing, OcdTemplate},
-    render::{cleanup_render_step_files, render_tile_map, RenderOptions},
+    render::{remove_render_step_files, render_tile_map, RenderOptions},
     tile::{Tile, TileWithNeighbors},
 };
 use log::{info, warn};
@@ -89,15 +89,20 @@ pub fn batch(
         merged_ocd_path.display()
     ))?;
 
-    if skip_lidar {
-        let layers = check_previous_lidar_stage(&tiles)?;
-        info!(
+    // The LiDAR output that `--skip-lidar` reuses is checked before anything
+    // is deleted.
+    let reused_layers = if skip_lidar {
+        Some(check_previous_lidar_stage(&tiles)?)
+    } else {
+        None
+    };
+    cleanup_previous_run(&tiles, output_dir)?;
+    match reused_layers {
+        Some(layers) => info!(
             "Reusing the LiDAR output of the previous run, with the vegetation layers by {}",
             layers.name()
-        );
-        cleanup_render_step_files(&tiles, output_dir)?;
-    } else {
-        run_lidar_stage(&tiles, chunk_size, vegetation_layers)?;
+        ),
+        None => run_lidar_stage(&tiles, chunk_size, vegetation_layers)?,
     }
 
     if !options.skip_vector {
@@ -206,6 +211,54 @@ fn run_lidar_stage(
             Ok(())
         },
     )?;
+    Ok(())
+}
+
+/// The files that the versions before 0.19.0, which ran PDAL and `ogr2ogr`,
+/// wrote in the tile directories, and that nothing reads any more.
+const PREVIOUS_VERSION_FILES: [&str; 6] = [
+    "dem-low-resolution.tif",
+    "high-vegetation.tif",
+    "low-vegetation.tif",
+    "medium-vegetation.tif",
+    "pipeline.json",
+    "shapes",
+];
+
+/// Removes the maps of the previous run, so that a run that fails leaves
+/// none of them next to its own output: the render output of every tile,
+/// which the render step also removes but only once it reaches the tile, and
+/// the merged maps. Also removes the files of the versions before 0.19.0:
+/// unlike the output directory of `process` and `lidar`, the tile
+/// directories only hold what `batch` writes.
+fn cleanup_previous_run(tiles: &[TileWithNeighbors], output_dir: &str) -> Result<()> {
+    for tile in tiles {
+        let dir_path = &tile.tile.render_dir_path;
+        remove_render_step_files(dir_path)?;
+        for name in PREVIOUS_VERSION_FILES {
+            let path = dir_path.join(name);
+            remove_if_exists(&path).context(format!(
+                "could not remove the output of a previous version `{}`",
+                path.display()
+            ))?;
+        }
+    }
+
+    let entries =
+        read_dir(output_dir).context(format!("could not read output directory `{output_dir}`"))?;
+    for entry in entries {
+        let entry = entry.context(format!("could not read an entry in `{output_dir}`"))?;
+        if entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with("merged-map")
+        {
+            std::fs::remove_file(entry.path()).context(format!(
+                "could not remove stale merged map `{}`",
+                entry.path().display()
+            ))?;
+        }
+    }
     Ok(())
 }
 
@@ -378,26 +431,21 @@ pub fn get_tiles_with_neighbors(
             .context(format!("could not read an entry in `{input_dir}`"))?
             .path();
 
-        match path.extension() {
-            Some(extension) => {
-                if !path.is_file() || extension != "laz" {
-                    continue;
-                }
+        if !is_input_file(&path, &LAZ_EXTENSIONS) {
+            continue;
+        }
 
-                let tile = read_tile_id(&path)?;
-                let extent = (tile.min_x, tile.min_y, tile.max_x, tile.max_y);
+        let tile = read_tile_id(&path)?;
+        let extent = (tile.min_x, tile.min_y, tile.max_x, tile.max_y);
 
-                if let Some(previous) = tiles_map.insert(extent, path.clone()) {
-                    return Err(CassiniError::InvalidInput {
-                        message: format!(
-                            "LiDAR files `{}` and `{}` have the same rounded extent",
-                            previous.display(),
-                            path.display()
-                        ),
-                    });
-                }
-            }
-            None => {}
+        if let Some(previous) = tiles_map.insert(extent, path.clone()) {
+            return Err(CassiniError::InvalidInput {
+                message: format!(
+                    "LiDAR files `{}` and `{}` have the same rounded extent",
+                    previous.display(),
+                    path.display()
+                ),
+            });
         }
     }
 
@@ -499,7 +547,7 @@ pub fn get_tiles_with_neighbors(
             ),
         ]
         .into_iter()
-        .filter_map(|x| x)
+        .flatten()
         .collect();
 
         tiles.push(TileWithNeighbors {
@@ -523,17 +571,7 @@ fn geotiff_paths(input_dir: &str) -> Result<Vec<PathBuf>> {
         let path = dir_entry
             .context(format!("could not read an entry in `{input_dir}`"))?
             .path();
-        let is_hidden = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.starts_with('.'));
-        let is_tiff = path
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .is_some_and(|extension| {
-                extension.eq_ignore_ascii_case("tif") || extension.eq_ignore_ascii_case("tiff")
-            });
-        if is_tiff && !is_hidden && path.is_file() {
+        if is_input_file(&path, &GEOTIFF_EXTENSIONS) {
             paths.push(path);
         }
     }
@@ -624,12 +662,9 @@ fn get_neighbor_tile_from_hash_map(
     max_x: i64,
     max_y: i64,
 ) -> Option<PathBuf> {
-    return match tiles_map.get(&(min_x, min_y, max_x, max_y)) {
-        Some(_) => {
-            Some(Path::new(output_dir).join(format!("{}_{}_{}_{}", min_x, min_y, max_x, max_y)))
-        }
-        None => None,
-    };
+    tiles_map
+        .get(&(min_x, min_y, max_x, max_y))
+        .map(|_| Path::new(output_dir).join(format!("{}_{}_{}_{}", min_x, min_y, max_x, max_y)))
 }
 
 #[cfg(test)]
@@ -731,6 +766,25 @@ mod tests {
                 .unwrap();
         tiles.sort_by_key(|tile| tile.tile.min_x);
         tiles
+    }
+
+    #[test]
+    fn reads_laz_files_in_any_case_and_skips_hidden_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("in");
+        std::fs::create_dir(&input).unwrap();
+        write_tile(&input.join("a.LAZ"), 0.0, 100.0, &[]);
+        // The AppleDouble file macOS writes next to `b.laz` on some drives.
+        std::fs::write(input.join("._b.laz"), "not a LAZ file").unwrap();
+        std::fs::create_dir(input.join("folder.laz")).unwrap();
+        let output = dir.path().join("out");
+
+        let tiles =
+            get_tiles_with_neighbors(input.to_str().unwrap(), output.to_str().unwrap(), false)
+                .unwrap();
+
+        let laz_paths: Vec<_> = tiles.iter().map(|tile| &tile.laz_path).collect();
+        assert_eq!(laz_paths, [&input.join("a.LAZ")]);
     }
 
     #[test]

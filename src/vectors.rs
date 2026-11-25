@@ -16,6 +16,8 @@ use shapefile::{
 };
 use std::{collections::HashMap, path::Path, time::Instant};
 
+// To be replaced by a request struct (A8 in the 2026-11-25 audit).
+#[allow(clippy::too_many_arguments)]
 pub fn render_map_with_osm_vector_shapes(
     tile: &Tile,
     image_width: u32,
@@ -274,7 +276,7 @@ fn classify_osm_shapes(
         let building = tags.get("building");
 
         // 521 building
-        if building != "" {
+        if !building.is_empty() {
             features.push(MapFeature::Area(AreaSymbol::Building521, polygon));
             continue;
         }

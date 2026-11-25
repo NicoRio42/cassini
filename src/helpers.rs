@@ -1,39 +1,3 @@
-use std::{
-    fs::{read_dir, remove_dir_all, remove_file},
-    io::{self, ErrorKind},
-    path::Path,
-};
-
-pub fn remove_dir_content_except<P: AsRef<Path>>(path: P, kept_names: &[&str]) -> io::Result<()> {
-    for entry in read_dir(path)? {
-        let entry = entry?;
-        if kept_names.iter().any(|name| entry.file_name() == *name) {
-            continue;
-        }
-
-        let path = entry.path();
-
-        if path.is_dir() {
-            remove_dir_all(&path)?;
-        } else {
-            remove_file(path)?;
-        }
-    }
-
-    Ok(())
-}
-
-pub fn remove_if_exists<P: AsRef<Path>>(path: P) -> std::io::Result<()> {
-    let path = path.as_ref();
-
-    match std::fs::metadata(path) {
-        Ok(meta) if meta.is_dir() => remove_dir_all(path),
-        Ok(_) => remove_file(path),
-        Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e),
-    }
-}
-
 pub fn does_segment_intersect_tile(
     segment: ((f32, f32), (f32, f32)),
     min_x: f32,
@@ -48,13 +12,13 @@ pub fn does_segment_intersect_tile(
         ((min_x, min_y), (min_x, max_y)), // left
     ];
 
-    return tile_edges
+    tile_edges
         .iter()
-        .any(|tile_edge| do_intersect(*tile_edge, segment));
+        .any(|tile_edge| do_intersect(*tile_edge, segment))
 }
 
 pub fn does_polyline_intersect_tile(
-    polyline: &Vec<(f32, f32)>,
+    polyline: &[(f32, f32)],
     min_x: f32,
     min_y: f32,
     max_x: f32,
@@ -83,7 +47,7 @@ pub fn does_polyline_intersect_tile(
         }
     }
 
-    return false;
+    false
 }
 
 fn orientation(p: (f32, f32), q: (f32, f32), r: (f32, f32)) -> i32 {

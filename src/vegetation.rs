@@ -14,11 +14,7 @@ use imageproc::{
     rect::Rect,
 };
 use log::info;
-use std::{
-    f32::consts::E,
-    path::PathBuf,
-    time::Instant,
-};
+use std::{f32::consts::E, path::PathBuf, time::Instant};
 
 /// Blur radii, in 1 m cells, of the medium and low vegetation densities.
 pub(crate) const MEDIUM_DENSITY_BLUR_RADIUS: usize = 2;

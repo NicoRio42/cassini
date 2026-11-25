@@ -11,6 +11,7 @@ mod contours;
 mod dem;
 mod download;
 mod external_dem;
+mod files;
 mod fill_nodata;
 mod helpers;
 mod lidar;
@@ -41,11 +42,12 @@ use config::{default_config, get_config, Config};
 use dem::create_dem_with_buffer;
 use download::download_osm_file;
 use error::{CassiniError, Result, ResultContext};
+use files::check_not_an_artifact;
 use lidar::{generate_dem_and_vegetation_density_tiff_images_from_laz_file, VegetationLayers};
 use log::info;
 use ocad_export::{check_template, write_ocd_file};
 use ocd::OcdTemplate;
-use render::{render_tile_map, OcadOptions, RenderOptions};
+use render::{render_tile_map, OcadOptions, RenderOptions, RENDER_STEP_FILES};
 use std::{
     fs::create_dir_all,
     num::NonZeroUsize,
@@ -334,6 +336,10 @@ fn process_single_tile(
 ) -> Result<()> {
     let config = get_config(None)?;
 
+    // The render step replaces its own output, which must not be an input.
+    for input in [Some(file_path), dem_path].into_iter().flatten() {
+        check_not_an_artifact(input, output_dir_path, &RENDER_STEP_FILES)?;
+    }
     let extent = generate_dem_and_vegetation_density_tiff_images_from_laz_file(
         file_path,
         dem_path,
@@ -515,7 +521,7 @@ fn run() -> Result<()> {
 
     if let Some(command) = args.command {
         match command {
-            Commands::Config {} => {
+            Commands::Config => {
                 default_config()?;
             }
 

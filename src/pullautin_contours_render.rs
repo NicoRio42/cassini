@@ -10,19 +10,22 @@ use crate::config::Config;
 use crate::constants::{BUFFER, INCH, PURPLE};
 use crate::contour_shapefile::{contour_table, ContourRecord};
 use crate::map_features::{LineSymbol, MapFeature};
+use crate::pullautin_smooth_contours::SmoothedContour;
 use crate::{
     constants::{BROWN, TRANSPARENT},
     error::{Result, ResultContext},
     tile::Tile,
 };
 
+// The index loops are kept as in Karttapullautin, to compare with its code.
+#[allow(clippy::needless_range_loop)]
 pub fn pullautin_cull_formlines_render_contours(
     tile: &Tile,
     image_width: u32,
     image_height: u32,
     config: &Config,
-    avg_alt: &Vec<Vec<f64>>,
-    smoothed_contours: Vec<(Vec<f64>, Vec<f64>, f64)>,
+    avg_alt: &[Vec<f64>],
+    smoothed_contours: Vec<SmoothedContour>,
 ) -> Result<Vec<MapFeature>> {
     info!(
         "Tile min_x={} min_y={} max_x={} max_y={}. Culling formlines and rendering contours",
@@ -31,20 +34,24 @@ pub fn pullautin_cull_formlines_render_contours(
 
     let start = Instant::now();
 
-    let scalefactor = 1.0;
+    let pixels_per_meter = f64::from(config.dpi_resolution) / f64::from(INCH);
+    // The pixel lengths of Karttapullautin are tuned for 600 DPI.
+    let pixel_scale = f64::from(config.dpi_resolution) / 600.0;
+    // In vertices of the smoothed contours.
     let formlineaddition: f64 = 17.;
     let minimumgap: u32 = 30;
-    let dashlength: f64 = 60.;
-    let gaplength: f64 = 12.;
+    // In pixels.
+    let dashlength: f64 = 60. * pixel_scale;
+    let gaplength: f64 = 12. * pixel_scale;
     let mut img = RgbaImage::from_pixel(image_width, image_height, TRANSPARENT);
     let formlinesteepness: f64 = 0.37;
-    let buffer_in_pixels = BUFFER as f32 * (config.dpi_resolution / INCH) as f32;
+    let buffer_in_pixels = BUFFER as f32 * (config.dpi_resolution / INCH);
 
     let dem_cell_size: f64 = 2.0;
     let xstart: f64 = (tile.min_x - BUFFER as i64) as f64;
     let ystart: f64 = (tile.min_y - BUFFER as i64) as f64;
-    let x0 = xstart as f64;
-    let y0 = ystart as f64;
+    let x0 = xstart;
+    let y0 = ystart;
 
     let sxmax: usize = ((tile.max_x + BUFFER as i64 - xstart as i64) as f64 / 2.).ceil() as usize;
     let symax: usize = ((tile.max_y + BUFFER as i64 - ystart as i64) as f64 / 2.).ceil() as usize;
@@ -188,8 +195,8 @@ pub fn pullautin_cull_formlines_render_contours(
         let mut y = Vec::<f64>::new();
 
         for i in 0..x_array.len() {
-            x.push((x_array[i] - x0) * 600.0 / 254.0 / scalefactor);
-            y.push((y0 - y_array[i]) * 600.0 / 254.0 / scalefactor);
+            x.push((x_array[i] - x0) * pixels_per_meter);
+            y.push((y0 - y_array[i]) * pixels_per_meter);
         }
 
         // Only the culled parts of form lines are mapped, they are pushed below
@@ -202,30 +209,32 @@ pub fn pullautin_cull_formlines_render_contours(
             features.push(MapFeature::Line(symbol, Polyline::new(points)));
         }
 
-        let curvew = match symbol {
-            LineSymbol::IndexContour102 => 3.5,
-            LineSymbol::FormLine103 => 1.5,
-            _ => 2.0,
-        };
+        let is_formline = symbol == LineSymbol::FormLine103;
+        // Half the stroke width, in pixels.
+        let curvew = pixel_scale
+            * match symbol {
+                LineSymbol::IndexContour102 => 3.5,
+                LineSymbol::FormLine103 => 1.5,
+                _ => 2.0,
+            };
+        // Form lines are drawn half a pixel wider on each side at 600 DPI.
+        let formline_padding = 0.5 * pixel_scale;
 
         let mut smallringtest = false;
         let mut help = vec![false; x.len()];
         let mut help2 = vec![false; x.len()];
 
-        if curvew == 1.5 {
+        if is_formline {
             for i in 0..x.len() {
                 help[i] = false;
                 help2[i] = true;
-                let xx =
-                    (((x[i] / 600.0 * 254.0 * scalefactor + x0) - xstart) / dem_cell_size).floor();
-                let yy =
-                    (((-y[i] / 600.0 * 254.0 * scalefactor + y0) - ystart) / dem_cell_size).floor();
+                let xx = ((x_array[i] - xstart) / dem_cell_size).floor();
+                let yy = ((y_array[i] - ystart) / dem_cell_size).floor();
 
-                if curvew != 1.5
-                    || &steepness[xx as usize][yy as usize] < &formlinesteepness
-                    || &steepness[xx as usize][yy as usize + 1] < &formlinesteepness
-                    || &steepness[xx as usize + 1][yy as usize] < &formlinesteepness
-                    || &steepness[xx as usize + 1][yy as usize + 1] < &formlinesteepness
+                if steepness[xx as usize][yy as usize] < formlinesteepness
+                    || steepness[xx as usize][yy as usize + 1] < formlinesteepness
+                    || steepness[xx as usize + 1][yy as usize] < formlinesteepness
+                    || steepness[xx as usize + 1][yy as usize + 1] < formlinesteepness
                 {
                     help[i] = true;
                 }
@@ -341,20 +350,17 @@ pub fn pullautin_cull_formlines_render_contours(
         let mut current_formline: Vec<(f64, f64)> = vec![];
 
         for i in 1..x.len() {
-            if curvew != 1.5 || help2[i] || smallringtest {
-                if curvew == 1.5 {
+            if !is_formline || help2[i] || smallringtest {
+                if is_formline {
                     if !formlinestart {
                         current_formline = vec![];
                         formlinestart = true;
                     }
 
-                    current_formline.push((
-                        x[i] / 600.0 * 254.0 * scalefactor + x0,
-                        -y[i] / 600.0 * 254.0 * scalefactor + y0,
-                    ));
+                    current_formline.push((x_array[i], y_array[i]));
                 }
 
-                if curvew == 1.5 {
+                if is_formline {
                     let step = ((x[i - 1] - x[i]).powi(2) + (y[i - 1] - y[i]).powi(2)).sqrt();
                     if i < 4 {
                         linedist = 0.0
@@ -391,10 +397,10 @@ pub fn pullautin_cull_formlines_render_contours(
                     if gap > 0.0 {
                         gap -= step;
                         if gap < 0.0 && onegapdone && step > 0.0 {
-                            let mut n = -curvew - 0.5;
-                            while n < curvew + 0.5 {
-                                let mut m = -curvew - 0.5;
-                                while m < curvew + 0.5 {
+                            let mut n = -curvew - formline_padding;
+                            while n < curvew + formline_padding {
+                                let mut m = -curvew - formline_padding;
+                                while m < curvew + formline_padding {
                                     let start = (
                                         ((-x[i - 1] * gap + (step + gap) * x[i]) / step + n) as f32
                                             - buffer_in_pixels,
@@ -417,10 +423,10 @@ pub fn pullautin_cull_formlines_render_contours(
                             gap = 0.0;
                         }
                     } else {
-                        let mut n = -curvew - 0.5;
-                        while n < curvew + 0.5 {
-                            let mut m = -curvew - 0.5;
-                            while m < curvew + 0.5 {
+                        let mut n = -curvew - formline_padding;
+                        while n < curvew + formline_padding {
+                            let mut m = -curvew - formline_padding;
+                            while m < curvew + formline_padding {
                                 let start = (
                                     (x[i - 1] + n) as f32 - buffer_in_pixels,
                                     image_height as f32 + buffer_in_pixels + (y[i - 1] + m) as f32,
@@ -554,10 +560,10 @@ fn write_formline_shape_to_shapefile(
 }
 
 fn is_contour_depression(
-    (x_array, y_array, elevation): &(Vec<f64>, Vec<f64>, f64),
+    (x_array, y_array, elevation): &SmoothedContour,
     xstart: f64,
     ystart: f64,
-    avg_alt: &Vec<Vec<f64>>,
+    avg_alt: &[Vec<f64>],
     dem_cell_size: f64,
 ) -> bool {
     let is_closed = x_array.first() == x_array.last() && y_array.first() == y_array.last();
@@ -671,8 +677,10 @@ fn widest_scan_line_interval(
 
     intersections.sort_by(f64::total_cmp);
     intersections
-        .chunks_exact(2)
-        .map(|pair| (pair[0], pair[1]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&[start, end]| (start, end))
         .max_by(|(start1, end1), (start2, end2)| (end1 - start1).total_cmp(&(end2 - start2)))
 }
 
@@ -738,7 +746,7 @@ fn get_point_elevation_from_dem_bilinear_interpolation(
     xstart: f64,
     ystart: f64,
     dem_cell_size: f64,
-    avg_alt: &Vec<Vec<f64>>,
+    avg_alt: &[Vec<f64>],
 ) -> f64 {
     let poin_local_x = (x - xstart) / dem_cell_size;
     let poin_local_y = (y - ystart) / dem_cell_size;
@@ -775,7 +783,85 @@ fn get_point_elevation_from_dem_bilinear_interpolation(
 
 #[cfg(test)]
 mod tests {
-    use super::{find_interior_point, point_in_polygon};
+    use super::{find_interior_point, point_in_polygon, pullautin_cull_formlines_render_contours};
+    use crate::{
+        config::Config,
+        constants::{BUFFER, INCH},
+        tile::Tile,
+    };
+
+    #[test]
+    fn draws_contours_at_the_scale_and_width_of_the_dpi_resolution() {
+        let dir = tempfile::tempdir().unwrap();
+        let tile = Tile {
+            lidar_dir_path: dir.path().to_path_buf(),
+            render_dir_path: dir.path().to_path_buf(),
+            min_x: 900_000,
+            min_y: 6_400_000,
+            max_x: 900_100,
+            max_y: 6_400_100,
+        };
+        let buffer = BUFFER as f64;
+        let cells = (100 + 2 * BUFFER) / 2 + 2;
+        // Flat ground, where every form line is kept.
+        let avg_alt = vec![vec![0.0; cells]; cells];
+        // A line across the tile, 50 m north of its south edge.
+        let x: Vec<f64> = (0..=500)
+            .map(|i| tile.min_x as f64 - buffer + i as f64)
+            .collect();
+        let y = vec![tile.min_y as f64 + 50.0; x.len()];
+
+        let side = |dpi: f32| (100.0 * dpi / INCH) as u32;
+        // The rows of the widest column of the line at `elevation`, form
+        // lines having gaps.
+        let stroke_rows = |dpi: f32, elevation: f64| -> Vec<u32> {
+            let config = Config {
+                dpi_resolution: dpi,
+                ..Config::default()
+            };
+            let side = side(dpi);
+            pullautin_cull_formlines_render_contours(
+                &tile,
+                side,
+                side,
+                &config,
+                &avg_alt,
+                vec![(x.clone(), y.clone(), elevation)],
+            )
+            .unwrap();
+            let image = image::open(dir.path().join("contours.png"))
+                .unwrap()
+                .into_rgba8();
+            (0..side)
+                .map(|column| {
+                    (0..side)
+                        .filter(|&row| image.get_pixel(column, row)[3] > 0)
+                        .collect::<Vec<u32>>()
+                })
+                .max_by_key(Vec::len)
+                .unwrap()
+        };
+
+        // Index contour, contour and form line.
+        for (elevation, expected_widths) in [(25.0, [4, 7, 14]), (5.0, [2, 4, 8]), (2.5, [2, 4, 8])]
+        {
+            let mut widths = vec![];
+            for dpi in [300.0, 600.0, 1200.0] {
+                let rows = stroke_rows(dpi, elevation);
+                let center = rows.iter().sum::<u32>() as f32 / rows.len() as f32;
+                let expected = side(dpi) as f32 - 50.0 * dpi / INCH;
+                // The strokes are offset from -w to w - 1 pixels and
+                // truncated, which puts them up to 1.5 pixels north.
+                assert!(
+                    (center - expected).abs() < 2.0,
+                    "{elevation} m at {dpi} DPI: {rows:?}"
+                );
+                widths.push(rows.len());
+            }
+            // The same width on paper: 7 strokes at 600 DPI are about 0.3 mm.
+            assert_eq!(widths, expected_widths, "{elevation} m");
+        }
+    }
 
     #[test]
     fn finds_interior_point_for_large_contour_without_scanning_its_area() {

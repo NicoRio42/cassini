@@ -9,14 +9,19 @@ use shapefile::{
     Point, PolygonRing,
 };
 
+type Linestring = Vec<(f32, f32)>;
+
+/// The polygons and the edges built from the coastlines of a tile.
+type CoastlineShapes = (Vec<GenericPolygon<Point>>, Vec<GenericPolyline<Point>>);
+
 pub fn get_polygon_with_holes_from_coastlines(
-    coastlines: Vec<Vec<(f32, f32)>>,
-    islands: Vec<Vec<(f32, f32)>>,
+    coastlines: Vec<Linestring>,
+    islands: Vec<Linestring>,
     min_x: i64,
     min_y: i64,
     max_x: i64,
     max_y: i64,
-) -> Result<(Vec<GenericPolygon<Point>>, Vec<GenericPolyline<Point>>)> {
+) -> Result<CoastlineShapes> {
     let min_x = min_x as f32 - COASTLINE_EDGE_BUFFER;
     let min_y = min_y as f32 - COASTLINE_EDGE_BUFFER;
     let max_x = max_x as f32 + COASTLINE_EDGE_BUFFER;
@@ -39,7 +44,7 @@ pub fn get_polygon_with_holes_from_coastlines(
         island_rings.push(PolygonRing::Inner(points));
     }
 
-    if coastlines.len() != 0 {
+    if !coastlines.is_empty() {
         let (merged_linestrings, closed_merged_linestrings) =
             merge_and_filter_linestrings(coastlines, min_x, min_y, max_x, max_y);
 
@@ -54,7 +59,7 @@ pub fn get_polygon_with_holes_from_coastlines(
             island_rings.push(PolygonRing::Inner(points));
         }
 
-        if merged_linestrings.len() == 0 {
+        if merged_linestrings.is_empty() {
             return Ok((
                 vec![generate_square_polygon_with_islands(
                     island_rings,
@@ -114,19 +119,19 @@ pub fn get_polygon_with_holes_from_coastlines(
                             max_y,
                         ) {
                             CoastlineIndexOrTileVertexOrPolygonStart::TopRigth => {
-                                polygon.push((max_x as f32, max_y as f32));
+                                polygon.push((max_x, max_y));
                                 should_append_current_coastline = false;
                             }
                             CoastlineIndexOrTileVertexOrPolygonStart::BottomRigth => {
-                                polygon.push((max_x as f32, min_y as f32));
+                                polygon.push((max_x, min_y));
                                 should_append_current_coastline = false;
                             }
                             CoastlineIndexOrTileVertexOrPolygonStart::BottomLeft => {
-                                polygon.push((min_x as f32, min_y as f32));
+                                polygon.push((min_x, min_y));
                                 should_append_current_coastline = false;
                             }
                             CoastlineIndexOrTileVertexOrPolygonStart::TopLeft => {
-                                polygon.push((min_x as f32, max_y as f32));
+                                polygon.push((min_x, max_y));
                                 should_append_current_coastline = false;
                             }
                             CoastlineIndexOrTileVertexOrPolygonStart::CoastlineIndex(
@@ -203,7 +208,7 @@ fn generate_square_polygon_with_islands(
     let mut island_rings_copy = island_rings.clone();
     rings.append(&mut island_rings_copy);
 
-    return GenericPolygon::with_rings(rings);
+    GenericPolygon::with_rings(rings)
 }
 
 fn find_missing(first: &[usize], second: &[usize]) -> Option<usize> {
@@ -211,12 +216,12 @@ fn find_missing(first: &[usize], second: &[usize]) -> Option<usize> {
 }
 
 fn merge_and_filter_linestrings(
-    mut linestrings: Vec<Vec<(f32, f32)>>,
+    mut linestrings: Vec<Linestring>,
     min_x: f32,
     min_y: f32,
     max_x: f32,
     max_y: f32,
-) -> (Vec<Vec<(f32, f32)>>, Vec<Vec<(f32, f32)>>) {
+) -> (Vec<Linestring>, Vec<Linestring>) {
     loop {
         let len = linestrings.len();
         let mut merged = false;
@@ -266,8 +271,8 @@ fn merge_and_filter_linestrings(
 }
 
 fn try_to_merge_two_linestrings(
-    linestrings_1: &Vec<(f32, f32)>,
-    linestrings_2: &Vec<(f32, f32)>,
+    linestrings_1: &[(f32, f32)],
+    linestrings_2: &[(f32, f32)],
 ) -> Option<Vec<(f32, f32)>> {
     let linestring_1_first_point = linestrings_1[0];
     let linestring_2_first_point = linestrings_2[0];
@@ -277,20 +282,16 @@ fn try_to_merge_two_linestrings(
     if linestring_1_first_point.0 == linestring_2_last_point.0
         && linestring_1_first_point.1 == linestring_2_last_point.1
     {
-        let mut merged = linestrings_2.clone();
-        merged.append(&mut (linestrings_1.clone()));
-        return Some(merged);
+        return Some([linestrings_2, linestrings_1].concat());
     }
 
     if linestring_2_first_point.0 == linestring_1_last_point.0
         && linestring_2_first_point.1 == linestring_1_last_point.1
     {
-        let mut merged = linestrings_1.clone();
-        merged.append(&mut (linestrings_2.clone()));
-        return Some(merged);
+        return Some([linestrings_1, linestrings_2].concat());
     }
 
-    return None;
+    None
 }
 
 fn clip_linestrings(
@@ -349,10 +350,10 @@ fn clip_linestrings(
                 && !is_next_point_inside
                 && does_segment_intersect_tile(
                     (previous_point, next_point),
-                    min_x as f32,
-                    min_y as f32,
-                    max_x as f32,
-                    max_y as f32,
+                    min_x,
+                    min_y,
+                    max_x,
+                    max_y,
                 )
             {
                 if !has_first_point_outside_tile_been_set {
@@ -428,7 +429,7 @@ enum CoastlineIndexOrTileVertexOrPolygonStart {
 }
 
 fn get_next_coastline_index_or_tile_vertex(
-    remaining_coastlines: &Vec<Vec<(f32, f32)>>,
+    remaining_coastlines: &[Linestring],
     first_point_of_polygon: (f32, f32),
     last_point_of_last_coastline: (f32, f32),
     min_x: f32,
@@ -576,11 +577,11 @@ fn get_next_coastline_index_or_tile_vertex(
         return next_coastline_index_or_tile_vertex;
     }
 
-    return CoastlineIndexOrTileVertexOrPolygonStart::PolygonStart;
+    CoastlineIndexOrTileVertexOrPolygonStart::PolygonStart
 }
 
 fn is_inside_tile(point: (f32, f32), min_x: f32, min_y: f32, max_x: f32, max_y: f32) -> bool {
-    return point.0 >= min_x && point.0 <= max_x && point.1 >= min_y && point.1 <= max_y;
+    point.0 >= min_x && point.0 <= max_x && point.1 >= min_y && point.1 <= max_y
 }
 
 fn get_intersection_between_segment_and_tile(
@@ -609,15 +610,15 @@ fn get_intersection_between_segment_and_tile(
         intersections.push(pt);
     }
 
-    if intersections.len() == 0 {
+    if intersections.is_empty() {
         return None;
     }
 
-    return intersections.into_iter().min_by(|a, b| {
+    intersections.into_iter().min_by(|a, b| {
         let dist_a = (a.0 - p1.0).powi(2) + (a.1 - p1.1).powi(2);
         let dist_b = (b.0 - p1.0).powi(2) + (b.1 - p1.1).powi(2);
         dist_a.total_cmp(&dist_b)
-    });
+    })
 }
 
 fn get_segments_intersection(
@@ -635,7 +636,7 @@ fn get_segments_intersection(
     let t = ((p1.0 - p3.0) * (p3.1 - p4.1) - (p1.1 - p3.1) * (p3.0 - p4.0)) / denominator;
     let u = ((p1.0 - p3.0) * (p1.1 - p2.1) - (p1.1 - p3.1) * (p1.0 - p2.0)) / denominator;
 
-    if t >= 0.0 && t <= 1.0 && u >= 0.0 && u <= 1.0 {
+    if (0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u) {
         let intersection = (p1.0 + t * (p2.0 - p1.0), p1.1 + t * (p2.1 - p1.1));
 
         Some(intersection)
