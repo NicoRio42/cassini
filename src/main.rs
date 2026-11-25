@@ -26,6 +26,7 @@ mod pullautin_contours_render;
 mod pullautin_smooth_contours;
 mod render;
 mod tile;
+mod ui;
 mod vectorization;
 mod vectors;
 mod vegetation;
@@ -258,6 +259,20 @@ enum Commands {
 
     /// Output a default config.json file.
     Config,
+
+    /// Open a web page to select IGN LiDAR HD tiles on a map, download them
+    /// with their DEMs into `in`, and process them into `out`
+    Ui {
+        #[arg(
+            long,
+            help = "The port of the local web server, 0 for any free port",
+            default_value_t = 0
+        )]
+        port: u16,
+
+        #[arg(long, help = "Don't open the web page in the default browser")]
+        no_open: bool,
+    },
 }
 
 #[derive(clap::Args, Debug)]
@@ -490,6 +505,10 @@ fn run() -> Result<()> {
         match command {
             Commands::Config {} => {
                 default_config()?;
+            }
+
+            Commands::Ui { port, no_open } => {
+                ui::run_ui(port, !no_open)?;
             }
 
             Commands::Process {

@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cassini</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23000091'/%3E%3Ctext x='16' y='24' text-anchor='middle' font-family='sans-serif' font-size='24' fill='white'%3EC%3C/text%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.css" />
+    <link rel="stylesheet" href="/style.css" />
+    <script src="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.js"></script>
+  </head>
+  <body>
+    <header>
+      <strong>Cassini</strong>
+      <span>Topographic maps from IGN's LiDAR HD</span>
+    </header>
+    <main>
+      <div id="map"></div>
+      <aside id="panel">
+        <section>
+          <h2>Tile selection</h2>
+          <div class="modes" role="group" aria-label="Selection mode">
+            <button type="button" data-mode="click" class="active" disabled>Click</button>
+            <button type="button" data-mode="rectangle" disabled>Rectangle</button>
+            <button type="button" data-mode="polygon" disabled>Polygon</button>
+          </div>
+          <p class="hint" id="mode-hint"></p>
+          <p id="map-error" class="error" role="status" hidden></p>
+          <p id="selection-summary"></p>
+          <ul id="selection-list"></ul>
+          <button type="button" id="clear-selection" class="secondary" hidden>Clear selection</button>
+        </section>
+
+        <details id="options-section">
+          <summary>Options</summary>
+          <form id="options-form"></form>
+          <h3>Configuration</h3>
+          <p class="hint">Saved to <code>config.json</code> when Cassini is launched.</p>
+          <p id="config-error" class="error" hidden></p>
+          <form id="config-form"></form>
+          <button type="button" id="reset-config" class="secondary" disabled>Reset to defaults</button>
+        </details>
+
+        <button type="button" id="launch" class="primary" disabled>Launch Cassini</button>
+        <p id="message" class="error" role="alert" hidden></p>
+
+        <section id="job" hidden>
+          <h2>Job <span id="job-status" class="badge"></span></h2>
+          <div id="download" hidden>
+            <div class="bar"><div></div></div>
+            <p></p>
+          </div>
+          <pre id="logs"></pre>
+          <button type="button" id="cancel" class="danger" hidden>Cancel</button>
+        </section>
+
+        <section id="results" hidden>
+          <h2>Generated map</h2>
+          <p class="hint" id="results-summary"></p>
+          <label class="inline"><input type="checkbox" id="show-results" checked /> Show on the map</label>
+          <label>Opacity <input type="range" id="results-opacity" min="0" max="1" step="0.05" value="1" /></label>
+        </section>
+      </aside>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>
