@@ -96,6 +96,38 @@ cassini process ./path/to/my/tile.laz --dem ./path/to/my/dem.tif
 
 An IGN <GlossaryLink slug="dem" /> tile is offset by 25 cm from its <GlossaryLink slug="lidar" /> tile, so a single tile misses a 25 cm strip on its east and south edges, which Cassini interpolates. In batch mode, these strips come from the neighbouring tiles. Only the cells of the <GlossaryLink slug="dem" /> that intersect the tile are used, so a <GlossaryLink slug="dem" /> covering a larger area does not fill the buffer around the tile.
 
+## Vegetation layers
+
+By default, Cassini sorts the vegetation points into low, medium and high vegetation by their height above the ground, the <GlossaryLink slug="dem" /> of the tile. A single tile has no neighbours, so the <GlossaryLink slug="dem" /> holes near its edges are filled from the tile alone, and the heights there can differ slightly from a [batch](/guides/batch-mode) run. With an IGN <GlossaryLink slug="dem" />, only the 25 cm strips on its east and south edges differ.
+
+To use the vegetation classes of the <GlossaryLink slug="lidar" /> file instead, as Cassini did before version 0.19.0, add the `--vegetation-layers lidar-class` option to the `process` or the `lidar` subcommand. Check the [`--vegetation-layers` reference](/reference/cli-reference#--vegetation-layers) for the details.
+
+<Tabs syncKey="os">
+  <TabItem label="Windows" icon="seti:windows">
+
+```sh frame="none"
+cassini process path\to\my\tile.laz --vegetation-layers lidar-class
+```
+
+  </TabItem>
+  
+  <TabItem label="macOS" icon="apple">
+
+```sh frame="none"
+cassini process ./path/to/my/tile.laz --vegetation-layers lidar-class
+```
+
+  </TabItem>
+
+  <TabItem label="Linux" icon="linux">
+
+```sh frame="none"
+cassini process ./path/to/my/tile.laz --vegetation-layers lidar-class
+```
+
+  </TabItem>
+</Tabs>
+
 ## Export to OCAD
 
 To also get a map you can edit in <GlossaryLink slug="ocad" />, add the `--ocad` option to the `process` or the `render` subcommand. It writes a `full-map.ocd` file next to the PNG map, with the contours, vegetation, cliffs and vector features as editable objects. Check the [OCAD export options](/reference/cli-reference#ocad-export-options) to use your own symbol set or change how much the areas are simplified.
