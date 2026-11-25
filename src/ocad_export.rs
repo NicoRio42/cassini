@@ -1,6 +1,6 @@
 use crate::{
     error::{CassiniError, Result, ResultContext},
-    helpers::remove_if_exists,
+    files::remove_if_exists,
     map_features::{
         clip_line_part, clip_ring, get_polygon_areas, AreaSymbol, Extent, LineSymbol, MapFeature,
         PointSymbol,

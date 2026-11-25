@@ -15,9 +15,15 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # Pinned so that the lints of a new Rust release do not fail the build
+  # without a change. Bump it on purpose, with the Clippy fixes it needs.
+  RUST_TOOLCHAIN: "1.98.1"
 
 jobs:
   check:
+    # A pull request from a branch of this repository is already checked on
+    # push.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v6
@@ -25,8 +31,8 @@ jobs:
           persist-credentials: false
       - name: Install Rust with rustfmt and Clippy
         run: |
-          rustup toolchain install stable --profile minimal --component rustfmt,clippy
-          rustup default stable
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt,clippy
+          rustup default "$RUST_TOOLCHAIN"
       - name: Install the libraries Skia links against
         run: sudo apt-get update && sudo apt-get install --yes libfontconfig1-dev libfreetype6-dev
       - uses: Swatinem/rust-cache@v2

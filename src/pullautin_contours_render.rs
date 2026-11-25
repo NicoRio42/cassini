@@ -217,6 +217,8 @@ pub fn pullautin_cull_formlines_render_contours(
                 LineSymbol::FormLine103 => 1.5,
                 _ => 2.0,
             };
+        // Form lines are drawn half a pixel wider on each side at 600 DPI.
+        let formline_padding = 0.5 * pixel_scale;
 
         let mut smallringtest = false;
         let mut help = vec![false; x.len()];
@@ -395,10 +397,10 @@ pub fn pullautin_cull_formlines_render_contours(
                     if gap > 0.0 {
                         gap -= step;
                         if gap < 0.0 && onegapdone && step > 0.0 {
-                            let mut n = -curvew - 0.5;
-                            while n < curvew + 0.5 {
-                                let mut m = -curvew - 0.5;
-                                while m < curvew + 0.5 {
+                            let mut n = -curvew - formline_padding;
+                            while n < curvew + formline_padding {
+                                let mut m = -curvew - formline_padding;
+                                while m < curvew + formline_padding {
                                     let start = (
                                         ((-x[i - 1] * gap + (step + gap) * x[i]) / step + n) as f32
                                             - buffer_in_pixels,
@@ -421,10 +423,10 @@ pub fn pullautin_cull_formlines_render_contours(
                             gap = 0.0;
                         }
                     } else {
-                        let mut n = -curvew - 0.5;
-                        while n < curvew + 0.5 {
-                            let mut m = -curvew - 0.5;
-                            while m < curvew + 0.5 {
+                        let mut n = -curvew - formline_padding;
+                        while n < curvew + formline_padding {
+                            let mut m = -curvew - formline_padding;
+                            while m < curvew + formline_padding {
                                 let start = (
                                     (x[i - 1] + n) as f32 - buffer_in_pixels,
                                     image_height as f32 + buffer_in_pixels + (y[i - 1] + m) as f32,
@@ -678,7 +680,7 @@ fn widest_scan_line_interval(
         .as_chunks::<2>()
         .0
         .iter()
-        .map(|pair| (pair[0], pair[1]))
+        .map(|&[start, end]| (start, end))
         .max_by(|(start1, end1), (start2, end2)| (end1 - start1).total_cmp(&(end2 - start2)))
 }
 
@@ -801,43 +803,64 @@ mod tests {
         };
         let buffer = BUFFER as f64;
         let cells = (100 + 2 * BUFFER) / 2 + 2;
+        // Flat ground, where every form line is kept.
         let avg_alt = vec![vec![0.0; cells]; cells];
-        // An index contour across the tile, 50 m north of its south edge.
+        // A line across the tile, 50 m north of its south edge.
         let x: Vec<f64> = (0..=500)
             .map(|i| tile.min_x as f64 - buffer + i as f64)
             .collect();
         let y = vec![tile.min_y as f64 + 50.0; x.len()];
 
-        let mut widths = vec![];
-        for dpi in [300.0, 600.0] {
+        let side = |dpi: f32| (100.0 * dpi / INCH) as u32;
+        // The rows of the widest column of the line at `elevation`, form
+        // lines having gaps.
+        let stroke_rows = |dpi: f32, elevation: f64| -> Vec<u32> {
             let config = Config {
                 dpi_resolution: dpi,
                 ..Config::default()
             };
-            let side = (100.0 * dpi / INCH) as u32;
+            let side = side(dpi);
             pullautin_cull_formlines_render_contours(
                 &tile,
                 side,
                 side,
                 &config,
                 &avg_alt,
-                vec![(x.clone(), y.clone(), 25.0)],
+                vec![(x.clone(), y.clone(), elevation)],
             )
             .unwrap();
-
             let image = image::open(dir.path().join("contours.png"))
                 .unwrap()
                 .into_rgba8();
-            let rows: Vec<u32> = (0..side)
-                .filter(|&row| image.get_pixel(side / 2, row)[3] > 0)
-                .collect();
-            let center = rows.iter().sum::<u32>() as f32 / rows.len() as f32;
-            let expected = 50.0 * dpi / INCH;
-            assert!((center - expected).abs() < 1.5, "{dpi} DPI: {rows:?}");
-            widths.push(rows.len());
+            (0..side)
+                .map(|column| {
+                    (0..side)
+                        .filter(|&row| image.get_pixel(column, row)[3] > 0)
+                        .collect::<Vec<u32>>()
+                })
+                .max_by_key(Vec::len)
+                .unwrap()
+        };
+
+        // Index contour, contour and form line.
+        for (elevation, expected_widths) in [(25.0, [4, 7, 14]), (5.0, [2, 4, 8]), (2.5, [2, 4, 8])]
+        {
+            let mut widths = vec![];
+            for dpi in [300.0, 600.0, 1200.0] {
+                let rows = stroke_rows(dpi, elevation);
+                let center = rows.iter().sum::<u32>() as f32 / rows.len() as f32;
+                let expected = side(dpi) as f32 - 50.0 * dpi / INCH;
+                // The strokes are offset from -w to w - 1 pixels and
+                // truncated, which puts them up to 1.5 pixels north.
+                assert!(
+                    (center - expected).abs() < 2.0,
+                    "{elevation} m at {dpi} DPI: {rows:?}"
+                );
+                widths.push(rows.len());
+            }
+            // The same width on paper: 7 strokes at 600 DPI are about 0.3 mm.
+            assert_eq!(widths, expected_widths, "{elevation} m");
         }
-        // The 7 strokes of an index contour at 600 DPI, about 0.3 mm.
-        assert_eq!(widths, [4, 7]);
     }
 
     #[test]

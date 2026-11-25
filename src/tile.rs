@@ -4,6 +4,9 @@ use std::path::PathBuf;
 
 use crate::error::{CassiniError, Result, ResultContext, TileId};
 
+/// The file of the LiDAR output with the extent of the tile, written last.
+pub const EXTENT_FILE_NAME: &str = "extent.txt";
+
 #[derive(Debug, Clone)]
 pub struct TileWithNeighbors {
     pub laz_path: PathBuf,
@@ -38,7 +41,7 @@ impl From<&Tile> for TileId {
 pub fn get_extent_from_lidar_dir_path(
     lidar_dir_path: &std::path::Path,
 ) -> Result<(i64, i64, i64, i64)> {
-    let extent_file_path = lidar_dir_path.join("extent.txt");
+    let extent_file_path = lidar_dir_path.join(EXTENT_FILE_NAME);
     let mut file = File::open(&extent_file_path)
         .context(format!("could not open `{}`", extent_file_path.display()))?;
 
@@ -65,7 +68,7 @@ pub fn get_extent_from_lidar_dir_path(
 
     if parts[0] >= parts[2] || parts[1] >= parts[3] {
         return Err(CassiniError::InvalidArtifact {
-            path: lidar_dir_path.join("extent.txt"),
+            path: lidar_dir_path.join(EXTENT_FILE_NAME),
             message: "extent minimums must be smaller than maximums".to_owned(),
         });
     }

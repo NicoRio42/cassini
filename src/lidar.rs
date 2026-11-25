@@ -37,9 +37,10 @@ use crate::{
     dem::{fill_dem_with_buffer, write_dem_with_buffer, DEM_WITH_BUFFER_FILE_NAME},
     error::{CassiniError, Result, ResultContext, TileId},
     external_dem::read_external_dem,
+    files::{check_not_an_artifact, remove_artifacts},
     grid::{Compression, Grid, Sample},
-    helpers::remove_artifacts,
     point_reader::PointReader,
+    tile::EXTENT_FILE_NAME,
 };
 
 /// How the points are sorted into the low, medium and high vegetation
@@ -67,24 +68,29 @@ impl VegetationLayers {
 /// versions before 0.19.0 do not write it.
 pub const VEGETATION_LAYERS_FILE_NAME: &str = "vegetation_layers.txt";
 
+/// The DEM of the tile, without buffer, that the LiDAR stage writes.
+pub const DEM_FILE_NAME: &str = "dem.tif";
+
+/// The low, medium and high vegetation density rasters that the LiDAR stage
+/// writes.
+pub const VEGETATION_FILE_NAMES: [&str; 3] = [
+    "low_vegetation.tif",
+    "medium_vegetation.tif",
+    "high_vegetation.tif",
+];
+
 /// The files the LiDAR stage writes. Its output directory can hold other
 /// files, such as the LiDAR file itself, so only these are removed before a
 /// run. The OSM file is not one of them: it only depends on the tile extent
 /// and is slow to download.
-const LIDAR_STEP_FILES: [&str; 12] = [
+const LIDAR_STEP_FILES: [&str; 7] = [
     DEM_WITH_BUFFER_FILE_NAME,
-    "dem.tif",
-    "extent.txt",
-    "high_vegetation.tif",
-    "low_vegetation.tif",
-    "medium_vegetation.tif",
+    DEM_FILE_NAME,
+    EXTENT_FILE_NAME,
+    VEGETATION_FILE_NAMES[0],
+    VEGETATION_FILE_NAMES[1],
+    VEGETATION_FILE_NAMES[2],
     VEGETATION_LAYERS_FILE_NAME,
-    // Written by the versions that ran PDAL.
-    "dem-low-resolution.tif",
-    "high-vegetation.tif",
-    "low-vegetation.tif",
-    "medium-vegetation.tif",
-    "pipeline.json",
 ];
 
 /// How the vegetation densities of the LiDAR output in `lidar_dir_path` were
@@ -254,7 +260,12 @@ pub fn run_dem_pass(
         max_y,
     } = tile;
 
-    // Read before the output directory is cleaned, which may hold it.
+    // The output directory may hold the input files, which must survive the
+    // cleanup below. The DEM is read before it, in case its name is not one
+    // of an output.
+    for input in [Some(laz_path), dem_path].into_iter().flatten() {
+        check_not_an_artifact(input, output_dir_path, &LIDAR_STEP_FILES)?;
+    }
     let external_dem = dem_path
         .map(|dem_path| read_external_dem(dem_path, &tile))
         .transpose()?;
@@ -310,7 +321,7 @@ pub fn run_dem_pass(
         (None, Some(ground_dem)) => ground_dem.grid(),
         (None, None) => unreachable!("a tile without a DEM file has a ground DEM"),
     };
-    dem.write_geotiff(&output_dir_path.join("dem.tif"), Compression::Deflate)?;
+    dem.write_geotiff(&output_dir_path.join(DEM_FILE_NAME), Compression::Deflate)?;
     if with_vegetation {
         // A file without points has no voxel to thin, so any origin will do.
         let vegetation = vegetation.unwrap_or_else(|| {
@@ -453,11 +464,7 @@ fn write_vegetation(
     );
 
     let [low, medium, high] = grids;
-    for (grid, name) in [
-        (low, "low_vegetation.tif"),
-        (medium, "medium_vegetation.tif"),
-        (high, "high_vegetation.tif"),
-    ] {
+    for (grid, name) in [low, medium, high].into_iter().zip(VEGETATION_FILE_NAMES) {
         grid.write_geotiff(&output_dir_path.join(name), Compression::Deflate)?;
     }
 
@@ -466,7 +473,7 @@ fn write_vegetation(
         .context(format!("could not write `{}`", layers_path.display()))?;
 
     // Downstream tools use extent.txt as the completion marker, so write it last.
-    let extent_path = output_dir_path.join("extent.txt");
+    let extent_path = output_dir_path.join(EXTENT_FILE_NAME);
     let mut extent_file = File::create(&extent_path)
         .context(format!("could not create `{}`", extent_path.display()))?;
     extent_file
@@ -1365,15 +1372,15 @@ mod tests {
         write_tile(&laz_path, 0.0, 100.0, &POINTS);
         let tile = test_tile(output, 0.0);
         let osm_file_name = format!("{:0>7}_{:0>7}.osm", tile.min_x, tile.max_y);
-        let kept = ["config.json", "other.laz", &osm_file_name];
+        // `pipeline.json` was written by the versions that ran PDAL, but it
+        // can be the user's.
+        let kept = ["config.json", "other.laz", "pipeline.json", &osm_file_name];
         for name in kept {
             std::fs::write(output.join(name), name).unwrap();
         }
         std::fs::create_dir(output.join("data")).unwrap();
         std::fs::write(output.join("data/notes.txt"), "notes").unwrap();
-        // A previous run, in `LidarClass` mode with a filled DEM, by a
-        // version that ran PDAL.
-        std::fs::write(output.join("pipeline.json"), "{}").unwrap();
+        // A previous run, in `LidarClass` mode with a filled DEM.
         std::fs::write(output.join(DEM_WITH_BUFFER_FILE_NAME), "stale").unwrap();
         std::fs::write(output.join(VEGETATION_LAYERS_FILE_NAME), "lidar-class").unwrap();
 
@@ -1391,13 +1398,67 @@ mod tests {
             assert_eq!(std::fs::read_to_string(output.join(name)).unwrap(), name);
         }
         assert!(output.join("data/notes.txt").exists());
-        assert!(!output.join("pipeline.json").exists());
         assert!(!output.join(DEM_WITH_BUFFER_FILE_NAME).exists());
         assert_eq!(
             read_vegetation_layers(output).unwrap(),
             Some(VegetationLayers::Height)
         );
         assert!(output.join("dem.tif").exists());
+    }
+
+    #[test]
+    fn refuses_input_files_that_the_lidar_output_would_replace() {
+        use test_tiles::{write_tile, POINTS};
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path();
+        let laz_path = output.join("tile.laz");
+        write_tile(&laz_path, 0.0, 100.0, &POINTS);
+        std::fs::write(output.join(DEM_FILE_NAME), "the user's DEM").unwrap();
+
+        let error = generate_dem_and_vegetation_density_tiff_images_from_laz_file(
+            &laz_path,
+            Some(&output.join(DEM_FILE_NAME)),
+            output,
+            VegetationLayers::Height,
+            false,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("would be replaced"), "{error}");
+        assert_eq!(
+            std::fs::read_to_string(output.join(DEM_FILE_NAME)).unwrap(),
+            "the user's DEM"
+        );
+    }
+
+    #[test]
+    fn the_lidar_step_files_are_all_the_files_the_lidar_stage_writes() {
+        use test_tiles::{write_tile, POINTS};
+        let dir = tempfile::tempdir().unwrap();
+        let laz_path = dir.path().join("tile.laz");
+        write_tile(&laz_path, 0.0, 100.0, &POINTS);
+
+        for layers in [VegetationLayers::Height, VegetationLayers::LidarClass] {
+            for write_filled_dem in [true, false] {
+                let output = tempfile::tempdir().unwrap();
+                generate_dem_and_vegetation_density_tiff_images_from_laz_file(
+                    &laz_path,
+                    None,
+                    output.path(),
+                    layers,
+                    write_filled_dem,
+                )
+                .unwrap();
+
+                for entry in std::fs::read_dir(output.path()).unwrap() {
+                    let name = entry.unwrap().file_name();
+                    assert!(
+                        LIDAR_STEP_FILES.iter().any(|listed| name == *listed),
+                        "{name:?} is not in `LIDAR_STEP_FILES`"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

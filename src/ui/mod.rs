@@ -26,7 +26,7 @@ use tiny_http::{Header, Method, Request, Response, Server};
 use crate::{
     config::Config,
     error::{CassiniError, Result, ResultContext},
-    helpers::{is_input_file, LAZ_EXTENSIONS},
+    files::{is_input_file, LAZ_EXTENSIONS},
     projection::lambert93_to_wgs84,
 };
 use ign::{tiles_in_geometry, Geometry, IgnTile};
