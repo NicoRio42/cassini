@@ -1,0 +1,303 @@
+:root {
+  --blue: #000091;
+  --blue-hover: #1212ff;
+  --blue-light: #e3e3fd;
+  --red: #c9191e;
+  --text: #161616;
+  --muted: #666;
+  --border: #ddd;
+  --header: #1e1e1e;
+  --panel: #fff;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: var(--text);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--panel);
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+header {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  padding: 0.9rem 1.25rem;
+  background: var(--header);
+  color: #fff;
+}
+
+header strong {
+  font-size: 1.3rem;
+}
+
+header span {
+  color: #bbb;
+}
+
+main {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+#map {
+  flex: 1;
+  min-width: 0;
+}
+
+#map.drawing .maplibregl-canvas-container {
+  cursor: crosshair;
+}
+
+#panel {
+  width: 420px;
+  overflow-y: auto;
+  padding: 1.25rem 1.5rem 2rem;
+  border-left: 1px solid var(--border);
+}
+
+h2 {
+  font-size: 1.25rem;
+  margin: 0 0 0.75rem;
+}
+
+h3 {
+  font-size: 1rem;
+  margin: 1.25rem 0 0.25rem;
+}
+
+section {
+  margin-bottom: 1.5rem;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+  border-radius: 0.25rem;
+  padding: 0.5rem 0.9rem;
+  border: 1px solid var(--blue);
+  background: #fff;
+  color: var(--blue);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+button.primary {
+  width: 100%;
+  background: var(--blue);
+  color: #fff;
+  font-weight: 600;
+  padding: 0.75rem;
+}
+
+button.primary:not(:disabled):hover {
+  background: var(--blue-hover);
+}
+
+button.danger {
+  border-color: var(--red);
+  color: var(--red);
+}
+
+.modes {
+  display: flex;
+}
+
+.modes button {
+  flex: 1;
+  border-radius: 0;
+}
+
+.modes button:first-child {
+  border-radius: 0.25rem 0 0 0.25rem;
+}
+
+.modes button:last-child {
+  border-radius: 0 0.25rem 0.25rem 0;
+}
+
+.modes button + button {
+  border-left: none;
+}
+
+.modes button.active {
+  background: var(--blue);
+  color: #fff;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.error {
+  color: var(--red);
+  font-size: 0.875rem;
+  white-space: pre-wrap;
+}
+
+#selection-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 0.75rem;
+  max-height: 14rem;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+}
+
+#selection-list:empty {
+  display: none;
+}
+
+#selection-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.3rem 0.6rem;
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+#selection-list li + li {
+  border-top: 1px solid var(--border);
+}
+
+#selection-list li span {
+  color: var(--muted);
+}
+
+#selection-list li button {
+  border: none;
+  padding: 0 0.4rem;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+details {
+  margin-bottom: 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+  padding: 0.6rem 0.9rem;
+}
+
+summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+form label,
+#results label {
+  display: block;
+  margin: 0.6rem 0;
+  font-size: 0.9rem;
+}
+
+form label small {
+  display: block;
+  color: var(--muted);
+}
+
+form input:not([type="checkbox"]),
+form select {
+  display: block;
+  width: 100%;
+  margin-top: 0.2rem;
+  padding: 0.4rem;
+  font: inherit;
+  border: 1px solid #bbb;
+  border-radius: 0.25rem;
+}
+
+label.inline input,
+form label.inline input {
+  display: inline;
+  width: auto;
+  margin: 0 0.4rem 0 0;
+}
+
+.badge {
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  border-radius: 1rem;
+  background: var(--blue-light);
+  color: var(--blue);
+  vertical-align: middle;
+}
+
+.badge.failed,
+.badge.cancelled {
+  background: #fee;
+  color: var(--red);
+}
+
+.badge.done {
+  background: #dffee6;
+  color: #18753c;
+}
+
+.bar {
+  height: 0.5rem;
+  background: var(--blue-light);
+  border-radius: 0.25rem;
+  overflow: hidden;
+}
+
+.bar div {
+  height: 100%;
+  width: 0;
+  background: var(--blue);
+}
+
+#download p {
+  font-size: 0.85rem;
+  margin: 0.3rem 0 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+#logs {
+  height: 16rem;
+  overflow: auto;
+  margin: 0 0 0.75rem;
+  padding: 0.5rem;
+  font-size: 0.72rem;
+  background: #f6f6f6;
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+}
+
+#message {
+  margin-top: 0.75rem;
+}
+
+@media (max-width: 800px) {
+  main {
+    flex-direction: column;
+  }
+
+  #map {
+    flex: none;
+    height: 60vh;
+  }
+
+  #panel {
+    width: 100%;
+    border-left: none;
+    padding: 1rem 16px 2rem;
+  }
+}
