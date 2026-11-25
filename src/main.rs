@@ -10,6 +10,7 @@ mod contour_shapefile;
 mod contours;
 mod dem;
 mod download;
+mod external_dem;
 mod fill_nodata;
 mod helpers;
 mod lidar;
@@ -73,6 +74,13 @@ enum Commands {
 
         #[arg(
             long,
+            value_name = "FILE",
+            help = "A GeoTIFF DEM in Lambert-93 to use instead of computing the DEM from the ground points, such as an IGN MNT LiDAR HD tile"
+        )]
+        dem: Option<PathBuf>,
+
+        #[arg(
+            long,
             short,
             help = "The output directory for the processed LiDAR file",
             default_value = "tile"
@@ -110,6 +118,13 @@ enum Commands {
     Lidar {
         #[arg(help = "The path to the LiDAR file to process")]
         file_path: String,
+
+        #[arg(
+            long,
+            value_name = "FILE",
+            help = "A GeoTIFF DEM in Lambert-93 to use instead of computing the DEM from the ground points, such as an IGN MNT LiDAR HD tile. The LiDAR file is then read for the vegetation only"
+        )]
+        dem: Option<PathBuf>,
 
         #[arg(
             long,
@@ -269,13 +284,17 @@ fn parse_simplify_tolerance(value: &str) -> std::result::Result<f64, String> {
 
 fn process_single_tile(
     file_path: &Path,
+    dem_path: Option<&Path>,
     output_dir_path: &Path,
     options: RenderOptions,
 ) -> Result<()> {
     let config = get_config(None)?;
 
-    let extent =
-        generate_dem_and_vegetation_density_tiff_images_from_laz_file(file_path, output_dir_path)?;
+    let extent = generate_dem_and_vegetation_density_tiff_images_from_laz_file(
+        file_path,
+        dem_path,
+        output_dir_path,
+    )?;
     let tile = Tile {
         lidar_dir_path: output_dir_path.to_path_buf(),
         render_dir_path: output_dir_path.to_path_buf(),
@@ -294,6 +313,7 @@ fn process_single_tile(
 
 fn process_single_tile_lidar_step(
     file_path: &Path,
+    dem_path: Option<&Path>,
     output_dir_path: &Path,
     config_path: Option<&Path>,
 ) -> Result<()> {
@@ -301,8 +321,12 @@ fn process_single_tile_lidar_step(
         get_config(config_path)?;
     }
 
-    generate_dem_and_vegetation_density_tiff_images_from_laz_file(file_path, output_dir_path)
-        .map(|_| ())
+    generate_dem_and_vegetation_density_tiff_images_from_laz_file(
+        file_path,
+        dem_path,
+        output_dir_path,
+    )
+    .map(|_| ())
 }
 
 fn process_single_tile_render_step(
@@ -437,6 +461,7 @@ fn run() -> Result<()> {
 
             Commands::Process {
                 file_path,
+                dem,
                 output_dir: maybe_output_dir,
                 skip_vector,
                 skip_520,
@@ -458,7 +483,7 @@ fn run() -> Result<()> {
                 let output_dir = maybe_output_dir.unwrap_or("tile".to_owned());
                 let laz_path = Path::new(&file_path).to_path_buf();
                 let dir_path = Path::new(&output_dir).to_path_buf();
-                process_single_tile(&laz_path, &dir_path, options)?;
+                process_single_tile(&laz_path, dem.as_deref(), &dir_path, options)?;
 
                 let duration = start.elapsed();
                 info!("Tile generated in {:.1?}", duration);
@@ -466,6 +491,7 @@ fn run() -> Result<()> {
 
             Commands::Lidar {
                 file_path,
+                dem,
                 output_dir: maybe_output_dir,
                 config,
             } => {
@@ -475,7 +501,12 @@ fn run() -> Result<()> {
                 let output_dir = maybe_output_dir.unwrap_or("lidar".to_owned());
                 let laz_path = Path::new(&file_path).to_path_buf();
                 let dir_path = Path::new(&output_dir).to_path_buf();
-                process_single_tile_lidar_step(&laz_path, &dir_path, config.as_deref())?;
+                process_single_tile_lidar_step(
+                    &laz_path,
+                    dem.as_deref(),
+                    &dir_path,
+                    config.as_deref(),
+                )?;
 
                 let duration = start.elapsed();
                 info!("LiDAR file processed in {:.1?}", duration);
@@ -639,6 +670,25 @@ mod tests {
                 Some(PathBuf::from("custom.json"))
             );
         }
+    }
+
+    #[test]
+    fn dem_option_is_optional_for_lidar_and_process() {
+        let dem = |command: &str, options: &[&str]| {
+            let args = ["cassini", command, "input"]
+                .into_iter()
+                .chain(options.iter().copied());
+            match Args::try_parse_from(args).unwrap().command.unwrap() {
+                Commands::Lidar { dem, .. } | Commands::Process { dem, .. } => dem,
+                _ => panic!("unexpected command"),
+            }
+        };
+        let dem_file = Some(PathBuf::from("dem.tif"));
+        assert_eq!(dem("lidar", &["--dem", "dem.tif"]), dem_file);
+        assert_eq!(dem("process", &["--dem", "dem.tif"]), dem_file);
+        assert_eq!(dem("lidar", &[]), None);
+        assert_eq!(dem("process", &[]), None);
+        assert!(Args::try_parse_from(["cassini", "render", "input", "--dem", "dem.tif"]).is_err());
     }
 
     #[test]

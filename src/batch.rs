@@ -2,6 +2,7 @@ use crate::{
     config::Config,
     download::download_osm_file,
     error::{CassiniError, Result, ResultContext, Stage, TileId},
+    grid::GridExtent,
     helpers::remove_if_exists,
     lidar::{generate_dem_and_vegetation_density_tiff_images_from_laz_file, read_tile_id},
     merge::merge_maps,
@@ -14,7 +15,7 @@ use crate::{
     render::{cleanup_render_step_files, render_tile_map, RenderOptions},
     tile::{Tile, TileWithNeighbors},
 };
-use log::info;
+use log::{info, warn};
 use std::{
     collections::HashMap,
     fs::read_dir,
@@ -49,11 +50,21 @@ pub fn batch(
         });
     }
 
-    let tiles = get_tiles_with_neighbors(input_dir, output_dir)?;
+    // With `--skip-lidar`, the DEMs are the `dem.tif` files of the previous run.
+    let tiles = get_tiles_with_neighbors(input_dir, output_dir, !skip_lidar)?;
     if tiles.is_empty() {
         return Err(CassiniError::InvalidInput {
             message: format!("no LAZ files were found in `{input_dir}`"),
         });
+    }
+    if skip_lidar {
+        let ignored = geotiff_paths(input_dir)?.len();
+        if ignored > 0 {
+            warn!(
+                "Ignoring the {ignored} GeoTIFF files of `{input_dir}` with `--skip-lidar`: the \
+                 DEMs are those of the previous run"
+            );
+        }
     }
 
     let tiles_arc = Arc::new(tiles.clone());
@@ -100,6 +111,7 @@ pub fn batch(
 
                         generate_dem_and_vegetation_density_tiff_images_from_laz_file(
                             &tile.laz_path,
+                            tile.dem_path.as_deref(),
                             &tile.tile.lidar_dir_path,
                         )
                         .map(|_| ())
@@ -256,9 +268,12 @@ fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
     }
 }
 
+/// The tiles of the LAZ files of `input_dir`, with their DEM files from
+/// `input_dir` if `use_dem_files` (see `find_dems`).
 pub fn get_tiles_with_neighbors(
     input_dir: &str,
     output_dir: &str,
+    use_dem_files: bool,
 ) -> Result<Vec<TileWithNeighbors>> {
     let paths =
         read_dir(input_dir).context(format!("could not read input directory `{input_dir}`"))?;
@@ -292,6 +307,21 @@ pub fn get_tiles_with_neighbors(
             None => {}
         }
     }
+
+    let mut dems = if use_dem_files {
+        let tile_ids: Vec<TileId> = tiles_map
+            .keys()
+            .map(|&(min_x, min_y, max_x, max_y)| TileId {
+                min_x,
+                min_y,
+                max_x,
+                max_y,
+            })
+            .collect();
+        find_dems(input_dir, &tile_ids)?
+    } else {
+        HashMap::new()
+    };
 
     for ((min_x, min_y, max_x, max_y), laz_path) in tiles_map.clone().into_iter() {
         let width = max_x - min_x;
@@ -381,12 +411,116 @@ pub fn get_tiles_with_neighbors(
 
         tiles.push(TileWithNeighbors {
             laz_path,
+            dem_path: dems.remove(&TileId::from(&tile)),
             tile,
             neighbors,
         })
     }
 
     Ok(tiles)
+}
+
+/// The GeoTIFF files (`.tif` or `.tiff`, in any case) of `input_dir`, sorted,
+/// without hidden files such as the `._*` files macOS writes on some drives.
+fn geotiff_paths(input_dir: &str) -> Result<Vec<PathBuf>> {
+    let mut paths = vec![];
+    for dir_entry in
+        read_dir(input_dir).context(format!("could not read input directory `{input_dir}`"))?
+    {
+        let path = dir_entry
+            .context(format!("could not read an entry in `{input_dir}`"))?
+            .path();
+        let is_hidden = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with('.'));
+        let is_tiff = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| {
+                extension.eq_ignore_ascii_case("tif") || extension.eq_ignore_ascii_case("tiff")
+            });
+        if is_tiff && !is_hidden && path.is_file() {
+            paths.push(path);
+        }
+    }
+    // For the same errors and warnings whatever the directory order.
+    paths.sort();
+    Ok(paths)
+}
+
+/// The DEM of each of `tiles` that has one: the GeoTIFF file of `input_dir`
+/// whose extent's centre is in the tile. Matching by extent rather than by
+/// file name lets renamed files work, and IGN's DEM tiles, offset by a
+/// quarter metre, match their LiDAR tiles.
+///
+/// A GeoTIFF file that is not a DEM in Lambert-93, such as an orthophoto, is
+/// ignored with a warning, as is a DEM centred in no tile. Two DEMs centred
+/// in the same tile are an error.
+fn find_dems(input_dir: &str, tiles: &[TileId]) -> Result<HashMap<TileId, PathBuf>> {
+    let mut dems = HashMap::<TileId, PathBuf>::new();
+    for dem_path in geotiff_paths(input_dir)? {
+        let extent = match GridExtent::read_geotiff(&dem_path) {
+            Ok(extent) => extent,
+            Err(error) => {
+                warn!(
+                    "`{}` is not a DEM Cassini can read, ignoring it: {error}",
+                    dem_path.display()
+                );
+                continue;
+            }
+        };
+        let centre_x = (extent.min_x + extent.max_x()) / 2.0;
+        let centre_y = (extent.min_y() + extent.max_y) / 2.0;
+        let Some(&tile) = tiles.iter().find(|tile| {
+            (tile.min_x as f64..tile.max_x as f64).contains(&centre_x)
+                && (tile.min_y as f64..tile.max_y as f64).contains(&centre_y)
+        }) else {
+            warn!(
+                "DEM `{}` is centred on ({centre_x}, {centre_y}), in no LiDAR tile, ignoring it",
+                dem_path.display()
+            );
+            continue;
+        };
+        if let Some(previous) = dems.get(&tile) {
+            return Err(CassiniError::InvalidInput {
+                message: format!(
+                    "DEMs `{}` and `{}` are both centred in tile {tile}",
+                    previous.display(),
+                    dem_path.display(),
+                ),
+            });
+        }
+        dems.insert(tile, dem_path);
+    }
+
+    if !dems.is_empty() {
+        info!(
+            "Using the DEMs of `{input_dir}` for {} of the {} tiles",
+            dems.len(),
+            tiles.len()
+        );
+        let mut without_dem: Vec<&TileId> = tiles
+            .iter()
+            .filter(|tile| !dems.contains_key(tile))
+            .collect();
+        if !without_dem.is_empty() {
+            without_dem.sort_by_key(|tile| (tile.min_x, tile.min_y));
+            warn!(
+                "No DEM in `{input_dir}` for {} of the {} tiles, whose DEM is computed from the \
+                 ground points instead: {}. The contours may show seams between the two kinds \
+                 of DEM",
+                without_dem.len(),
+                tiles.len(),
+                without_dem
+                    .iter()
+                    .map(|tile| tile.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+    }
+    Ok(dems)
 }
 
 fn get_neighbor_tile_from_hash_map(
@@ -407,10 +541,77 @@ fn get_neighbor_tile_from_hash_map(
 
 #[cfg(test)]
 mod tests {
-    use super::batch;
+    use super::{batch, find_dems};
     use crate::{
-        config::Config, error::CassiniError, render::RenderOptions, vegetation::UndergrowthMode,
+        config::Config,
+        error::{CassiniError, TileId},
+        grid::{Compression, Grid},
+        render::RenderOptions,
+        vegetation::UndergrowthMode,
     };
+    use std::{collections::HashMap, path::Path};
+
+    /// The 1 km tile with its south-west corner at (`min_x`, `min_y`).
+    fn tile(min_x: i64, min_y: i64) -> TileId {
+        TileId {
+            min_x,
+            min_y,
+            max_x: min_x + 1000,
+            max_y: min_y + 1000,
+        }
+    }
+
+    /// Writes a 1 km DEM of 0.5 m cells to `path`, offset by a quarter metre
+    /// from the tile with its south-west corner at (`min_x`, `min_y`), as
+    /// IGN's are.
+    fn write_dem(path: &Path, min_x: f64, min_y: f64) {
+        Grid::new(
+            min_x - 0.25,
+            min_y + 1000.25,
+            0.5,
+            2000,
+            2000,
+            Some(-9999.0),
+            0.0f32,
+        )
+        .write_geotiff(path, Compression::None)
+        .unwrap();
+    }
+
+    #[test]
+    fn finds_the_dems_of_the_tiles_containing_their_centre() {
+        let dir = tempfile::tempdir().unwrap();
+        let input_dir = dir.path().to_str().unwrap();
+        let tiles = [tile(0, 0), tile(1000, 0), tile(0, 1000)];
+        // Names unrelated to the tiles, and upper case extensions.
+        write_dem(&dir.path().join("b.TIF"), 0.0, 0.0);
+        write_dem(&dir.path().join("a.tiff"), 1000.0, 0.0);
+        // A DEM matching no tile, files that are not DEMs, and a hidden copy
+        // of a DEM, as macOS writes them.
+        write_dem(&dir.path().join("far.tif"), 5000.0, 0.0);
+        std::fs::write(dir.path().join("notes.txt"), "not a DEM").unwrap();
+        std::fs::create_dir(dir.path().join("folder.tif")).unwrap();
+        std::fs::write(dir.path().join("broken.tif"), "not a GeoTIFF").unwrap();
+        write_dem(&dir.path().join(".hidden.tif"), 0.0, 1000.0);
+
+        assert_eq!(
+            find_dems(input_dir, &tiles).unwrap(),
+            HashMap::from([
+                (tile(0, 0), dir.path().join("b.TIF")),
+                (tile(1000, 0), dir.path().join("a.tiff")),
+            ])
+        );
+
+        // Two DEMs for one tile.
+        write_dem(&dir.path().join("c.tif"), 0.0, 0.0);
+        let error = find_dems(input_dir, &[tile(0, 0)]).unwrap_err();
+        assert!(matches!(error, CassiniError::InvalidInput { .. }));
+        let message = error.to_string();
+        assert!(
+            message.contains("b.TIF") && message.contains("c.tif"),
+            "{message}"
+        );
+    }
 
     #[test]
     fn rejects_zero_threads_before_reading_input() {

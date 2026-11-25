@@ -7,6 +7,9 @@ use crate::error::{CassiniError, Result, ResultContext, TileId};
 #[derive(Debug, Clone)]
 pub struct TileWithNeighbors {
     pub laz_path: PathBuf,
+    /// The DEM file to use instead of computing the DEM from the ground
+    /// points.
+    pub dem_path: Option<PathBuf>,
     pub tile: Tile,
     pub neighbors: Vec<PathBuf>,
 }

@@ -64,6 +64,38 @@ cassini render ./tile
   </TabItem>
 </Tabs>
 
+## Use an IGN DEM
+
+To use an IGN MNT LiDAR HD tile instead of computing the <GlossaryLink slug="dem" /> from the ground points, pass it with the `--dem` option. Check the [batch guide](/guides/batch-mode#use-ign-dems) to learn how to download it.
+
+<Tabs syncKey="os">
+  <TabItem label="Windows" icon="seti:windows">
+
+```sh frame="none"
+cassini process path\to\my\tile.laz --dem path\to\my\dem.tif
+```
+
+  </TabItem>
+  
+  <TabItem label="macOS" icon="apple">
+
+```sh frame="none"
+cassini process ./path/to/my/tile.laz --dem ./path/to/my/dem.tif
+```
+
+  </TabItem>
+
+  <TabItem label="Linux" icon="linux">
+
+```sh frame="none"
+cassini process ./path/to/my/tile.laz --dem ./path/to/my/dem.tif
+```
+
+  </TabItem>
+</Tabs>
+
+An IGN <GlossaryLink slug="dem" /> tile is offset by 25 cm from its <GlossaryLink slug="lidar" /> tile, so a single tile misses a 25 cm strip on its east and south edges, which Cassini interpolates. In batch mode, these strips come from the neighbouring tiles. Only the cells of the <GlossaryLink slug="dem" /> that intersect the tile are used, so a <GlossaryLink slug="dem" /> covering a larger area does not fill the buffer around the tile.
+
 ## Export to OCAD
 
 To also get a map you can edit in <GlossaryLink slug="ocad" />, add the `--ocad` option to the `process` or the `render` subcommand. It writes a `full-map.ocd` file next to the PNG map, with the contours, vegetation, cliffs and vector features as editable objects. Check the [OCAD export options](/reference/cli-reference#ocad-export-options) to use your own symbol set or change how much the areas are simplified.

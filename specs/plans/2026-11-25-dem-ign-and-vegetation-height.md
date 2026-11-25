@@ -29,7 +29,7 @@ Three changes, each one changing the render, so each is measured on its own:
 | Step | Title | Depends on | Status |
 |---|---|---|---|
 | 1 | 0.5 m DEM from the ground points | – | Done |
-| 2 | IGN DEM input (`lidar`, `process`, `batch`) | 1 | Not started |
+| 2 | IGN DEM input (`lidar`, `process`, `batch`) | 1 | Done |
 | 3 | Vegetation layers from height above ground | 2 | Not started |
 
 ## Shared context
@@ -126,7 +126,7 @@ Leave every vegetation and cliff threshold in [config.rs](../../src/config.rs) u
 
 ## Step 2 — IGN DEM input
 
-**Goal:** use an IGN DEM instead of computing the DEM from the points: given explicitly to `lidar` (required) and `process` (optional), and found in the input directory by `batch`.
+**Goal:** use an IGN DEM instead of computing the DEM from the points: given explicitly to `lidar` and `process` (optional for both since the step 2 review), and found in the input directory by `batch`.
 
 **Tasks**
 
@@ -136,12 +136,12 @@ Leave every vegetation and cliff threshold in [config.rs](../../src/config.rs) u
    - Write it to the LiDAR output directory as `dem.tif` **on its own grid**, unchanged apart from Float32 and Deflate (user's decision: the DEM goes in the output). Do not resample it onto the tile grid: the strips on the east and south of the tile come from the neighbours' DEMs at the mosaic step, and resampling each DEM onto its own tile would lose them.
    - Error if it doesn't overlap the tile. Warn if it leaves more than one cell's width of the tile uncovered.
 3. **Commands:**
-   - `lidar --dem <file>`: **required**. The points are read for the vegetation only; the ground DEM is not computed.
+   - `lidar --dem <file>`: **required** (optional since the step 2 review). The points are read for the vegetation only; the ground DEM is not computed.
    - `process --dem <file>`: optional. Without it, the DEM comes from the points as in step 1.
    - `render`: unchanged. It mosaics and fills the `dem.tif` of the tile and its `-n` neighbours, whatever their source.
 4. **`batch` finds the DEMs in its input directory:**
    - Read the GeoTIFF extent of every `.tif`/`.tiff` file next to the `.laz` files (case-insensitive extension). Match each DEM to the LAZ tile that contains its extent's centre, not by file name, so renamed files still work.
-   - Two DEMs for one tile: error. A DEM matching no tile: warning, ignored. A DEM that fails to read or isn't Lambert-93: error naming the file.
+   - Two DEMs for one tile: error. A DEM matching no tile: warning, ignored. A DEM that fails to read or isn't Lambert-93: error naming the file (a warning since the step 2 review).
    - Tiles with a DEM skip the ground DEM accumulation. Tiles without one compute it from the points. A batch mixing both works, with one warning listing the tiles without a DEM: seams between the two kinds of DEM may show in the contours.
    - `--skip-lidar` uses the `dem.tif` of the previous run, as now.
 5. **Docs:** how to download IGN DEM tiles (the URL template above), dropping them in the input directory, `--dem` on `lidar`/`process`, and the 0.25 m shift. CLI reference. Record the new `lidar` CLI in the notes for mapant.
@@ -239,3 +239,33 @@ _Each session appends findings here: decisions, measured differences, timings, s
 - **Review fixes:** `MAX_TILE_SIDE` lowered from 10 km to 5 km (the DEM accumulators take 64 MB per km² over the header bounds, 4× the 1 m DEM). `VEGETATION_BLOCK_SIZE` is now an `f64` used everywhere (no more `1.0` literal in `vegetation.rs`). The fill log counts only the cells inside the tile.
 - **Docs:** `what-and-why.mdx` (DEM cells are 0.5 m, vegetation 1 m, and the 1 m fallback) and the two cliff thresholds in `configuration-reference.mdx`, which said "one meter by one meter cell" although the slopes have always been 0.5 m.
 
+### Step 2 (branch `dem-vegetation/step-2-ign-dem`, cut from `develop`)
+
+- **IGN file** (WMS GetMap of the plan's template, 4 tiles each for poussebout and arselle in `in-poussebout-ign/` and `in-arselle-ign/`, LAZ symlinked): Float32, uncompressed strips, 2000×2000, nodata `-9999` (GDAL_NODATA tag ` -9999`), 100% valid cells, PixelIsArea, tiepoint at (min_x − 0.25, max_y + 0.25) as the plan says. **No vertical CRS key.** `ProjectedCSTypeGeoKey` is **32767 (user-defined)**: the GeoKeys spell out Lambert-93 (`ProjCoordTransGeoKey` 8 = LCC 2SP, parallels 49/44, false origin 3°/46.5°, 700000/6600000 in GeoDoubleParams, metres) with a citation `EPSG:2154|` and an unknown datum (gdalinfo: "unretrievable - using WGS84").
+- **`Grid::read_geotiff`** already accepted any user-defined CRS. It is now stricter: a user-defined CRS with a projection must be LCC 2SP with Lambert-93's six parameters (false or natural origin keys) and metres; one without a projection, or no CRS key, is still assumed to be Lambert-93. New `GridExtent::read_geotiff` reads the georeferencing without decoding the cells (for `batch`'s matching).
+- **Code:** [external_dem.rs](../../src/external_dem.rs) reads the DEM as `f32` (any square cell size; a DEM without nodata gets -9999), errors if it doesn't overlap the tile, warns if a side is uncovered by more than one of its cells. [lidar.rs](../../src/lidar.rs) reads it before cleaning the output directory, skips the ground accumulation (`TileRasters::ground_dem` is an `Option<GroundDem>`) and writes the DEM unchanged as `dem.tif`, Deflate, on its own grid. `batch` matches each `.tif`/`.tiff` (case-insensitive) of the input directory to the tile containing its extent's centre (`assign_dems` in [batch.rs](../../src/batch.rs)); not done with `--skip-lidar`. `render` and the mosaic are unchanged: a test in [buffer.rs](../../src/buffer.rs) checks the tie rule on half-cell-offset sources (last column and row from the east and south neighbours).
+- **CLI change for mapant:** `cassini lidar <laz> [--dem <dem.tif>] [-o dir] [-C config]`: `--dem` is optional (it was required before the review, below). mapant's `lidar fix` can pass the downloaded IGN tile instead of replacing `dem.tif` afterwards (the 2-decimal quantization is no longer needed; `dem.tif` is the IGN tile, about 12.5 MB Deflate). `process` takes an optional `--dem`. `render` and `batch` options unchanged.
+- **Acceptance:** full batches with `PATH=/nonexistent` on both datasets (binary `out-baseline/cassini-dem-step2-ign`, outputs `out-ign-<dataset>`, from copies of `out-dem-step1-fallback-<dataset>`): every `dem.tif` is cell-for-cell its IGN download (type, nodata, extent, values); vegetation rasters byte-identical to step 1. Mixed batch (`in-poussebout-mixed/`, IGN DEMs for 907000_6455000, renamed `renamed-dem.TIFF`, and 908000_6454000): one warning listing the two other tiles, their `dem.tif` identical to step 1's. `lidar` without `--dem` is a clap error; with another tile's DEM, "outside tile" error. `cargo test` green.
+- **Fill:** inside the batch, the interior tile has no cell left to fill, edge tiles 2000 (the east or south strip), the south-east corner tile 3999. Fill 0.26–0.28 s per tile.
+- **Timings:** LiDAR stage per tile with an IGN DEM 6.1–7.1 s (poussebout), 4.5–6.8 s (arselle), the same as step 1: decompression dominates. Full batch 20.4 s / 18.2 s. Single `lidar --dem` on one tile 4.2 s.
+- **`dem_with_buffer.tif`, step 1 points DEM vs IGN, cells of the tile** (mean / p99 / max absolute difference, m):
+  - poussebout 907000_6454000 0.21 / 1.45 / 43.1, 907000_6455000 0.17 / 1.26 / 95.8, 908000_6454000 0.19 / 0.95 / 25.6, 908000_6455000 0.13 / 0.72 / 7.3
+  - arselle 926000_6448000 0.07 / 0.47 / 14.7, 926000_6449000 0.09 / 0.52 / 8.5, 927000_6448000 0.41 / 2.97 / 127.9, 927000_6449000 0.17 / 1.17 / 62.5
+  - Small differences everywhere (the 0.25 m shift on slopes); the large ones on rock faces, where the points DEM jumps by up to 80 m between adjacent 0.5 m cells (ground points from the top and the foot of the face) while IGN's stays smooth (e.g. poussebout (907432.25, 6455089.25): 1280.3 vs 1376.0).
+- **Cliffs drop, contours stay** (step 1 fallback → IGN, `measure_dem_render`):
+
+  | | cliff pixels | 202 objects | 205 objects |
+  |---|---|---|---|
+  | poussebout | 2 103 436 → 1 076 925 (−48.8%) | 2460 → 1183 (−51.9%) | 159 → 83 |
+  | arselle | 3 328 893 → 2 391 126 (−28.2%) | 3646 → 2480 (−32.0%) | 83 → 24 |
+
+  Per tile −18% to −78% cliff pixels (poussebout's east tiles −76/−78%). Contours: total length −0.4% / −0.3% raw, −0.1% / −0.0% smoothed; lines −1.3% / −2.2% raw. Levels over 5%: poussebout raw 1680 m (16 → 14 m), smoothed 1645 m (+7.4%); arselle 712.5 m (4 → 8 m), 807.5–815 m (+6–8%). Crops (same areas as step 1): the main cliff bands stay, the isolated dots and noisy fringes around them go; `cliffs.png` differs on 13.1% / 6.2% of the steep crops' pixels, ~0% elsewhere; `contours.png` 2.3–7.5%. The cliff thresholds were tuned on the points DEM; the user retunes them after step 3.
+- **Docs:** "Use IGN DEMs" in the batch guide (matching rule, download URL template, 0.25 m shift, fewer cliffs), `--dem` in the single-tile guide and the CLI reference (`process`, `lidar`, `batch`), one paragraph in `what-and-why.mdx`.
+- **Review fixes:**
+  - **Crop:** an external DEM is cropped to the cells that intersect its tile (`Grid::window`). The mosaic pastes the neighbours over the tile's own DEM, so two overlapping DEMs made each tile take the other's near their shared edge: seams. Cropped, they overlap at most on the cells straddling the edge; IGN tiles are unchanged (every cell intersects the tile). A larger DEM given to `process` no longer fills the buffer, nor is copied whole to `dem.tif`.
+  - **Warning** when the DEM's cells are larger than `DEM_BLOCK_SIZE` (nearest neighbour gives stepped contours).
+  - **`lidar --dem` is optional**, as for `process`: the `lidar` step alone works again outside France.
+  - **`batch` discovery:** `find_dems` returns a map from tile to DEM, used by `get_tiles_with_neighbors` (new `use_dem_files` argument) to build each tile with its DEM. Hidden files (macOS `._*`) are skipped, and a `.tif` that isn't a Lambert-93 DEM is ignored with a warning instead of stopping the batch. `--skip-lidar` warns when the input directory holds GeoTIFF files.
+  - **`TileRasters`** holds a `TileDem` enum (`External(Grid)` / `Ground(GroundDem)`) instead of a `bool` and two `Option`s, so `dem.tif` is always written.
+  - **CRS check:** a user-defined CRS whose `ProjectionGeoKey` (3074) names an EPSG projection must name Lambert-93's (18085).
+  - **Tests:** the `external_dem` and `grid` temp files use `tempfile`.

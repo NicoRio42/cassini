@@ -51,6 +51,16 @@ cassini process ./path/to/my/tile.laz
 
 The output directory for the processed LiDAR file.
 
+#### `--dem`
+
+<p>
+
+**Type:** `string`<br />
+
+</p>
+
+Optional path to a GeoTIFF <GlossaryLink slug="dem" /> in Lambert-93 to use instead of computing the <GlossaryLink slug="dem" /> from the ground points, such as an IGN MNT LiDAR HD tile (see [Use IGN DEMs](/guides/batch-mode#use-ign-dems)). It must overlap the tile, and Cassini warns if it leaves more than one of its cells' width of the tile uncovered, or if its cells are larger than half a meter, which gives stepped contours. Its cells that intersect the tile are copied to the output directory as `dem.tif`, on their own grid: a larger <GlossaryLink slug="dem" /> does not fill the buffer around the tile.
+
 #### `--shapefiles`
 
 <p>
@@ -105,6 +115,16 @@ cassini lidar ./path/to/my/tile.laz
 </p>
 
 The output directory for the processed <GlossaryLink slug="lidar" /> file.
+
+#### `--dem`
+
+<p>
+
+**Type:** `string`<br />
+
+</p>
+
+Optional path to a GeoTIFF <GlossaryLink slug="dem" /> in Lambert-93 to use instead of computing the <GlossaryLink slug="dem" /> from the ground points, such as an IGN MNT LiDAR HD tile (see [Use IGN DEMs](/guides/batch-mode#use-ign-dems)). The <GlossaryLink slug="lidar" /> file is then read for the vegetation only, and the cells of the <GlossaryLink slug="dem" /> that intersect the tile are copied to the output directory as `dem.tif`, on their own grid. The `render` subcommand samples it, with the <GlossaryLink slug="dem" label="DEMs" /> of the `--neighbors` tiles, onto its half a meter grid.
 
 #### `--config` or `-C`
 
@@ -199,6 +219,8 @@ Process multiple <GlossaryLink slug="lidar" /> files at once. The `batch` subcom
 cassini batch
 ```
 
+GeoTIFF <GlossaryLink slug="dem" label="DEMs" /> in this directory, such as IGN MNT LiDAR HD tiles, are used instead of computing the <GlossaryLink slug="dem" /> from the ground points: each one for the tile containing the centre of its extent (see [Use IGN DEMs](/guides/batch-mode#use-ign-dems)).
+
 ### Options
 
 #### `--output-dir` or `-o`
@@ -245,7 +267,7 @@ cassini batch --threads 6
 
 </p>
 
-The `--skip-lidar` option will skip the <GlossaryLink slug="lidar" /> processing stage of the pipeline. It will only work if you allready ran `cassini` once with the same input files, as it will reuse some temp files.
+The `--skip-lidar` option will skip the <GlossaryLink slug="lidar" /> processing stage of the pipeline. It will only work if you allready ran `cassini` once with the same input files, as it will reuse some temp files, including the <GlossaryLink slug="dem" label="DEMs" />.
 
 This subcommand also accepts the [common rendering options](#common-rendering-options) and the [OCAD export options](#ocad-export-options).
 

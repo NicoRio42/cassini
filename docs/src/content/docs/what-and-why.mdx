@@ -79,6 +79,8 @@ These <GlossaryLink slug="raster" label="rasters" /> are not subject to the edge
 - A value is attributed to each of these cells depending only on the points that it contains. A <GlossaryLink slug="dem" /> cell without ground points takes the mean of the ground points of the one meter by one meter block it belongs to, which lies inside the tile too.
 - Thus the value does not depend on the neighborhood of the cell outside the tile.
 
+Cassini can also take the <GlossaryLink slug="dem" /> from a file instead, such as IGN's MNT LiDAR HD (see [Use IGN DEMs](/guides/batch-mode#use-ign-dems)). It is then cropped to the cells that intersect the tile, and kept on its own grid until the buffer is added.
+
 In a second step, Cassini generates the final map from these <GlossaryLink slug="raster" label="rasters" />. It uses the <GlossaryLink slug="dem" /> to generate <GlossaryLink slug="contours" /> and cliffs, and the vegetation density <GlossaryLink slug="raster" label="rasters" /> to generate the vegetation map.
 
 To prevent edges artifacts, a buffer is added to these <GlossaryLink slug="raster" label="rasters" /> using the 8 adjacent <GlossaryLink slug="raster" label="rasters" />. Then the map is generated and the artifacts are cropped away from the resulting image. The key difference is that the buffer is added to the intermediary raster files, and not to the <GlossaryLink slug="lidar" /> files at the begining. As these <GlossaryLink slug="raster" label="rasters" /> are much smaller and much faster to read than the <GlossaryLink slug="lidar" /> files, it drastically reduces the total computing time.
