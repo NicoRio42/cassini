@@ -1,0 +1,33 @@
+# Adds the removal of the Docker `cassini` shortcut to the install scripts
+# of the release (see scripts/patch-installers.sh), once release.yml has
+# published the GitHub Release. Called by release.yml (`publish-jobs` in
+# dist-workspace.toml).
+name: Patch the install scripts
+
+on:
+  workflow_call:
+    inputs:
+      plan:
+        required: true
+        type: string
+
+jobs:
+  patch-installers:
+    runs-on: ubuntu-22.04
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ fromJson(inputs.plan).announcement_tag }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Patch the install scripts of the release
+        run: |
+          mkdir "$RUNNER_TEMP/installers"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern 'cassini-installer.*' --dir "$RUNNER_TEMP/installers"
+          scripts/patch-installers.sh "$RUNNER_TEMP/installers"
+          sh -n "$RUNNER_TEMP/installers/cassini-installer.sh"
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+            "$RUNNER_TEMP/installers/cassini-installer.sh" \
+            "$RUNNER_TEMP/installers/cassini-installer.ps1"

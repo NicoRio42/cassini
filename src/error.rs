@@ -17,7 +17,7 @@ impl fmt::Display for Stage {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TileId {
     pub min_x: i64,
     pub min_y: i64,

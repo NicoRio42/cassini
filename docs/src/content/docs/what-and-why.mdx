@@ -66,7 +66,7 @@ As mentioned in the previous paragraph, reading <GlossaryLink slug="lidar" /> po
 
 ### The Cassini approach
 
-Cassini is designed to adress these two problems. To improve the point cloud reading speed, it decompresses the <GlossaryLink slug="lidar" /> files on all the processor cores at once, and computes everything it needs from the points in a single pass over them.
+Cassini is designed to adress these two problems. To improve the point cloud reading speed, it decompresses the <GlossaryLink slug="lidar" /> files on all the processor cores at once, and only the fields it needs: the coordinates and the classification of the points.
 
 To solve the edges artifacts problem, it uses a much more efficient approach than the one described above. First, all <GlossaryLink slug="lidar" /> tiles are processed once. During this step, the program produces temporary files that are not subject to the edges artifacts problem:
 
@@ -75,15 +75,19 @@ To solve the edges artifacts problem, it uses a much more efficient approach tha
 
 These <GlossaryLink slug="raster" label="rasters" /> are not subject to the edges artifacts problem because:
 
-- The tile's extent area is clipped to one meter by one meter cells.
-- A value is attributed to each of these cells depending only on the points that it contains.
-- Thus the value does not depend on the neighborhood of the cell.
+- The tile's extent area is clipped to half a meter by half a meter cells for the <GlossaryLink slug="dem" />, and to one meter by one meter cells for the vegetation densities.
+- A value is attributed to each of these cells depending only on the points that it contains. A <GlossaryLink slug="dem" /> cell without ground points takes the mean of the ground points of the one meter by one meter block it belongs to, which lies inside the tile too.
+- Thus the value does not depend on the neighborhood of the cell outside the tile.
+
+Cassini can also take the <GlossaryLink slug="dem" /> from a file instead, such as IGN's MNT LiDAR HD (see [Use IGN DEMs](/guides/batch-mode#use-ign-dems)). It is then cropped to the cells that intersect the tile, and kept on its own grid until the buffer is added.
+
+By default, the vegetation layers are sorted by height above the ground: up to 1 m for the low vegetation, 1 m to 4 m for the medium vegetation and 4 m to 30 m for the high vegetation. The heights are taken above the filled <GlossaryLink slug="dem" /> of the tile and its surroundings described below, so that they do not depend on the tile edges either. As this <GlossaryLink slug="dem" /> needs the neighbouring tiles' ones, Cassini first computes the <GlossaryLink slug="dem" /> of every tile, then reads the points a second time for the vegetation. With a <GlossaryLink slug="dem" /> from a file, the points are read only once, for the vegetation. The `--vegetation-layers lidar-class` option sorts them by their <GlossaryLink slug="lidar" /> classification instead, in the same pass as the <GlossaryLink slug="dem" />.
 
 In a second step, Cassini generates the final map from these <GlossaryLink slug="raster" label="rasters" />. It uses the <GlossaryLink slug="dem" /> to generate <GlossaryLink slug="contours" /> and cliffs, and the vegetation density <GlossaryLink slug="raster" label="rasters" /> to generate the vegetation map.
 
 To prevent edges artifacts, a buffer is added to these <GlossaryLink slug="raster" label="rasters" /> using the 8 adjacent <GlossaryLink slug="raster" label="rasters" />. Then the map is generated and the artifacts are cropped away from the resulting image. The key difference is that the buffer is added to the intermediary raster files, and not to the <GlossaryLink slug="lidar" /> files at the begining. As these <GlossaryLink slug="raster" label="rasters" /> are much smaller and much faster to read than the <GlossaryLink slug="lidar" /> files, it drastically reduces the total computing time.
 
-With this approach, each <GlossaryLink slug="lidar" /> point is only read once, during the fist step to generate the intermediary <GlossaryLink slug="raster" /> files. In the approach described in the paragraph above, There are 10 times more points to read to generate a single tile:
+With this approach, each <GlossaryLink slug="lidar" /> point is read at most twice, during the fist step to generate the intermediary <GlossaryLink slug="raster" /> files. In the approach described in the paragraph above, There are 10 times more points to read to generate a single tile:
 
 - The points from the processed tile and the 8 adjacent ones are read to generate a <GlossaryLink slug="lidar" /> tile with a buffer.
 - The points of this <GlossaryLink slug="lidar" /> tile are then read once again to generate the map.

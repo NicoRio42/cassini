@@ -2,7 +2,8 @@ use image::Rgba;
 
 /// The DEM cell size, in metres.
 pub const DEM_BLOCK_SIZE: f64 = 0.5;
-pub const VEGETATION_BLOCK_SIZE: u32 = 1;
+/// The vegetation density cell size, in metres.
+pub const VEGETATION_BLOCK_SIZE: f64 = 1.0;
 pub const INCH: f32 = 254.0;
 pub const BUFFER: usize = 200;
 pub const COASTLINE_EDGE_BUFFER: f32 = 10.; // Should be lower than osm download buffer

@@ -25,6 +25,7 @@
 use crate::{
     config::Config,
     constants::{BUFFER, CLIFF_THICKNESS_1, CLIFF_THICKNESS_2, DEM_BLOCK_SIZE},
+    dem::DEM_WITH_BUFFER_FILE_NAME,
     error::{CassiniError, Result},
     grid::Grid,
     map_features::{AreaSymbol, Extent, LineSymbol, MapFeature, PointSymbol},
@@ -102,13 +103,15 @@ const SMALL_DOT_RADIUS: f64 = CLIFF_THICKNESS_1 as f64 * 10.0 / 2.0;
 /// lines.
 const AREA_SIMPLIFY_FACTOR: f64 = 2.0;
 
-/// Returns the cliffs of the tile, from `slopes`, its `slopes.tif`: 205
-/// boulders and 202 cliff lines around it, which the OCAD export clips to it,
-/// and 206 areas clipped to it. Their lines and boundaries are simplified
-/// with `simplify_tolerance` metres (0 to keep every vertex).
+/// Returns the cliffs of the tile, from `slopes`, its `slopes.tif`, and
+/// `dem_with_buffer`, its `dem_with_buffer.tif`: 205 boulders and 202 cliff
+/// lines around it, which the OCAD export clips to it, and 206 areas clipped
+/// to it. Their lines and boundaries are simplified with
+/// `simplify_tolerance` metres (0 to keep every vertex).
 pub fn get_cliff_features(
     tile: &Tile,
     slopes: &Grid<f32>,
+    dem_with_buffer: &Grid<f32>,
     config: &Config,
     simplify_tolerance: f64,
 ) -> Result<Vec<MapFeature>> {
@@ -132,8 +135,12 @@ pub fn get_cliff_features(
         &tile_extent,
         grid,
     )?;
-    let dem_path = tile.render_dir_path.join("dem_with_buffer.tif");
-    let dem = read_window(&Grid::read_geotiff(&dem_path)?, &dem_path, &tile_extent, grid)?;
+    let dem = read_window(
+        dem_with_buffer,
+        &tile.render_dir_path.join(DEM_WITH_BUFFER_FILE_NAME),
+        &tile_extent,
+        grid,
+    )?;
 
     let features = vectorize_cliffs(
         grid,

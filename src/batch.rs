@@ -1,20 +1,24 @@
 use crate::{
     config::Config,
+    dem::{check_dem_with_buffer, create_dem_with_buffer},
     download::download_osm_file,
     error::{CassiniError, Result, ResultContext, Stage, TileId},
+    grid::GridExtent,
     helpers::remove_if_exists,
-    lidar::{generate_dem_and_vegetation_density_tiff_images_from_laz_file, read_tile_id},
+    lidar::{
+        read_tile_id, read_vegetation_layers, run_dem_pass, VegetationByHeightPass,
+        VegetationLayers, VEGETATION_LAYERS_FILE_NAME,
+    },
     merge::merge_maps,
     ocad_export::{
         get_batch_georeferencing, prepare_tile_for_merge, write_merged_ocd_file,
         MERGED_OCD_FILE_NAME,
     },
-    ocad_merge::TileObjects,
     ocd::{Georeferencing, OcdTemplate},
     render::{cleanup_render_step_files, render_tile_map, RenderOptions},
     tile::{Tile, TileWithNeighbors},
 };
-use log::info;
+use log::{info, warn};
 use std::{
     collections::HashMap,
     fs::read_dir,
@@ -40,6 +44,7 @@ pub fn batch(
     output_dir: &str,
     number_of_threads: usize,
     skip_lidar: bool,
+    vegetation_layers: VegetationLayers,
     options: RenderOptions,
     config: Config,
 ) -> Result<()> {
@@ -49,14 +54,23 @@ pub fn batch(
         });
     }
 
-    let tiles = get_tiles_with_neighbors(input_dir, output_dir)?;
+    // With `--skip-lidar`, the DEMs are the `dem.tif` files of the previous run.
+    let tiles = get_tiles_with_neighbors(input_dir, output_dir, !skip_lidar)?;
     if tiles.is_empty() {
         return Err(CassiniError::InvalidInput {
             message: format!("no LAZ files were found in `{input_dir}`"),
         });
     }
+    if skip_lidar {
+        let ignored = geotiff_paths(input_dir)?.len();
+        if ignored > 0 {
+            warn!(
+                "Ignoring the {ignored} GeoTIFF files of `{input_dir}` with `--skip-lidar`: the \
+                 DEMs are those of the previous run"
+            );
+        }
+    }
 
-    let tiles_arc = Arc::new(tiles.clone());
     let chunk_size = tiles.len().div_ceil(number_of_threads);
 
     let ocad_export = options
@@ -76,47 +90,14 @@ pub fn batch(
     ))?;
 
     if skip_lidar {
+        let layers = check_previous_lidar_stage(&tiles)?;
+        info!(
+            "Reusing the LiDAR output of the previous run, with the vegetation layers by {}",
+            layers.name()
+        );
         cleanup_render_step_files(&tiles, output_dir)?;
     } else {
-        let tiles_chunks: Vec<Vec<TileWithNeighbors>> = tiles_arc
-            .chunks(chunk_size)
-            .map(|chunk| chunk.to_vec())
-            .collect();
-
-        let mut handles: Vec<Worker<()>> = Vec::with_capacity(number_of_threads);
-
-        for chunk in tiles_chunks {
-            let first_tile = chunk.first().map(|tile| TileId::from(&tile.tile));
-            let chunk = Arc::new(chunk);
-
-            let spawned_thread = spawn(move || {
-                chunk
-                    .iter()
-                    .map(|tile| {
-                        info!(
-                            "Tile min_x={} min_y={} max_x={} max_y={}. Generating raw rasters",
-                            tile.tile.min_x, tile.tile.min_y, tile.tile.max_x, tile.tile.max_y
-                        );
-
-                        generate_dem_and_vegetation_density_tiff_images_from_laz_file(
-                            &tile.laz_path,
-                            &tile.tile.lidar_dir_path,
-                        )
-                        .map(|_| ())
-                    })
-                    .collect()
-            });
-
-            handles.push((first_tile, spawned_thread));
-        }
-
-        let (_, failures) = collect_worker_results(handles, Stage::Lidar);
-        if !failures.is_empty() {
-            return Err(CassiniError::Batch {
-                failure_count: failures.len(),
-                failures,
-            });
-        }
+        run_lidar_stage(&tiles, chunk_size, vegetation_layers)?;
     }
 
     if !options.skip_vector {
@@ -138,58 +119,30 @@ pub fn batch(
         }
     }
 
-    let tiles_chunks: Vec<Vec<TileWithNeighbors>> = tiles_arc
-        .chunks(chunk_size)
-        .map(|chunk| chunk.to_vec())
-        .collect();
+    let render_config = config.clone();
+    let render_ocad_export = ocad_export.clone();
+    let seam_objects = run_stage(
+        tiles.clone(),
+        chunk_size,
+        Stage::Render,
+        move |tile: TileWithNeighbors| {
+            info!(
+                "Tile min_x={} min_y={} max_x={} max_y={}. Rendering map",
+                tile.tile.min_x, tile.tile.min_y, tile.tile.max_x, tile.tile.max_y
+            );
 
-    let mut handles: Vec<Worker<Option<TileObjects>>> = Vec::with_capacity(number_of_threads);
+            let features =
+                render_tile_map(tile.tile.clone(), tile.neighbors, &options, &render_config)?;
 
-    for chunk in tiles_chunks {
-        let first_tile = chunk.first().map(|tile| TileId::from(&tile.tile));
-        let chunk = Arc::new(chunk);
-
-        let cloned_options = options.clone();
-        let cloned_config = config.clone();
-        let cloned_ocad_export = ocad_export.clone();
-
-        let spawned_thread = spawn(move || {
-            chunk
-                .iter()
-                .map(|tile| {
-                    info!(
-                        "Tile min_x={} min_y={} max_x={} max_y={}. Rendering map",
-                        tile.tile.min_x, tile.tile.min_y, tile.tile.max_x, tile.tile.max_y
-                    );
-
-                    let features = render_tile_map(
-                        tile.tile.clone(),
-                        tile.neighbors.clone(),
-                        &cloned_options,
-                        &cloned_config,
-                    )?;
-
-                    cloned_ocad_export
-                        .as_ref()
-                        .zip(features)
-                        .map(|(export, features)| {
-                            prepare_tile_for_merge(&tile.tile, &export.georeferencing, &features)
-                        })
-                        .transpose()
+            render_ocad_export
+                .as_ref()
+                .zip(features)
+                .map(|(export, features)| {
+                    prepare_tile_for_merge(&tile.tile, &export.georeferencing, &features)
                 })
-                .collect()
-        });
-
-        handles.push((first_tile, spawned_thread));
-    }
-
-    let (seam_objects, failures) = collect_worker_results(handles, Stage::Render);
-    if !failures.is_empty() {
-        return Err(CassiniError::Batch {
-            failure_count: failures.len(),
-            failures,
-        });
-    }
+                .transpose()
+        },
+    )?;
 
     if let Some(export) = &ocad_export {
         write_merged_ocd_file(
@@ -204,6 +157,158 @@ pub fn batch(
     merge_maps(output_dir, tiles, &config)?;
 
     Ok(())
+}
+
+/// Writes the LiDAR output of every tile, and the filled DEM of each
+/// buffered tile, `dem_with_buffer.tif`, which needs the DEMs of its
+/// neighbours: the DEM pass of every tile, then the filled DEMs and, in
+/// `Height` mode, the vegetation passes above them.
+fn run_lidar_stage(
+    tiles: &[TileWithNeighbors],
+    chunk_size: usize,
+    layers: VegetationLayers,
+) -> Result<()> {
+    // In `LidarClass` mode, the vegetation densities are computed in the same
+    // pass over the points as the DEM.
+    let dem_passes = run_stage(
+        tiles.to_vec(),
+        chunk_size,
+        Stage::Lidar,
+        move |tile: TileWithNeighbors| {
+            info!(
+                "Tile min_x={} min_y={} max_x={} max_y={}. Generating raw rasters",
+                tile.tile.min_x, tile.tile.min_y, tile.tile.max_x, tile.tile.max_y
+            );
+
+            let dem_pass = run_dem_pass(
+                &tile.laz_path,
+                tile.dem_path.as_deref(),
+                &tile.tile.lidar_dir_path,
+                layers,
+            )?;
+            Ok((tile, dem_pass.vegetation_by_height))
+        },
+    )?;
+
+    // Every DEM is written, so each tile's can be mosaicked with its
+    // neighbours'. The render stage reads `dem_with_buffer.tif`, so that the
+    // vegetation heights and the contours and cliffs come from the same
+    // filled DEM.
+    run_stage(
+        dem_passes,
+        chunk_size,
+        Stage::Lidar,
+        |(tile, vegetation_by_height): (TileWithNeighbors, Option<VegetationByHeightPass>)| {
+            let dem_with_buffer = create_dem_with_buffer(&tile.tile, &tile.neighbors)?;
+            if let Some(vegetation_by_height) = vegetation_by_height {
+                vegetation_by_height.run(&dem_with_buffer)?;
+            }
+            Ok(())
+        },
+    )?;
+    Ok(())
+}
+
+/// Fails unless every tile has the LiDAR output that `--skip-lidar` renders
+/// from, before anything is deleted: that of a batch of Cassini 0.19.0 or
+/// later, with its filled DEM. Returns how its vegetation densities were
+/// sorted into layers.
+fn check_previous_lidar_stage(tiles: &[TileWithNeighbors]) -> Result<VegetationLayers> {
+    let mut problems = vec![];
+    let mut failed_tiles = 0;
+    let mut tile_layers = vec![];
+    for tile in tiles {
+        let problem_count = problems.len();
+        match read_vegetation_layers(&tile.tile.lidar_dir_path) {
+            Ok(Some(layers)) => tile_layers.push(layers),
+            Ok(None) => problems.push(format!(
+                "`{}` has no `{VEGETATION_LAYERS_FILE_NAME}`, which the LiDAR stage writes since \
+                 Cassini 0.19.0",
+                tile.tile.lidar_dir_path.display()
+            )),
+            Err(error) => problems.push(error.to_string()),
+        }
+        if let Err(error) = check_dem_with_buffer(&tile.tile) {
+            problems.push(error.to_string());
+        }
+        if problems.len() > problem_count {
+            failed_tiles += 1;
+        }
+    }
+    if !problems.is_empty() {
+        return Err(CassiniError::InvalidInput {
+            message: format!(
+                "`--skip-lidar` renders from the LiDAR output of the previous run, and {failed_tiles} \
+                 of the {} tiles have none to reuse: {}. Run the batch once without `--skip-lidar`",
+                tiles.len(),
+                problems.join("; ")
+            ),
+        });
+    }
+
+    let layers = tile_layers[0];
+    let by_height = tile_layers
+        .iter()
+        .filter(|&&layers| layers == VegetationLayers::Height)
+        .count();
+    if tile_layers.iter().any(|&other| other != layers) {
+        return Err(CassiniError::InvalidInput {
+            message: format!(
+                "the previous run sorted the vegetation of {by_height} tiles by height and {} by \
+                 LiDAR class. Run the batch once without `--skip-lidar`",
+                tiles.len() - by_height
+            ),
+        });
+    }
+    Ok(layers)
+}
+
+/// An item processed by a batch stage, for a tile.
+trait StageItem: Send + 'static {
+    /// The tile, whose failures and panics are reported with its extent.
+    fn tile(&self) -> &Tile;
+}
+
+impl StageItem for TileWithNeighbors {
+    fn tile(&self) -> &Tile {
+        &self.tile
+    }
+}
+
+impl<T: Send + 'static> StageItem for (TileWithNeighbors, T) {
+    fn tile(&self) -> &Tile {
+        &self.0.tile
+    }
+}
+
+/// Runs `process` on each of `items`, on worker threads taking `chunk_size`
+/// items each, and returns the results in item order, or the failures of
+/// every item that failed.
+fn run_stage<I, T, F>(items: Vec<I>, chunk_size: usize, stage: Stage, process: F) -> Result<Vec<T>>
+where
+    I: StageItem,
+    T: Send + 'static,
+    F: Fn(I) -> Result<T> + Send + Sync + 'static,
+{
+    let process = Arc::new(process);
+    let mut items = items.into_iter().peekable();
+    let mut handles: Vec<Worker<T>> = vec![];
+    while items.peek().is_some() {
+        let chunk: Vec<I> = items.by_ref().take(chunk_size).collect();
+        let first_tile = chunk.first().map(|item| TileId::from(item.tile()));
+        let process = process.clone();
+        let spawned_thread = spawn(move || chunk.into_iter().map(|item| process(item)).collect());
+        handles.push((first_tile, spawned_thread));
+    }
+
+    let (values, failures) = collect_worker_results(handles, stage);
+    if !failures.is_empty() {
+        return Err(CassiniError::Batch {
+            failure_count: failures.len(),
+            failures,
+        });
+    }
+    Ok(values)
 }
 
 /// The extent covering every tile, as min x, min y, max x, max y.
@@ -256,9 +361,12 @@ fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
     }
 }
 
+/// The tiles of the LAZ files of `input_dir`, with their DEM files from
+/// `input_dir` if `use_dem_files` (see `find_dems`).
 pub fn get_tiles_with_neighbors(
     input_dir: &str,
     output_dir: &str,
+    use_dem_files: bool,
 ) -> Result<Vec<TileWithNeighbors>> {
     let paths =
         read_dir(input_dir).context(format!("could not read input directory `{input_dir}`"))?;
@@ -292,6 +400,21 @@ pub fn get_tiles_with_neighbors(
             None => {}
         }
     }
+
+    let mut dems = if use_dem_files {
+        let tile_ids: Vec<TileId> = tiles_map
+            .keys()
+            .map(|&(min_x, min_y, max_x, max_y)| TileId {
+                min_x,
+                min_y,
+                max_x,
+                max_y,
+            })
+            .collect();
+        find_dems(input_dir, &tile_ids)?
+    } else {
+        HashMap::new()
+    };
 
     for ((min_x, min_y, max_x, max_y), laz_path) in tiles_map.clone().into_iter() {
         let width = max_x - min_x;
@@ -381,12 +504,116 @@ pub fn get_tiles_with_neighbors(
 
         tiles.push(TileWithNeighbors {
             laz_path,
+            dem_path: dems.remove(&TileId::from(&tile)),
             tile,
             neighbors,
         })
     }
 
     Ok(tiles)
+}
+
+/// The GeoTIFF files (`.tif` or `.tiff`, in any case) of `input_dir`, sorted,
+/// without hidden files such as the `._*` files macOS writes on some drives.
+fn geotiff_paths(input_dir: &str) -> Result<Vec<PathBuf>> {
+    let mut paths = vec![];
+    for dir_entry in
+        read_dir(input_dir).context(format!("could not read input directory `{input_dir}`"))?
+    {
+        let path = dir_entry
+            .context(format!("could not read an entry in `{input_dir}`"))?
+            .path();
+        let is_hidden = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with('.'));
+        let is_tiff = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| {
+                extension.eq_ignore_ascii_case("tif") || extension.eq_ignore_ascii_case("tiff")
+            });
+        if is_tiff && !is_hidden && path.is_file() {
+            paths.push(path);
+        }
+    }
+    // For the same errors and warnings whatever the directory order.
+    paths.sort();
+    Ok(paths)
+}
+
+/// The DEM of each of `tiles` that has one: the GeoTIFF file of `input_dir`
+/// whose extent's centre is in the tile. Matching by extent rather than by
+/// file name lets renamed files work, and IGN's DEM tiles, offset by a
+/// quarter metre, match their LiDAR tiles.
+///
+/// A GeoTIFF file that is not a DEM in Lambert-93, such as an orthophoto, is
+/// ignored with a warning, as is a DEM centred in no tile. Two DEMs centred
+/// in the same tile are an error.
+fn find_dems(input_dir: &str, tiles: &[TileId]) -> Result<HashMap<TileId, PathBuf>> {
+    let mut dems = HashMap::<TileId, PathBuf>::new();
+    for dem_path in geotiff_paths(input_dir)? {
+        let extent = match GridExtent::read_geotiff(&dem_path) {
+            Ok(extent) => extent,
+            Err(error) => {
+                warn!(
+                    "`{}` is not a DEM Cassini can read, ignoring it: {error}",
+                    dem_path.display()
+                );
+                continue;
+            }
+        };
+        let centre_x = (extent.min_x + extent.max_x()) / 2.0;
+        let centre_y = (extent.min_y() + extent.max_y) / 2.0;
+        let Some(&tile) = tiles.iter().find(|tile| {
+            (tile.min_x as f64..tile.max_x as f64).contains(&centre_x)
+                && (tile.min_y as f64..tile.max_y as f64).contains(&centre_y)
+        }) else {
+            warn!(
+                "DEM `{}` is centred on ({centre_x}, {centre_y}), in no LiDAR tile, ignoring it",
+                dem_path.display()
+            );
+            continue;
+        };
+        if let Some(previous) = dems.get(&tile) {
+            return Err(CassiniError::InvalidInput {
+                message: format!(
+                    "DEMs `{}` and `{}` are both centred in tile {tile}",
+                    previous.display(),
+                    dem_path.display(),
+                ),
+            });
+        }
+        dems.insert(tile, dem_path);
+    }
+
+    if !dems.is_empty() {
+        info!(
+            "Using the DEMs of `{input_dir}` for {} of the {} tiles",
+            dems.len(),
+            tiles.len()
+        );
+        let mut without_dem: Vec<&TileId> = tiles
+            .iter()
+            .filter(|tile| !dems.contains_key(tile))
+            .collect();
+        if !without_dem.is_empty() {
+            without_dem.sort_by_key(|tile| (tile.min_x, tile.min_y));
+            warn!(
+                "No DEM in `{input_dir}` for {} of the {} tiles, whose DEM is computed from the \
+                 ground points instead: {}. The contours may show seams between the two kinds \
+                 of DEM",
+                without_dem.len(),
+                tiles.len(),
+                without_dem
+                    .iter()
+                    .map(|tile| tile.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+    }
+    Ok(dems)
 }
 
 fn get_neighbor_tile_from_hash_map(
@@ -407,10 +634,183 @@ fn get_neighbor_tile_from_hash_map(
 
 #[cfg(test)]
 mod tests {
-    use super::batch;
-    use crate::{
-        config::Config, error::CassiniError, render::RenderOptions, vegetation::UndergrowthMode,
+    use super::{
+        batch, check_previous_lidar_stage, find_dems, get_tiles_with_neighbors, run_lidar_stage,
     };
+    use crate::{
+        config::Config,
+        dem::{read_dem_with_buffer, DEM_WITH_BUFFER_FILE_NAME},
+        error::{CassiniError, TileId},
+        grid::{Compression, Grid},
+        lidar::{
+            test_tiles::{
+                counts_in, vegetation_counts, write_tile, CELLS, MIN_X, MIN_Y, POINTS, SIDE,
+            },
+            VegetationLayers, VEGETATION_LAYERS_FILE_NAME,
+        },
+        render::RenderOptions,
+        tile::{Tile, TileWithNeighbors},
+        vegetation::UndergrowthMode,
+    };
+    use std::{collections::HashMap, path::Path};
+
+    /// The 1 km tile with its south-west corner at (`min_x`, `min_y`).
+    fn tile(min_x: i64, min_y: i64) -> TileId {
+        TileId {
+            min_x,
+            min_y,
+            max_x: min_x + 1000,
+            max_y: min_y + 1000,
+        }
+    }
+
+    /// Writes a 1 km DEM of 0.5 m cells to `path`, offset by a quarter metre
+    /// from the tile with its south-west corner at (`min_x`, `min_y`), as
+    /// IGN's are.
+    fn write_dem(path: &Path, min_x: f64, min_y: f64) {
+        Grid::new(
+            min_x - 0.25,
+            min_y + 1000.25,
+            0.5,
+            2000,
+            2000,
+            Some(-9999.0),
+            0.0f32,
+        )
+        .write_geotiff(path, Compression::None)
+        .unwrap();
+    }
+
+    #[test]
+    fn finds_the_dems_of_the_tiles_containing_their_centre() {
+        let dir = tempfile::tempdir().unwrap();
+        let input_dir = dir.path().to_str().unwrap();
+        let tiles = [tile(0, 0), tile(1000, 0), tile(0, 1000)];
+        // Names unrelated to the tiles, and upper case extensions.
+        write_dem(&dir.path().join("b.TIF"), 0.0, 0.0);
+        write_dem(&dir.path().join("a.tiff"), 1000.0, 0.0);
+        // A DEM matching no tile, files that are not DEMs, and a hidden copy
+        // of a DEM, as macOS writes them.
+        write_dem(&dir.path().join("far.tif"), 5000.0, 0.0);
+        std::fs::write(dir.path().join("notes.txt"), "not a DEM").unwrap();
+        std::fs::create_dir(dir.path().join("folder.tif")).unwrap();
+        std::fs::write(dir.path().join("broken.tif"), "not a GeoTIFF").unwrap();
+        write_dem(&dir.path().join(".hidden.tif"), 0.0, 1000.0);
+
+        assert_eq!(
+            find_dems(input_dir, &tiles).unwrap(),
+            HashMap::from([
+                (tile(0, 0), dir.path().join("b.TIF")),
+                (tile(1000, 0), dir.path().join("a.tiff")),
+            ])
+        );
+
+        // Two DEMs for one tile.
+        write_dem(&dir.path().join("c.tif"), 0.0, 0.0);
+        let error = find_dems(input_dir, &[tile(0, 0)]).unwrap_err();
+        assert!(matches!(error, CassiniError::InvalidInput { .. }));
+        let message = error.to_string();
+        assert!(
+            message.contains("b.TIF") && message.contains("c.tif"),
+            "{message}"
+        );
+    }
+
+    /// Two adjacent 10 m tiles in `dir/in`, the first with its ground at
+    /// 100 m and the vegetation points of `test_tiles::POINTS`, the second
+    /// with its ground at 110 m only, west to east, with their output in
+    /// `dir/out`.
+    fn two_tiles(dir: &Path) -> Vec<TileWithNeighbors> {
+        let input = dir.join("in");
+        std::fs::create_dir(&input).unwrap();
+        write_tile(&input.join("a.laz"), 0.0, 100.0, &POINTS);
+        write_tile(&input.join("b.laz"), SIDE, 110.0, &[]);
+        let output = dir.join("out");
+        let mut tiles =
+            get_tiles_with_neighbors(input.to_str().unwrap(), output.to_str().unwrap(), true)
+                .unwrap();
+        tiles.sort_by_key(|tile| tile.tile.min_x);
+        tiles
+    }
+
+    #[test]
+    fn the_lidar_stage_takes_the_heights_above_the_dems_filled_with_the_neighbours() {
+        let dir = tempfile::tempdir().unwrap();
+        let tiles = two_tiles(dir.path());
+        let [low, medium, high] = CELLS;
+        for (layers, expected) in [
+            (
+                VegetationLayers::Height,
+                counts_in([Some(low), Some(medium), Some(high)]),
+            ),
+            // The unclassified point is not low vegetation by class.
+            (
+                VegetationLayers::LidarClass,
+                counts_in([None, Some(high), Some(medium)]),
+            ),
+        ] {
+            run_lidar_stage(&tiles, 1, layers).unwrap();
+            assert_eq!(check_previous_lidar_stage(&tiles).unwrap(), layers);
+            assert_eq!(vegetation_counts(&tiles[0].tile.lidar_dir_path), expected);
+            assert_eq!(
+                vegetation_counts(&tiles[1].tile.lidar_dir_path),
+                counts_in([None; 3])
+            );
+
+            // Each filled DEM holds the ground of both tiles.
+            for tile in &tiles {
+                let dem = read_dem_with_buffer(&tile.tile).unwrap();
+                let elevation = |x: f64, y: f64| {
+                    dem.get(
+                        ((x - dem.min_x) / dem.resolution) as usize,
+                        ((dem.max_y - y) / dem.resolution) as usize,
+                    )
+                };
+                assert_eq!(elevation(MIN_X + 5.0, MIN_Y + 5.0), 100.0);
+                assert_eq!(elevation(MIN_X + SIDE + 5.0, MIN_Y + 5.0), 110.0);
+            }
+        }
+    }
+
+    #[test]
+    fn skip_lidar_needs_the_lidar_output_of_a_batch_since_0_19_for_every_tile() {
+        let dir = tempfile::tempdir().unwrap();
+        let tiles = two_tiles(dir.path());
+        run_lidar_stage(&tiles, 2, VegetationLayers::Height).unwrap();
+        let (a, b) = (&tiles[0].tile, &tiles[1].tile);
+        let marker = |tile: &Tile| tile.lidar_dir_path.join(VEGETATION_LAYERS_FILE_NAME);
+        let filled_dem = |tile: &Tile| tile.render_dir_path.join(DEM_WITH_BUFFER_FILE_NAME);
+        let check = |expected: &[&str]| {
+            let message = check_previous_lidar_stage(&tiles).unwrap_err().to_string();
+            for expected in expected {
+                assert!(message.contains(expected), "{message}");
+            }
+        };
+        let b_dir = b.lidar_dir_path.display().to_string();
+
+        // The LiDAR output of a batch before 0.19.0, whose render stage
+        // wrote the filled DEM.
+        std::fs::remove_file(marker(b)).unwrap();
+        check(&["1 of the 2 tiles", &b_dir, "0.19.0"]);
+
+        // The filled DEM of another tile, or none.
+        std::fs::write(marker(b), "height").unwrap();
+        std::fs::copy(filled_dem(a), filled_dem(b)).unwrap();
+        check(&["1 of the 2 tiles", &b_dir, "is not the filled DEM of tile"]);
+        std::fs::remove_file(filled_dem(b)).unwrap();
+        check(&["1 of the 2 tiles", &b_dir, "does not exist"]);
+
+        // Vegetation layers sorted differently.
+        run_lidar_stage(&tiles, 2, VegetationLayers::Height).unwrap();
+        std::fs::write(marker(a), "lidar-class").unwrap();
+        check(&["1 tiles by height and 1 by LiDAR class"]);
+
+        std::fs::write(marker(a), "height").unwrap();
+        assert_eq!(
+            check_previous_lidar_stage(&tiles).unwrap(),
+            VegetationLayers::Height
+        );
+    }
 
     #[test]
     fn rejects_zero_threads_before_reading_input() {
@@ -419,6 +819,7 @@ mod tests {
             "unused",
             0,
             false,
+            VegetationLayers::Height,
             RenderOptions {
                 skip_vector: false,
                 skip_520: false,

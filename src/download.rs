@@ -16,9 +16,9 @@ use crate::{
 };
 
 const OVERPASS_API_URL: &str = "https://overpass-api.de/api/interpreter";
-const DEFAULT_RETRY_DELAY: Duration = Duration::from_secs(5);
+pub(crate) const DEFAULT_RETRY_DELAY: Duration = Duration::from_secs(5);
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(60);
-const USER_AGENT_VALUE: &str = concat!(
+pub(crate) const USER_AGENT_VALUE: &str = concat!(
     env!("CARGO_PKG_NAME"),
     "/",
     env!("CARGO_PKG_VERSION"),
@@ -177,7 +177,7 @@ out skel qt;
     Ok(())
 }
 
-fn retry_delay_from_response(response: &reqwest::blocking::Response) -> Duration {
+pub(crate) fn retry_delay_from_response(response: &reqwest::blocking::Response) -> Duration {
     response
         .headers()
         .get(RETRY_AFTER)
@@ -187,7 +187,7 @@ fn retry_delay_from_response(response: &reqwest::blocking::Response) -> Duration
         .min(MAX_RETRY_DELAY)
 }
 
-fn is_transient_status(status: u16) -> bool {
+pub(crate) fn is_transient_status(status: u16) -> bool {
     status == 429 || matches!(status, 500 | 502 | 503 | 504)
 }
 

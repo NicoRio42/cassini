@@ -1,11 +1,11 @@
 use crate::{
     constants::BUFFER,
     error::{CassiniError, Result, ResultContext, TileId},
-    grid::{Compression, Grid, Sample},
+    grid::{Compression, Grid, GridExtent, Sample},
     tile::Tile,
 };
 use log::warn;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Writes and returns `<name>_with_buffer.tif` in the tile's render directory:
 /// the mosaic of [`mosaic_with_buffer`].
@@ -72,9 +72,14 @@ fn mosaic<T: Sample>(
 
     let tile_raster_path = tile.lidar_dir_path.join(&tif_filename);
     let tile_raster = Grid::<T>::read_geotiff(&tile_raster_path)?;
+    let nodata = tile_raster
+        .nodata
+        .ok_or_else(|| CassiniError::InvalidArtifact {
+            path: tile_raster_path.clone(),
+            message: "expected a nodata value".to_owned(),
+        })?;
     let mut raster_with_buffer =
-        empty_buffered_grid(tile, resolution, &tile_raster, &tile_raster_path)?;
-    paste_nearest(&tile_raster, &mut raster_with_buffer);
+        paste_with_buffer(&TileId::from(tile), &tile_raster, nodata, resolution);
     drop(tile_raster);
 
     for neighbor_tile in neighbor_tiles {
@@ -94,29 +99,41 @@ fn mosaic<T: Sample>(
     Ok(raster_with_buffer)
 }
 
-/// A grid of the buffered tile extent at `resolution`, filled with the nodata
-/// value of the tile raster `source`.
-fn empty_buffered_grid<T: Sample>(
-    tile: &Tile,
-    resolution: f64,
-    source: &Grid<T>,
-    source_path: &Path,
-) -> Result<Grid<T>> {
-    let nodata = source.nodata.ok_or_else(|| CassiniError::InvalidArtifact {
-        path: source_path.to_path_buf(),
-        message: "expected a nodata value".to_owned(),
-    })?;
+/// The grid of [`mosaic_with_buffer`] for `tile` at `resolution`: the tile
+/// and `BUFFER` metres around it.
+pub fn buffered_extent(tile: &TileId, resolution: f64) -> GridExtent {
     let buffer = BUFFER as i64;
     let size = |min: i64, max: i64| ((max - min + 2 * buffer) as f64 / resolution).round() as usize;
-    Ok(Grid::new(
-        (tile.min_x - buffer) as f64,
-        (tile.max_y + buffer) as f64,
+    GridExtent {
+        min_x: (tile.min_x - buffer) as f64,
+        max_y: (tile.max_y + buffer) as f64,
         resolution,
-        size(tile.min_x, tile.max_x),
-        size(tile.min_y, tile.max_y),
+        width: size(tile.min_x, tile.max_x),
+        height: size(tile.min_y, tile.max_y),
+    }
+}
+
+/// The tile raster `raster` alone, on the grid of [`mosaic_with_buffer`]
+/// with `nodata` as the nodata value: the mosaic of a tile without
+/// neighbours, from a raster in memory.
+pub fn paste_with_buffer<T: Sample>(
+    tile: &TileId,
+    raster: &Grid<T>,
+    nodata: T,
+    resolution: f64,
+) -> Grid<T> {
+    let extent = buffered_extent(tile, resolution);
+    let mut raster_with_buffer = Grid::new(
+        extent.min_x,
+        extent.max_y,
+        extent.resolution,
+        extent.width,
+        extent.height,
         Some(nodata),
         nodata,
-    ))
+    );
+    paste_nearest(raster, &mut raster_with_buffer);
+    raster_with_buffer
 }
 
 /// Copies the data cells of `source` to the `output` cells whose centre they
@@ -190,6 +207,57 @@ mod tests {
     }
 
     #[test]
+    fn copies_cells_of_the_same_resolution_one_to_one() {
+        let mut source = source(0.0, 1.0, [1.0, 2.0, 3.0, 4.0]);
+        source.resolution = 0.5;
+        let mut output = Grid::new(-0.5, 1.5, 0.5, 4, 4, Some(-9999.0), -9999.0f32);
+        paste_nearest(&source, &mut output);
+        let n = -9999.0;
+        #[rustfmt::skip]
+        assert_eq!(output.values, [
+            n, n, n, n,
+            n, 1.0, 2.0, n,
+            n, 3.0, 4.0, n,
+            n, n, n, n,
+        ]);
+    }
+
+    #[test]
+    fn takes_the_last_column_and_row_from_the_neighbors_of_half_cell_offset_sources() {
+        // A 2 m tile of 0.5 m cells, and its DEM and those of its east, south
+        // and south-east neighbours as IGN's are: 0.25 m west and north of
+        // their tiles, so each output cell centre is on a source cell edge.
+        let offset_source = |min_x: f64, max_y: f64, first: f32| Grid {
+            min_x,
+            max_y,
+            resolution: 0.5,
+            width: 4,
+            height: 4,
+            nodata: Some(-9999.0),
+            values: (0..16).map(|i| first + i as f32).collect(),
+        };
+        let mut output = Grid::new(0.0, 2.0, 0.5, 4, 4, Some(-9999.0), -9999.0f32);
+        for source in [
+            offset_source(-0.25, 2.25, 0.0),
+            offset_source(1.75, 2.25, 100.0),
+            offset_source(-0.25, 0.25, 200.0),
+            offset_source(1.75, 0.25, 300.0),
+        ] {
+            paste_nearest(&source, &mut output);
+        }
+        // The tie goes to the source cell east and south of the centre: the
+        // tile's DEM fills all but the last column and row, shifted by one
+        // cell, and the neighbours' first column or row the rest.
+        #[rustfmt::skip]
+        assert_eq!(output.values, [
+            5.0, 6.0, 7.0, 104.0,
+            9.0, 10.0, 11.0, 108.0,
+            13.0, 14.0, 15.0, 112.0,
+            201.0, 202.0, 203.0, 300.0,
+        ]);
+    }
+
+    #[test]
     fn composites_sources_with_transparent_nodata() {
         let mut output = Grid::new(-1.0, 3.0, 1.0, 4, 4, Some(-9999.0), -9999.0f32);
         paste_nearest(&source(0.0, 2.0, [1.0, -9999.0, 3.0, 4.0]), &mut output);
@@ -224,9 +292,8 @@ mod tests {
         for dir in [&tile_dir, &east_dir, &west_dir] {
             std::fs::create_dir_all(dir).unwrap();
         }
-        let raster = |min_x: f64, value: f32| {
-            Grid::new(min_x, 1000.0, 100.0, 10, 10, Some(-9999.0), value)
-        };
+        let raster =
+            |min_x: f64, value: f32| Grid::new(min_x, 1000.0, 100.0, 10, 10, Some(-9999.0), value);
         raster(0.0, 1.0)
             .write_geotiff(&tile_dir.join("dem.tif"), Compression::None)
             .unwrap();
@@ -256,6 +323,8 @@ mod tests {
             -9999.0, -9999.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 2.0, 2.0,
         ]);
         // The north buffer has no data.
-        assert!(mosaic.values[..2 * 14].iter().all(|&value| value == -9999.0));
+        assert!(mosaic.values[..2 * 14]
+            .iter()
+            .all(|&value| value == -9999.0));
     }
 }

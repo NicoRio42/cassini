@@ -19,6 +19,36 @@ If you are not happy with the result (too few cliffs, too much green...), you ca
 cassini batch --skip-lidar
 ```
 
+`--skip-lidar` reuses the files of the previous run, including the filled <GlossaryLink slug="dem" /> of each tile and its surroundings and the [vegetation layers](#vegetation-layers). Cassini stops if that run was made by a version before 0.19.0: run the batch once without `--skip-lidar` after upgrading. If you add or remove tiles, run it without `--skip-lidar` too, as the tiles next to them would keep the surroundings of the previous run.
+
+## Use IGN DEMs
+
+By default, Cassini computes the <GlossaryLink slug="dem" /> from the ground points of the <GlossaryLink slug="lidar" /> files. In France, IGN publishes a <GlossaryLink slug="dem" /> computed from the same LiDAR HD points, the MNT LiDAR HD, with half a meter by half a meter cells and no holes. To use it, put one IGN <GlossaryLink slug="dem" /> tile per <GlossaryLink slug="lidar" /> file in the input directory, next to the <GlossaryLink slug="lidar" /> files. Cassini then reads the points for the vegetation only.
+
+Each GeoTIFF file (`.tif` or `.tiff`) of the input directory is used as the <GlossaryLink slug="dem" /> of the <GlossaryLink slug="lidar" /> tile containing the centre of its extent, whatever its name. It must be in Lambert-93, and only its cells that intersect the tile are used. Two <GlossaryLink slug="dem" label="DEMs" /> for the same tile stop the batch with an error. A file Cassini cannot read as a <GlossaryLink slug="dem" /> in Lambert-93, such as an orthophoto, and a <GlossaryLink slug="dem" /> matching no tile are ignored with a warning. Hidden files, such as the `._` files macOS writes on some drives, are ignored. Tiles without a <GlossaryLink slug="dem" /> get theirs from their ground points, with a warning: the contours may show seams between the two kinds of <GlossaryLink slug="dem" />.
+
+You can download an IGN <GlossaryLink slug="dem" /> tile from the Géoplateforme. For the 1 km LiDAR HD tile `LHD_FXX_0907_6456_PTS_LAMB93_IGN69.copc.laz`, covering x from 907000 to 908000 and y from 6455000 to 6456000:
+
+```sh frame="none"
+curl -o LHD_FXX_0907_6456_MNT_O_0M50_LAMB93_IGN69.tif "https://data.geopf.fr/wms-r?SERVICE=WMS&VERSION=1.3.0&EXCEPTIONS=text/xml&REQUEST=GetMap&LAYERS=IGNF_LIDAR-HD_MNT_ELEVATION.ELEVATIONGRIDCOVERAGE.LAMB93&FORMAT=image/geotiff&STYLES=&CRS=EPSG:2154&BBOX=906999.75,6455000.25,907999.75,6456000.25&WIDTH=2000&HEIGHT=2000"
+```
+
+For another tile, take its minimum and maximum x and y, and set `BBOX` to `min_x - 0.25,min_y + 0.25,max_x - 0.25,max_y + 0.25`. The IGN cells are centred on multiples of half a meter, while Cassini's have their edges there. Cassini does not resample the IGN <GlossaryLink slug="dem" />: each of its cells takes the IGN cell whose edge its centre lies on, to the east and south, so the terrain appears 25 cm west and 25 cm north of its true position (0.035 mm at 1:10000). The last column and row of cells of each tile come from the IGN tiles of its east and south neighbours. On the edges of the batch, they are interpolated.
+
+The IGN <GlossaryLink slug="dem" /> is smoother than the one Cassini computes from the points, especially on rock faces, so it gives fewer cliffs: about a quarter to half fewer on our test areas, mostly isolated dots around the main cliff bands. The contours stay about the same.
+
+With `--skip-lidar`, Cassini reuses the <GlossaryLink slug="dem" /> of the previous run, whatever the input directory holds, and warns if it holds GeoTIFF files.
+
+## Vegetation layers
+
+By default, Cassini sorts the vegetation points into low, medium and high vegetation by their height above the ground. To use the vegetation classes of the <GlossaryLink slug="lidar" /> files instead, as Cassini did before version 0.19.0, add the `--vegetation-layers lidar-class` option. Check the [`--vegetation-layers` reference](/reference/cli-reference#--vegetation-layers) for the details.
+
+```sh frame="none"
+cassini batch --vegetation-layers lidar-class
+```
+
+`--skip-lidar` keeps the vegetation layers of the previous run, so it cannot be combined with `--vegetation-layers`: run the batch without `--skip-lidar` to change them.
+
 ## Export to OCAD
 
 To also get a map you can edit in <GlossaryLink slug="ocad" />, add the `--ocad` option. The whole batch is exported to a single `merged-map.ocd` file in the output directory, next to the merged PNG map, with the objects joined across the tile edges. It also works with `--skip-lidar`. Check the [OCAD export options](/reference/cli-reference#ocad-export-options) to use your own symbol set or change how much the areas are simplified.

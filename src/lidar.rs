@@ -1,38 +1,127 @@
-//! The DEM and vegetation density rasters of a LiDAR tile, computed in one
-//! streaming pass over its points.
+//! The DEM and vegetation density rasters of a LiDAR tile, computed in
+//! streaming passes over its points. Given a DEM file, such as IGN's, the DEM
+//! is copied instead of computed from the ground points.
 //!
-//! They reproduce what the PDAL pipeline Cassini used to run produced. That
-//! pipeline (`writers.gdal`, `filters.hag_dem`, `filters.voxeldownsize`,
-//! `filters.assign`) was meant to classify vegetation by height above ground,
-//! but PDAL ran it in stream mode, where `filters.hag_dem` opens the DEM
-//! before `writers.gdal` has written it. PDAL up to 2.9 ignores that error and
-//! leaves every height at 0, so no point was reclassified: the vegetation
-//! rasters count the low, medium and high vegetation classes of the LiDAR HD
-//! classification, after voxel thinning.
+//! The DEM is computed as the PDAL pipeline Cassini used to run computed it,
+//! but on `DEM_BLOCK_SIZE` cells instead of 1 m ones, the cells without
+//! ground points taking the mean of their 1 m block.
+//!
+//! The vegetation rasters count the points of each 1 m cell, after voxel
+//! thinning, in three layers:
+//!
+//! - [`VegetationLayers::Height`]: by height above the filled DEM of the
+//!   buffered tile, `dem_with_buffer.tif`. This is what that pipeline
+//!   (`writers.gdal`, `filters.hag_dem`, `filters.voxeldownsize`,
+//!   `filters.assign`) was meant to do. It needs the filled DEM, so a second
+//!   pass over the points once the DEM of the tile and those of its
+//!   neighbours are written.
+//! - [`VegetationLayers::LidarClass`]: by the low, medium and high vegetation
+//!   classes of the LiDAR HD classification, in the same pass as the DEM.
+//!   This is what the PDAL pipeline did: it ran in stream mode, where
+//!   `filters.hag_dem` opens the DEM before `writers.gdal` has written it.
+//!   PDAL up to 2.9 ignores that error and leaves every height at 0, so no
+//!   point was reclassified.
 
-use las::{Bounds, PointData, PointDataBuilder, Reader};
+use clap::ValueEnum;
+use las::{Bounds, PointData};
 use log::info;
 use std::collections::HashSet;
 use std::fs::{create_dir_all, File};
-use std::io::{BufReader, Write};
-use std::path::Path;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use crate::{
+    buffer::paste_with_buffer,
+    constants::{DEM_BLOCK_SIZE, VEGETATION_BLOCK_SIZE},
+    dem::{fill_dem_with_buffer, write_dem_with_buffer},
     error::{CassiniError, Result, ResultContext, TileId},
+    external_dem::read_external_dem,
     grid::{Compression, Grid, Sample},
     helpers::remove_dir_content_except,
+    point_reader::PointReader,
 };
 
-/// The ASPRS classifications of ground and of low, medium and high
-/// vegetation.
+/// How the points are sorted into the low, medium and high vegetation
+/// layers.
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq)]
+pub enum VegetationLayers {
+    /// By height above the ground.
+    Height,
+    /// By the LiDAR classification.
+    LidarClass,
+}
+
+impl VegetationLayers {
+    /// Its value on the command line.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Height => "height",
+            Self::LidarClass => "lidar-class",
+        }
+    }
+}
+
+/// The file of the LiDAR output that says how its vegetation densities were
+/// sorted into layers, with the [`VegetationLayers::name`] of the mode. The
+/// versions before 0.19.0 do not write it.
+pub const VEGETATION_LAYERS_FILE_NAME: &str = "vegetation_layers.txt";
+
+/// How the vegetation densities of the LiDAR output in `lidar_dir_path` were
+/// sorted into layers, `None` without `vegetation_layers.txt`.
+pub fn read_vegetation_layers(lidar_dir_path: &Path) -> Result<Option<VegetationLayers>> {
+    let path = lidar_dir_path.join(VEGETATION_LAYERS_FILE_NAME);
+    let content = match std::fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error).context(format!("could not read `{}`", path.display()));
+        }
+    };
+    VegetationLayers::from_str(content.trim(), false)
+        .map(Some)
+        .map_err(|_| CassiniError::InvalidArtifact {
+            path,
+            message: format!("unknown vegetation layers `{}`", content.trim()),
+        })
+}
+
+/// The ASPRS classifications of unclassified points, of ground and of low,
+/// medium and high vegetation.
+const UNCLASSIFIED: u8 = 1;
 const GROUND: u8 = 2;
 const LOW_VEGETATION: u8 = 3;
 const MEDIUM_VEGETATION: u8 = 4;
 const HIGH_VEGETATION: u8 = 5;
 
-/// The value of the DEM cells without ground points.
-const NO_DATA_ELEVATION: f64 = -9999.0;
+/// The heights above the ground bounding the low, medium and high vegetation
+/// layers, in metres: a layer holds the points higher than its lower bound
+/// and up to its upper one.
+const VEGETATION_LAYER_HEIGHTS: [f64; 4] = [0.0, 1.0, 4.0, 30.0];
+
+/// The value of the DEM cells whose fallback block has no ground points.
+const NO_DATA_ELEVATION: f32 = -9999.0;
+
+/// How many DEM cells fit along a vegetation cell, so that a vegetation cell
+/// is exactly a block of DEM cells.
+const DEM_CELLS_PER_VEGETATION_CELL: usize = (VEGETATION_BLOCK_SIZE / DEM_BLOCK_SIZE) as usize;
+const _: () = assert!(
+    DEM_CELLS_PER_VEGETATION_CELL as f64 * DEM_BLOCK_SIZE == VEGETATION_BLOCK_SIZE,
+    "the vegetation resolution must be a multiple of the DEM resolution"
+);
+
+/// The side of the blocks of DEM cells whose ground points fill the DEM cells
+/// without any, in metres: the cell size of the DEM before it was computed at
+/// `DEM_BLOCK_SIZE`. A whole metre, so that the blocks cover exactly the
+/// tiles, whose sides are whole metres.
+const FALLBACK_BLOCK_SIZE: f64 = 1.0;
+
+/// How many DEM cells fit along a fallback block.
+const DEM_CELLS_PER_FALLBACK_BLOCK: usize = (FALLBACK_BLOCK_SIZE / DEM_BLOCK_SIZE) as usize;
+const _: () = assert!(
+    DEM_CELLS_PER_FALLBACK_BLOCK as f64 * DEM_BLOCK_SIZE == FALLBACK_BLOCK_SIZE,
+    "the fallback block size must be a multiple of the DEM resolution"
+);
 
 /// The nodata value of the vegetation rasters. Their cells hold point counts,
 /// with 0 for cells without points, so counts saturate just below it.
@@ -44,22 +133,94 @@ const VOXEL_SIZE: f64 = 0.5;
 /// The largest tile side accepted, in metres. LiDAR HD tiles are 1 km, and
 /// other national grids a few kilometres. A larger extent most likely comes
 /// from outlier points in the header bounds, and its rasters would not fit
-/// in memory.
-const MAX_TILE_SIDE: i64 = 10_000;
+/// in memory: they are allocated over the header bounds, and the DEM alone
+/// takes 64 MB per km² while it is computed (four 0.5 m cells per m², each
+/// with an `f64` mean, a `u32` count and then an `f32` elevation), 1.6 GB
+/// for a 5 km tile.
+const MAX_TILE_SIDE: i64 = 5_000;
 
 /// The number of points decompressed at a time. A batch spans many LAZ
 /// chunks, which are decompressed in parallel.
 const POINTS_PER_BATCH: u64 = 1 << 21;
 
-/// Writes the DEM and vegetation density rasters of the LiDAR file at
-/// `laz_path` to `output_dir_path`, returning the tile's extent.
+/// Writes the LiDAR output of the LiDAR file at `laz_path` to
+/// `output_dir_path`, for a tile processed alone, returning the tile's
+/// extent. The DEM is the one at `dem_path` if given, else it is computed
+/// from the ground points.
+///
+/// The filled DEM of the buffered tile is the tile's DEM pasted onto its
+/// buffered grid without neighbours and filled. It is written to
+/// `dem_with_buffer.tif` if `write_filled_dem`, for the render step of
+/// `process`. In `Height` mode, the heights are taken above it. In a batch,
+/// the neighbours' DEMs fill the buffer instead, so the heights near the
+/// tile edges can differ.
 pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
     laz_path: &Path,
+    dem_path: Option<&Path>,
     output_dir_path: &Path,
+    layers: VegetationLayers,
+    write_filled_dem: bool,
 ) -> Result<TileId> {
+    let DemPass {
+        tile,
+        dem,
+        vegetation_by_height,
+    } = run_dem_pass(laz_path, dem_path, output_dir_path, layers)?;
+    if vegetation_by_height.is_none() && !write_filled_dem {
+        return Ok(tile);
+    }
+    let nodata = dem.nodata.unwrap_or(NO_DATA_ELEVATION);
+    let mut dem_with_buffer = paste_with_buffer(&tile, &dem, nodata, DEM_BLOCK_SIZE);
+    drop(dem);
+    fill_dem_with_buffer(&mut dem_with_buffer, &tile);
+    if write_filled_dem {
+        write_dem_with_buffer(output_dir_path, &dem_with_buffer)?;
+    }
+    if let Some(vegetation_by_height) = vegetation_by_height {
+        vegetation_by_height.run(&dem_with_buffer)?;
+    }
+    Ok(tile)
+}
+
+/// What [`run_dem_pass`] leaves of the LiDAR output of a tile.
+pub struct DemPass {
+    pub tile: TileId,
+    /// The DEM written to `dem.tif`.
+    pub dem: Grid<f32>,
+    /// The pass that completes the LiDAR output in `Height` mode, once the
+    /// filled DEM of the buffered tile is known. `None` in `LidarClass` mode,
+    /// where the DEM pass wrote the vegetation densities and the LiDAR output
+    /// is complete.
+    pub vegetation_by_height: Option<VegetationByHeightPass>,
+}
+
+/// The pass over the points of a tile that writes its vegetation densities
+/// by height above the ground, which completes its LiDAR output.
+#[must_use = "the LiDAR output of the tile is incomplete until the pass runs"]
+pub struct VegetationByHeightPass {
+    laz_path: PathBuf,
+    tile: TileId,
+    output_dir_path: PathBuf,
+}
+
+/// Writes the DEM of the LiDAR file at `laz_path` to `output_dir_path` as
+/// `dem.tif`. The DEM is the one at `dem_path` if given, else it is computed
+/// from the ground points.
+///
+/// In `LidarClass` mode, the same pass over the points writes the vegetation
+/// density rasters, and the LiDAR output is complete. In `Height` mode, the
+/// returned [`VegetationByHeightPass`] writes them once the filled DEM of the
+/// buffered tile is known. With a DEM file, that is the only pass over the
+/// points.
+pub fn run_dem_pass(
+    laz_path: &Path,
+    dem_path: Option<&Path>,
+    output_dir_path: &Path,
+    layers: VegetationLayers,
+) -> Result<DemPass> {
     let start = Instant::now();
 
-    let mut reader = open_reader(laz_path)?;
+    let mut reader = PointReader::open(laz_path)?;
     let bounds = reader.header().bounds();
     let tile = tile_id(
         laz_path,
@@ -73,9 +234,24 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
         max_y,
     } = tile;
 
+    // Read before the output directory is cleaned, which may hold it.
+    let external_dem = dem_path
+        .map(|dem_path| read_external_dem(dem_path, &tile))
+        .transpose()?;
+    let with_vegetation = layers == VegetationLayers::LidarClass;
+
     info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. Computing DEM and vegetation densities",
-        min_x, min_y, max_x, max_y
+        "Tile min_x={} min_y={} max_x={} max_y={}. {}",
+        min_x,
+        min_y,
+        max_x,
+        max_y,
+        match (external_dem.is_some(), with_vegetation) {
+            (true, true) => "Computing vegetation densities by LiDAR class",
+            (true, false) => "Copying the DEM",
+            (false, true) => "Computing DEM and vegetation densities by LiDAR class",
+            (false, false) => "Computing DEM",
+        }
     );
 
     // Cleaning up output directory to fix https://github.com/NicoRio42/cassini/issues/7
@@ -93,24 +269,178 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
         ))?;
     }
 
-    let mut points = PointDataBuilder::new().for_header(reader.header()).build();
-    let mut count = fill_points(&mut reader, &mut points, laz_path)?;
-    // A file without points has no voxel to thin, so any origin will do.
-    let first_point = points
+    let mut ground_dem = external_dem.is_none().then(|| GroundDem::new(&tile));
+    let mut vegetation = None;
+    if ground_dem.is_some() || with_vegetation {
+        read_points(&mut reader, |first_point, points| {
+            if vegetation.is_none() && with_vegetation {
+                vegetation = Some(VegetationDensities::new(
+                    &tile,
+                    VoxelSet::new(first_point, &bounds),
+                    None,
+                ));
+            }
+            for (((x, y), z), classification) in point_columns(points) {
+                if let Some(ground_dem) = &mut ground_dem {
+                    // The DEM writer comes before the thinning, so it gets
+                    // every point.
+                    ground_dem.add_point(x, y, z, classification);
+                }
+                if let Some(vegetation) = &mut vegetation {
+                    vegetation.add_point(x, y, z, classification);
+                }
+            }
+        })?;
+    }
+
+    let dem = match (external_dem, ground_dem) {
+        (Some(dem), _) => dem,
+        (None, Some(ground_dem)) => ground_dem.grid(),
+        (None, None) => unreachable!("a tile without a DEM file has a ground DEM"),
+    };
+    dem.write_geotiff(&output_dir_path.join("dem.tif"), Compression::Deflate)?;
+    if with_vegetation {
+        // A file without points has no voxel to thin, so any origin will do.
+        let vegetation = vegetation.unwrap_or_else(|| {
+            VegetationDensities::new(&tile, VoxelSet::new([0.0; 3], &bounds), None)
+        });
+        write_vegetation(vegetation, layers, &tile, output_dir_path)?;
+    }
+
+    info!(
+        "Tile min_x={} min_y={} max_x={} max_y={}. {} in {:.1?}",
+        min_x,
+        min_y,
+        max_x,
+        max_y,
+        if with_vegetation {
+            "DEM and vegetation densities computed"
+        } else {
+            "DEM computed"
+        },
+        start.elapsed()
+    );
+
+    Ok(DemPass {
+        tile,
+        dem,
+        vegetation_by_height: (!with_vegetation).then(|| VegetationByHeightPass {
+            laz_path: laz_path.to_path_buf(),
+            tile,
+            output_dir_path: output_dir_path.to_path_buf(),
+        }),
+    })
+}
+
+impl VegetationByHeightPass {
+    /// Writes the vegetation density rasters of the tile, by height above
+    /// `dem_with_buffer`, the filled DEM of the buffered tile.
+    pub fn run(self, dem_with_buffer: &Grid<f32>) -> Result<()> {
+        let Self {
+            laz_path,
+            tile,
+            output_dir_path,
+        } = self;
+        let start = Instant::now();
+        info!(
+            "Tile min_x={} min_y={} max_x={} max_y={}. Computing vegetation densities by height",
+            tile.min_x, tile.min_y, tile.max_x, tile.max_y
+        );
+
+        let mut reader = PointReader::open(&laz_path)?;
+        let bounds = reader.header().bounds();
+        let ground = GroundElevations::new(dem_with_buffer);
+        let mut vegetation = None;
+        read_points(&mut reader, |first_point, points| {
+            let vegetation = vegetation.get_or_insert_with(|| {
+                VegetationDensities::new(&tile, VoxelSet::new(first_point, &bounds), Some(&ground))
+            });
+            for (((x, y), z), classification) in point_columns(points) {
+                vegetation.add_point(x, y, z, classification);
+            }
+        })?;
+        let vegetation = vegetation.unwrap_or_else(|| {
+            VegetationDensities::new(&tile, VoxelSet::new([0.0; 3], &bounds), Some(&ground))
+        });
+        write_vegetation(
+            vegetation,
+            VegetationLayers::Height,
+            &tile,
+            &output_dir_path,
+        )?;
+
+        info!(
+            "Tile min_x={} min_y={} max_x={} max_y={}. Vegetation densities computed in {:.1?}",
+            tile.min_x,
+            tile.min_y,
+            tile.max_x,
+            tile.max_y,
+            start.elapsed()
+        );
+        Ok(())
+    }
+}
+
+/// Reads the points of `reader` in file order, giving each batch of points
+/// to `add_points` with the first point of the file, the origin of the voxel
+/// grid.
+///
+/// PDAL read LiDAR HD's COPC files in octree order instead, which only
+/// changes the voxel origin and the rounding of the DEM mean.
+fn read_points(
+    reader: &mut PointReader,
+    mut add_points: impl FnMut([f64; 3], &PointData),
+) -> Result<()> {
+    let mut points = reader.point_data();
+    let mut first_point = None;
+    while reader.fill_points(POINTS_PER_BATCH, &mut points)? > 0 {
+        let first_point = *first_point.get_or_insert_with(|| {
+            points
+                .x()
+                .zip(points.y())
+                .zip(points.z())
+                .map(|((x, y), z)| [x, y, z])
+                .next()
+                .unwrap_or_default()
+        });
+        add_points(first_point, &points);
+    }
+    Ok(())
+}
+
+/// The X, Y, Z and classification of `points`.
+fn point_columns(points: &PointData) -> impl Iterator<Item = (((f64, f64), f64), u8)> + '_ {
+    points
         .x()
         .zip(points.y())
         .zip(points.z())
-        .map(|((x, y), z)| [x, y, z])
-        .next()
-        .unwrap_or_default();
-    let mut rasters = TileRasters::new(&tile, VoxelSet::new(first_point, &bounds));
-    while count > 0 {
-        rasters.add_points(&points);
-        count = fill_points(&mut reader, &mut points, laz_path)?;
-    }
-    let (dem, [low, medium, high]) = rasters.into_grids();
+        .zip(points.classification())
+}
 
-    dem.write_geotiff(&output_dir_path.join("dem.tif"), Compression::Deflate)?;
+/// Writes the low, medium and high vegetation density rasters of `tile`,
+/// sorted into layers by `layers`, then `vegetation_layers.txt` and
+/// `extent.txt`, which completes the LiDAR output.
+fn write_vegetation(
+    vegetation: VegetationDensities,
+    layers: VegetationLayers,
+    tile: &TileId,
+    output_dir_path: &Path,
+) -> Result<()> {
+    let grids = vegetation.into_grids();
+    let cells = grids[0].values.len().max(1) as f64;
+    let [low, medium, high] = grids.each_ref().map(|grid| {
+        grid.values
+            .iter()
+            .map(|&count| f64::from(count))
+            .sum::<f64>()
+            / cells
+    });
+    info!(
+        "Tile min_x={} min_y={} max_x={} max_y={}. Mean vegetation points per cell: {:.2} low, {:.2} medium, {:.2} high",
+        tile.min_x, tile.min_y, tile.max_x, tile.max_y, low, medium, high
+    );
+
+    let [low, medium, high] = grids;
     for (grid, name) in [
         (low, "low_vegetation.tif"),
         (medium, "medium_vegetation.tif"),
@@ -119,22 +449,23 @@ pub fn generate_dem_and_vegetation_density_tiff_images_from_laz_file(
         grid.write_geotiff(&output_dir_path.join(name), Compression::Deflate)?;
     }
 
+    let layers_path = output_dir_path.join(VEGETATION_LAYERS_FILE_NAME);
+    std::fs::write(&layers_path, layers.name())
+        .context(format!("could not write `{}`", layers_path.display()))?;
+
     // Downstream tools use extent.txt as the completion marker, so write it last.
     let extent_path = output_dir_path.join("extent.txt");
     let mut extent_file = File::create(&extent_path)
         .context(format!("could not create `{}`", extent_path.display()))?;
     extent_file
-        .write_all(format!("{min_x}|{min_y}|{max_x}|{max_y}").as_bytes())
-        .context(format!("could not write `{}`", extent_path.display()))?;
-
-    let duration = start.elapsed();
-
-    info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. DEM and vegetation densities computed in {:.1?}",
-        min_x, min_y, max_x, max_y, duration
-    );
-
-    Ok(tile)
+        .write_all(
+            format!(
+                "{}|{}|{}|{}",
+                tile.min_x, tile.min_y, tile.max_x, tile.max_y
+            )
+            .as_bytes(),
+        )
+        .context(format!("could not write `{}`", extent_path.display()))
 }
 
 /// The extent of the LiDAR file at `laz_path`: its header bounds, rounded to
@@ -195,109 +526,225 @@ fn tile_id(laz_path: &Path, min: [f64; 2], max: [f64; 2]) -> Result<TileId> {
     Ok(tile)
 }
 
-/// A reader of the LAS or LAZ file at `laz_path`. LAZ chunks are decompressed
-/// on rayon's global thread pool, which the tiles of a batch share, so the
-/// batch threads do not oversubscribe the CPU.
-fn open_reader(laz_path: &Path) -> Result<Reader> {
-    let file = File::open(laz_path).context(format!(
-        "could not open LiDAR file `{}`",
-        laz_path.display()
-    ))?;
-    Reader::new(BufReader::new(file)).context(format!(
-        "could not read LiDAR header `{}`",
-        laz_path.display()
-    ))
-}
-
-/// Replaces `points` with the next points of `reader`, returning how many
-/// were read, 0 at the end of the file.
-fn fill_points(reader: &mut Reader, points: &mut PointData, laz_path: &Path) -> Result<u64> {
-    reader
-        .fill_points(POINTS_PER_BATCH, points)
-        .context(format!(
-            "could not read LiDAR points `{}`",
-            laz_path.display()
-        ))
-}
-
-/// The 1 m rasters of a tile, accumulated point by point.
-struct TileRasters {
-    tile: TileId,
-    width: usize,
-    height: usize,
-    /// The running mean elevation of the ground points of each cell, and
-    /// their number.
-    elevations: Vec<f64>,
-    ground_counts: Vec<u32>,
-    /// The number of low, medium and high vegetation points of each cell.
-    vegetation_counts: [Vec<u8>; 3],
+/// The vegetation densities of a tile, accumulated point by point: the
+/// number of low, medium and high vegetation points of each
+/// `VEGETATION_BLOCK_SIZE` cell, after voxel thinning.
+struct VegetationDensities<'a> {
+    cells: TileCells,
+    counts: [Vec<u8>; 3],
     voxels: VoxelSet,
+    /// The ground the heights are taken above in `Height` mode, `None` in
+    /// `LidarClass` mode.
+    ground: Option<&'a GroundElevations<'a>>,
 }
 
-impl TileRasters {
-    /// The empty rasters of `tile`, whose points are thinned with `voxels`.
-    fn new(tile: &TileId, voxels: VoxelSet) -> Self {
-        let width = (tile.max_x - tile.min_x) as usize;
-        let height = (tile.max_y - tile.min_y) as usize;
+impl<'a> VegetationDensities<'a> {
+    /// The empty densities of `tile`, whose points are thinned with
+    /// `voxels`, by height above `ground` if given, else by class.
+    fn new(tile: &TileId, voxels: VoxelSet, ground: Option<&'a GroundElevations<'a>>) -> Self {
+        let cells = TileCells::new(tile, VEGETATION_BLOCK_SIZE);
+        let len = cells.width * cells.height;
         Self {
-            tile: *tile,
-            width,
-            height,
-            elevations: vec![0.0; width * height],
-            ground_counts: vec![0; width * height],
-            vegetation_counts: [(); 3].map(|_| vec![0; width * height]),
+            cells,
+            counts: [(); 3].map(|_| vec![0; len]),
             voxels,
+            ground,
         }
     }
 
-    /// Adds `points`, which must come in file order. PDAL read LiDAR HD's
-    /// COPC files in octree order instead, which only changes the voxel
-    /// origin and the rounding of the DEM mean.
-    fn add_points(&mut self, points: &PointData) {
-        let columns = points
-            .x()
-            .zip(points.y())
-            .zip(points.z())
-            .zip(points.classification());
-        for (((x, y), z), classification) in columns {
-            self.add_point(x, y, z, classification);
+    /// Adds a point, in file order.
+    fn add_point(&mut self, x: f64, y: f64, z: f64, classification: u8) {
+        // Every point is thinned, whatever its class.
+        if !self.voxels.insert(x, y, z) {
+            return;
+        }
+        let Some(index) = self.cells.bin_index(x, y) else {
+            return;
+        };
+        let layer = match self.ground {
+            None => match classification {
+                LOW_VEGETATION => 0,
+                MEDIUM_VEGETATION => 1,
+                HIGH_VEGETATION => 2,
+                _ => return,
+            },
+            Some(ground) => {
+                if !matches!(
+                    classification,
+                    UNCLASSIFIED | LOW_VEGETATION | MEDIUM_VEGETATION | HIGH_VEGETATION
+                ) {
+                    return;
+                }
+                match ground.height(x, y, z).and_then(height_layer) {
+                    Some(layer) => layer,
+                    None => return,
+                }
+            }
+        };
+        let count = &mut self.counts[layer][index];
+        *count = count.saturating_add(1).min(NO_DATA_COUNT - 1);
+    }
+
+    /// The low, medium and high vegetation densities.
+    fn into_grids(self) -> [Grid<u8>; 3] {
+        let cells = self.cells;
+        self.counts.map(|counts| cells.grid(counts, NO_DATA_COUNT))
+    }
+}
+
+/// The vegetation layer of a point `height` metres above the ground, `None`
+/// for a point on or below the ground, or above the highest layer.
+fn height_layer(height: f64) -> Option<usize> {
+    VEGETATION_LAYER_HEIGHTS
+        .windows(2)
+        .position(|bounds| bounds[0] < height && height <= bounds[1])
+}
+
+/// The ground elevations of a filled DEM, such as the filled DEM of the
+/// buffered tile, to take heights above.
+struct GroundElevations<'a> {
+    dem: &'a Grid<f32>,
+    cells: TileCells,
+}
+
+impl<'a> GroundElevations<'a> {
+    fn new(dem: &'a Grid<f32>) -> Self {
+        Self {
+            dem,
+            cells: TileCells {
+                min_x: dem.min_x,
+                min_y: dem.min_y(),
+                resolution: dem.resolution,
+                width: dem.width,
+                height: dem.height,
+            },
+        }
+    }
+
+    /// The height of the point (`x`, `y`, `z`) above the DEM cell containing
+    /// it, binned as the DEM's points are: a point on the edge between two
+    /// cells is above the east or north one. `Grid::cell_at` would take the
+    /// south one, and LiDAR HD's coordinates are on a 1 cm grid, so about 1%
+    /// of the points are on an edge between two rows. `None` outside the DEM
+    /// or above a cell without data.
+    fn height(&self, x: f64, y: f64, z: f64) -> Option<f64> {
+        let elevation = self.dem.values[self.cells.bin_index(x, y)?];
+        self.dem
+            .has_data(elevation)
+            .then(|| z - f64::from(elevation))
+    }
+}
+
+/// The DEM of a tile's ground points, accumulated point by point.
+struct GroundDem {
+    cells: TileCells,
+    /// The running mean elevation of the ground points of each DEM cell, and
+    /// their number.
+    elevations: Vec<f64>,
+    ground_counts: Vec<u32>,
+}
+
+impl GroundDem {
+    fn new(tile: &TileId) -> Self {
+        let cells = TileCells::new(tile, DEM_BLOCK_SIZE);
+        let len = cells.width * cells.height;
+        Self {
+            cells,
+            elevations: vec![0.0; len],
+            ground_counts: vec![0; len],
         }
     }
 
     fn add_point(&mut self, x: f64, y: f64, z: f64, classification: u8) {
-        // The DEM writer comes before the thinning, so it gets every point.
-        if classification == GROUND {
-            if let Some(index) = self.bin_index(x, y) {
-                // `writers.gdal`'s running mean, so the rounding matches.
-                self.ground_counts[index] += 1;
-                self.elevations[index] +=
-                    (z - self.elevations[index]) / self.ground_counts[index] as f64;
-            }
-        }
-
-        if !self.voxels.insert(x, y, z) {
+        if classification != GROUND {
             return;
         }
+        if let Some(index) = self.cells.bin_index(x, y) {
+            // `writers.gdal`'s running mean.
+            self.ground_counts[index] += 1;
+            self.elevations[index] +=
+                (z - self.elevations[index]) / self.ground_counts[index] as f64;
+        }
+    }
+    /// The mean elevation of the ground points of each DEM cell. A cell
+    /// without any takes the mean of the ground points of its
+    /// `FALLBACK_BLOCK_SIZE` block, the value the 1 m DEM gave it, and only
+    /// the blocks without any stay nodata.
+    ///
+    /// At 0.5 m, a quarter to two thirds of the cells of a LiDAR HD tile have
+    /// no ground point. Left to `fill_nodata`, their inverse distance
+    /// weighted mean smoothed the slopes and lost up to 45% of the cliffs of
+    /// the 1 m DEM.
+    fn grid(&self) -> Grid<f32> {
+        let cells = self.cells;
+        let side = DEM_CELLS_PER_FALLBACK_BLOCK;
+        let mut values = vec![NO_DATA_ELEVATION; cells.width * cells.height];
+        for block_row in (0..cells.height).step_by(side) {
+            for block_col in (0..cells.width).step_by(side) {
+                let block = (block_row..block_row + side).flat_map(|row| {
+                    (block_col..block_col + side).map(move |col| row * cells.width + col)
+                });
+                let (sum, count) = block.clone().fold((0.0, 0), |(sum, count), index| {
+                    let cell_count = self.ground_counts[index];
+                    (
+                        sum + self.elevations[index] * cell_count as f64,
+                        count + u64::from(cell_count),
+                    )
+                });
+                for index in block {
+                    if self.ground_counts[index] > 0 {
+                        values[index] = self.elevations[index] as f32;
+                    } else if count > 0 {
+                        values[index] = (sum / count as f64) as f32;
+                    }
+                }
+            }
+        }
+        cells.grid(values, NO_DATA_ELEVATION)
+    }
+}
 
-        let layer = match classification {
-            LOW_VEGETATION => 0,
-            MEDIUM_VEGETATION => 1,
-            HIGH_VEGETATION => 2,
-            _ => return,
+/// Square cells of `resolution` metres, which points are binned into, such
+/// as the cells covering exactly a tile.
+#[derive(Clone, Copy)]
+struct TileCells {
+    min_x: f64,
+    min_y: f64,
+    resolution: f64,
+    width: usize,
+    height: usize,
+}
+
+impl TileCells {
+    /// The cells of `tile`, whose sides must be multiples of `resolution`
+    /// metres.
+    fn new(tile: &TileId, resolution: f64) -> Self {
+        let cells = |min: i64, max: i64| {
+            let side = (max - min) as f64;
+            let cells = (side / resolution).round();
+            debug_assert_eq!(
+                cells * resolution,
+                side,
+                "{side} m is not a multiple of {resolution} m"
+            );
+            cells as usize
         };
-        if let Some(index) = self.bin_index(x, y) {
-            let count = &mut self.vegetation_counts[layer][index];
-            *count = count.saturating_add(1).min(NO_DATA_COUNT - 1);
+        Self {
+            min_x: tile.min_x as f64,
+            min_y: tile.min_y as f64,
+            resolution,
+            width: cells(tile.min_x, tile.max_x),
+            height: cells(tile.min_y, tile.max_y),
         }
     }
 
-    /// The index of the cell `writers.gdal` bins the point (`x`, `y`) into
-    /// in `binmode`, row-major from the north-west corner. A point on the
-    /// edge between two cells goes to the east or north one, so the east and
-    /// north edges of the tile are out.
+    /// The index of the cell the point (`x`, `y`) is binned into, as
+    /// `writers.gdal` bins it in `binmode`, row-major from the north-west
+    /// corner. A point on the edge between two cells goes to the east or
+    /// north one, so the east and north edges of the cells are out.
     fn bin_index(&self, x: f64, y: f64) -> Option<usize> {
-        let col = (x - self.tile.min_x as f64).floor();
-        let row_from_south = (y - self.tile.min_y as f64).floor();
+        let col = ((x - self.min_x) / self.resolution).floor();
+        let row_from_south = ((y - self.min_y) / self.resolution).floor();
         if !(0.0..self.width as f64).contains(&col)
             || !(0.0..self.height as f64).contains(&row_from_south)
         {
@@ -306,32 +753,18 @@ impl TileRasters {
         Some((self.height - 1 - row_from_south as usize) * self.width + col as usize)
     }
 
-    /// The DEM, and the low, medium and high vegetation densities.
-    fn into_grids(self) -> (Grid<f64>, [Grid<u8>; 3]) {
-        let elevations = self
-            .elevations
-            .into_iter()
-            .zip(self.ground_counts)
-            .map(|(mean, count)| if count == 0 { NO_DATA_ELEVATION } else { mean })
-            .collect();
-        (
-            tile_grid(&self.tile, elevations, NO_DATA_ELEVATION),
-            self.vegetation_counts
-                .map(|counts| tile_grid(&self.tile, counts, NO_DATA_COUNT)),
-        )
-    }
-}
-
-/// The 1 m grid of `tile` with `values`, row-major from the north-west corner.
-fn tile_grid<T: Sample>(tile: &TileId, values: Vec<T>, nodata: T) -> Grid<T> {
-    Grid {
-        min_x: tile.min_x as f64,
-        max_y: tile.max_y as f64,
-        resolution: 1.0,
-        width: (tile.max_x - tile.min_x) as usize,
-        height: (tile.max_y - tile.min_y) as usize,
-        nodata: Some(nodata),
-        values,
+    /// The grid of these cells with `values`, row-major from the north-west
+    /// corner.
+    fn grid<T: Sample>(&self, values: Vec<T>, nodata: T) -> Grid<T> {
+        Grid {
+            min_x: self.min_x,
+            max_y: self.min_y + self.height as f64 * self.resolution,
+            resolution: self.resolution,
+            width: self.width,
+            height: self.height,
+            nodata: Some(nodata),
+            values,
+        }
     }
 }
 
@@ -446,9 +879,87 @@ fn voxel_index(coordinate: f64, origin: f64) -> i32 {
     ((coordinate - origin) / VOXEL_SIZE).floor() as i32
 }
 
+/// LiDAR tiles for tests.
+#[cfg(test)]
+pub mod test_tiles {
+    use crate::{grid::Grid, point_reader::test_files::write_points};
+    use las::{point::Classification, Point};
+    use std::path::Path;
+
+    /// A 10 m tile with its south-west corner at (`MIN_X` + `offset_x`,
+    /// `MIN_Y`), in LiDAR HD's coordinates.
+    pub const MIN_X: f64 = 900_000.0;
+    pub const MIN_Y: f64 = 6_400_000.0;
+    pub const SIDE: f64 = 10.0;
+
+    /// Vegetation and building points above flat ground at 100 m, at
+    /// (`MIN_X` + x, `MIN_Y` + y): low by height but unclassified, medium by
+    /// height but classified as high vegetation, high by height but
+    /// classified as medium vegetation, and a building.
+    pub const POINTS: [(f64, f64, f64, u8); 4] = [
+        (2.1, 2.1, 100.5, 1),
+        (5.1, 5.1, 103.0, 5),
+        (7.1, 7.1, 120.0, 4),
+        (3.1, 3.1, 105.0, 6),
+    ];
+
+    /// The indices of the 1 m cells of `POINTS` in the tile's vegetation
+    /// rasters: low, medium and high by height.
+    pub const CELLS: [usize; 3] = [72, 45, 27];
+
+    /// Writes the LAZ file of the tile at `offset_x`: ground points every
+    /// 25 cm over it, edges included, at `ground_z`, then `points` shifted
+    /// by `ground_z - 100` m.
+    pub fn write_tile(path: &Path, offset_x: f64, ground_z: f64, points: &[(f64, f64, f64, u8)]) {
+        let point = |x: f64, y: f64, z: f64, classification: u8| Point {
+            x: MIN_X + offset_x + x,
+            y: MIN_Y + y,
+            z,
+            return_number: 1,
+            number_of_returns: 1,
+            classification: Classification::new(classification).unwrap(),
+            gps_time: Some(0.0),
+            ..Default::default()
+        };
+        let steps = (SIDE * 4.0) as i32;
+        let ground = (0..=steps)
+            .flat_map(|col| (0..=steps).map(move |row| (col as f64 / 4.0, row as f64 / 4.0)));
+        let points: Vec<Point> = ground
+            .map(|(x, y)| point(x, y, ground_z, 2))
+            .chain(points.iter().map(|&(x, y, z, classification)| {
+                point(x, y, z + ground_z - 100.0, classification)
+            }))
+            .collect();
+        write_points(path, 6, &points);
+    }
+
+    /// The low, medium and high vegetation counts of the LiDAR output in
+    /// `dir`.
+    pub fn vegetation_counts(dir: &Path) -> [Vec<u8>; 3] {
+        ["low", "medium", "high"].map(|layer| {
+            Grid::<u8>::read_geotiff(&dir.join(format!("{layer}_vegetation.tif")))
+                .unwrap()
+                .values
+        })
+    }
+
+    /// `[low, medium, high]` rasters of 10 x 10 cells, each with a point in
+    /// `cells`, `None` for a layer without any.
+    pub fn counts_in(cells: [Option<usize>; 3]) -> [Vec<u8>; 3] {
+        cells.map(|cell| {
+            let mut counts = vec![0; 100];
+            if let Some(cell) = cell {
+                counts[cell] = 1;
+            }
+            counts
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::constants::BUFFER;
     use las::Vector;
 
     fn bounds(min: [f64; 3], max: [f64; 3]) -> Bounds {
@@ -459,16 +970,20 @@ mod tests {
         Bounds { min, max }
     }
 
-    fn rasters() -> TileRasters {
-        let tile = TileId {
-            min_x: 1000,
-            min_y: 2000,
-            max_x: 1003,
-            max_y: 2002,
-        };
-        let bounds = bounds([1000.0, 2000.0, 0.0], [1003.0, 2002.0, 50.0]);
-        // The first point of `dem_is_the_mean_of_ground_points_and_vegetation_the_class_counts`.
-        TileRasters::new(&tile, VoxelSet::new([1000.2, 2001.5, 10.0], &bounds))
+    const RASTERS_TILE: TileId = TileId {
+        min_x: 1000,
+        min_y: 2000,
+        max_x: 1003,
+        max_y: 2002,
+    };
+
+    /// The voxels of the points of `RASTERS_TILE`, whose first point is
+    /// `first_point`.
+    fn voxels(first_point: [f64; 3]) -> VoxelSet {
+        VoxelSet::new(
+            first_point,
+            &bounds([1000.0, 2000.0, 0.0], [1003.0, 2002.0, 50.0]),
+        )
     }
 
     #[test]
@@ -488,53 +1003,230 @@ mod tests {
             ([0.0, 0.0], [0.0, 0.0]),
             ([1000.0, 2000.0], [900.0, 3000.0]),
             ([f64::NAN, 2000.0], [1000.0, 3000.0]),
-            ([1000.0, 2000.0], [11001.0, 3000.0]),
+            ([1000.0, 2000.0], [6001.0, 3000.0]),
         ] {
             assert!(tile_id(path, min, max).is_err(), "{min:?} {max:?}");
         }
-        assert!(tile_id(path, [0.0, 0.0], [10_000.0, 10_000.0]).is_ok());
+        assert!(tile_id(path, [0.0, 0.0], [5_000.0, 5_000.0]).is_ok());
     }
 
     #[test]
     fn points_on_cell_edges_are_binned_east_and_north() {
-        let rasters = rasters();
-        assert_eq!(rasters.bin_index(1000.0, 2000.0), Some(3));
-        assert_eq!(rasters.bin_index(1000.5, 2001.0), Some(0));
-        assert_eq!(rasters.bin_index(1002.999, 2001.999), Some(2));
-        assert_eq!(rasters.bin_index(1003.0, 2001.0), None);
-        assert_eq!(rasters.bin_index(1001.0, 2002.0), None);
-        assert_eq!(rasters.bin_index(999.99, 2001.0), None);
-        assert_eq!(rasters.bin_index(f64::NAN, 2001.0), None);
+        let vegetation = TileCells::new(&RASTERS_TILE, VEGETATION_BLOCK_SIZE);
+        assert_eq!(vegetation.bin_index(1000.0, 2000.0), Some(3));
+        assert_eq!(vegetation.bin_index(1000.5, 2001.0), Some(0));
+        assert_eq!(vegetation.bin_index(1002.999, 2001.999), Some(2));
+        assert_eq!(vegetation.bin_index(1003.0, 2001.0), None);
+        assert_eq!(vegetation.bin_index(1001.0, 2002.0), None);
+        assert_eq!(vegetation.bin_index(999.99, 2001.0), None);
+        assert_eq!(vegetation.bin_index(f64::NAN, 2001.0), None);
+
+        let dem = TileCells::new(&RASTERS_TILE, DEM_BLOCK_SIZE);
+        assert_eq!((dem.width, dem.height), (6, 4));
+        assert_eq!(dem.bin_index(1000.0, 2000.0), Some(18));
+        assert_eq!(dem.bin_index(1000.5, 2001.0), Some(7));
+        assert_eq!(dem.bin_index(1000.49, 2001.5), Some(0));
+        assert_eq!(dem.bin_index(1002.999, 2001.999), Some(5));
+        assert_eq!(dem.bin_index(1003.0, 2001.0), None);
+        assert_eq!(dem.bin_index(1001.0, 2002.0), None);
+    }
+
+    /// A 1 cm grid of points over `RASTERS_TILE`, edges included, as in
+    /// LiDAR HD.
+    fn centimetre_points() -> impl Iterator<Item = (f64, f64)> {
+        (99_990..=100_310)
+            .flat_map(|x| (199_990..=200_210).map(move |y| (x as f64 / 100.0, y as f64 / 100.0)))
     }
 
     #[test]
-    fn dem_is_the_mean_of_ground_points_and_vegetation_the_class_counts() {
-        let mut rasters = rasters();
-        for (x, y, z, classification) in [
-            (1000.2, 2001.5, 10.0, GROUND),
-            (1000.8, 2001.2, 11.0, GROUND),
-            (1000.5, 2001.5, 12.0, LOW_VEGETATION),
-            (1000.5, 2001.5, 12.2, HIGH_VEGETATION),
-            (1001.5, 2001.5, 13.0, MEDIUM_VEGETATION),
-            (1001.5, 2001.5, 14.0, 6),
-            (1002.5, 2000.5, 30.0, HIGH_VEGETATION),
-            (1002.5, 2000.5, 31.0, HIGH_VEGETATION),
-            (1002.5, 2000.5, 20.0, GROUND),
-        ] {
-            rasters.add_point(x, y, z, classification);
+    fn dem_cells_lie_inside_the_vegetation_cell_of_their_points() {
+        let dem = TileCells::new(&RASTERS_TILE, DEM_BLOCK_SIZE);
+        let vegetation = TileCells::new(&RASTERS_TILE, VEGETATION_BLOCK_SIZE);
+        for (x, y) in centimetre_points() {
+            let dem_index = dem.bin_index(x, y);
+            let vegetation_index = vegetation.bin_index(x, y);
+            assert_eq!(dem_index.is_some(), vegetation_index.is_some(), "{x} {y}");
+            if let (Some(dem_index), Some(vegetation_index)) = (dem_index, vegetation_index) {
+                let (dem_col, dem_row) = (dem_index % dem.width, dem_index / dem.width);
+                assert_eq!(
+                    (
+                        dem_col / DEM_CELLS_PER_VEGETATION_CELL,
+                        dem_row / DEM_CELLS_PER_VEGETATION_CELL
+                    ),
+                    (
+                        vegetation_index % vegetation.width,
+                        vegetation_index / vegetation.width
+                    ),
+                    "{x} {y}"
+                );
+            }
         }
-        let (dem, [low, medium, high]) = rasters.into_grids();
+    }
+
+    #[test]
+    fn heights_are_above_the_buffered_dem_cell_the_tile_dem_bins_the_point_into() {
+        // The buffered grid of `RASTERS_TILE`, each cell holding its index.
+        let tile_dem = Grid::new(1000.0, 2002.0, DEM_BLOCK_SIZE, 6, 4, Some(-9999.0), 0.0f32);
+        let mut dem_with_buffer = paste_with_buffer(&RASTERS_TILE, &tile_dem, -9999.0, 0.5);
+        for (index, value) in dem_with_buffer.values.iter_mut().enumerate() {
+            *value = index as f32;
+        }
+        let ground = GroundElevations::new(&dem_with_buffer);
+        let tile_cells = TileCells::new(&RASTERS_TILE, DEM_BLOCK_SIZE);
+        let buffer_cells = (BUFFER as f64 / DEM_BLOCK_SIZE) as usize;
+        for (x, y) in centimetre_points() {
+            // Every point of the tile, and those around it, is above a cell.
+            let height = ground.height(x, y, 0.0).unwrap();
+            if let Some(index) = tile_cells.bin_index(x, y) {
+                let (col, row) = (index % tile_cells.width, index / tile_cells.width);
+                let buffered_index =
+                    (row + buffer_cells) * dem_with_buffer.width + col + buffer_cells;
+                assert_eq!(height, -(buffered_index as f64), "{x} {y}");
+            }
+        }
+    }
+
+    #[test]
+    fn heights_are_above_the_cell_east_and_north_of_an_edge() {
+        #[rustfmt::skip]
+        let dem = Grid {
+            min_x: 0.0,
+            max_y: 2.0,
+            resolution: 0.5,
+            width: 4,
+            height: 4,
+            nodata: Some(-9999.0),
+            values: vec![
+                0.0, 1.0, 2.0, 3.0,
+                4.0, 5.0, 6.0, 7.0,
+                8.0, 9.0, -9999.0, 11.0,
+                12.0, 13.0, 14.0, 15.0,
+            ],
+        };
+        let ground = GroundElevations::new(&dem);
+        assert_eq!(ground.height(0.5, 1.0, 100.0), Some(95.0));
+        assert_eq!(ground.height(0.0, 0.0, 100.0), Some(88.0));
+        assert_eq!(ground.height(1.99, 1.99, 100.0), Some(97.0));
+        // Above a cell without data, and outside the DEM.
+        assert_eq!(ground.height(1.2, 0.7, 100.0), None);
+        assert_eq!(ground.height(2.0, 1.0, 100.0), None);
+        assert_eq!(ground.height(1.0, 2.0, 100.0), None);
+    }
+
+    #[test]
+    fn height_layers_hold_the_points_above_their_lower_bound_and_up_to_their_upper_one() {
+        for (height, layer) in [
+            (-1.0, None),
+            (0.0, None),
+            (0.01, Some(0)),
+            (1.0, Some(0)),
+            (1.01, Some(1)),
+            (4.0, Some(1)),
+            (4.01, Some(2)),
+            (30.0, Some(2)),
+            (30.01, None),
+            (f64::NAN, None),
+        ] {
+            assert_eq!(height_layer(height), layer, "{height}");
+        }
+    }
+
+    /// Ground, vegetation and building points, some in the same voxel.
+    const POINTS: [(f64, f64, f64, u8); 10] = [
+        (1000.2, 2001.5, 10.0, GROUND),
+        (1000.4, 2001.9, 11.0, GROUND),
+        (1000.8, 2001.2, 15.0, GROUND),
+        (1000.5, 2001.5, 12.0, LOW_VEGETATION),
+        (1000.5, 2001.5, 12.2, HIGH_VEGETATION),
+        (1001.5, 2001.5, 13.0, MEDIUM_VEGETATION),
+        (1001.5, 2001.5, 14.0, 6),
+        (1002.5, 2000.5, 30.0, HIGH_VEGETATION),
+        (1002.5, 2000.5, 31.0, HIGH_VEGETATION),
+        (1002.5, 2000.5, 20.0, GROUND),
+    ];
+
+    #[test]
+    fn dem_is_the_mean_of_ground_points_and_vegetation_the_class_counts() {
+        let mut ground_dem = GroundDem::new(&RASTERS_TILE);
+        let mut vegetation =
+            VegetationDensities::new(&RASTERS_TILE, voxels([1000.2, 2001.5, 10.0]), None);
+        for (x, y, z, classification) in POINTS {
+            ground_dem.add_point(x, y, z, classification);
+            vegetation.add_point(x, y, z, classification);
+        }
+        let dem = ground_dem.grid();
+        let [low, medium, high] = vegetation.into_grids();
         let n = NO_DATA_ELEVATION;
-        assert_eq!(dem.values, [10.5, n, n, n, n, 20.0]);
+        // The cells without ground points take the mean of the ground points
+        // of their 1 m block, (10 + 11 + 15) / 3 in the north-west one.
+        #[rustfmt::skip]
+        assert_eq!(dem.values, [
+            10.5, 12.0, n, n, n, n,
+            12.0, 15.0, n, n, n, n,
+            n, n, n, n, 20.0, 20.0,
+            n, n, n, n, 20.0, 20.0,
+        ]);
         assert_eq!(dem.nodata, Some(n));
+        assert_eq!(
+            (dem.min_x, dem.max_y, dem.resolution, dem.width, dem.height),
+            (1000.0, 2002.0, DEM_BLOCK_SIZE, 6, 4)
+        );
         assert_eq!(low.values, [1, 0, 0, 0, 0, 0]);
         assert_eq!(medium.values, [0, 1, 0, 0, 0, 0]);
         assert_eq!(high.values, [0, 0, 0, 0, 0, 2]);
         assert_eq!(high.nodata, Some(NO_DATA_COUNT));
         assert_eq!(
-            (high.min_x, high.max_y, high.width, high.height),
-            (1000.0, 2002.0, 3, 2)
+            (
+                high.min_x,
+                high.max_y,
+                high.resolution,
+                high.width,
+                high.height
+            ),
+            (1000.0, 2002.0, 1.0, 3, 2)
         );
+    }
+
+    #[test]
+    fn vegetation_by_height_counts_the_vegetation_classes_above_the_ground() {
+        // Flat ground at 10 m but for a hole, on a grid larger than the tile.
+        let mut dem = Grid::new(999.0, 2003.0, 0.5, 10, 10, Some(-9999.0), 10.0f32);
+        dem.set(5, 4, -9999.0); // (1001.5, 2000.5)-(1002, 2001)
+        let ground = GroundElevations::new(&dem);
+        let points = [
+            // Low, whatever their class.
+            (1000.2, 2001.5, 10.5, UNCLASSIFIED),
+            (1000.2, 2001.5, 10.9, HIGH_VEGETATION),
+            // In the voxel of the previous point.
+            (1000.3, 2001.6, 11.0, LOW_VEGETATION),
+            // Medium.
+            (1001.5, 2001.5, 13.0, LOW_VEGETATION),
+            (1001.5, 2001.5, 14.0, MEDIUM_VEGETATION),
+            // Never vegetation: ground, building, water and an unassigned
+            // point.
+            (1001.5, 2001.5, 12.0, GROUND),
+            (1001.5, 2001.5, 15.0, 6),
+            (1001.5, 2001.5, 16.0, 9),
+            (1001.5, 2001.5, 17.0, 0),
+            // High, then on or below the ground, and too high.
+            (1002.5, 2000.5, 40.0, MEDIUM_VEGETATION),
+            (1002.5, 2000.5, 10.0, HIGH_VEGETATION),
+            (1002.5, 2000.5, 9.0, HIGH_VEGETATION),
+            (1002.5, 2000.5, 45.0, HIGH_VEGETATION),
+            // Above the hole.
+            (1001.7, 2000.7, 15.0, HIGH_VEGETATION),
+            // Outside the tile.
+            (1003.0, 2000.5, 15.0, HIGH_VEGETATION),
+        ];
+        let mut vegetation =
+            VegetationDensities::new(&RASTERS_TILE, voxels([1000.2, 2001.5, 10.5]), Some(&ground));
+        for (x, y, z, classification) in points {
+            vegetation.add_point(x, y, z, classification);
+        }
+        let [low, medium, high] = vegetation.into_grids();
+        assert_eq!(low.values, [2, 0, 0, 0, 0, 0]);
+        assert_eq!(medium.values, [0, 2, 0, 0, 0, 0]);
+        assert_eq!(high.values, [0, 0, 0, 0, 0, 1]);
     }
 
     #[test]
@@ -574,5 +1266,95 @@ mod tests {
         }
         assert_eq!(voxels.blocks.iter().flatten().count(), 3);
         assert!(voxels.others.is_empty());
+    }
+
+    /// The 10 m test tile at `offset_x`, in `dir`.
+    fn test_tile(dir: &Path, offset_x: f64) -> crate::tile::Tile {
+        use test_tiles::{MIN_X, MIN_Y, SIDE};
+        crate::tile::Tile {
+            lidar_dir_path: dir.to_path_buf(),
+            render_dir_path: dir.to_path_buf(),
+            min_x: (MIN_X + offset_x) as i64,
+            min_y: MIN_Y as i64,
+            max_x: (MIN_X + offset_x + SIDE) as i64,
+            max_y: (MIN_Y + SIDE) as i64,
+        }
+    }
+
+    #[test]
+    fn a_tile_alone_has_its_vegetation_by_height_or_class_and_its_filled_dem_if_asked() {
+        use test_tiles::{counts_in, vegetation_counts, write_tile, CELLS, POINTS};
+        let dir = tempfile::tempdir().unwrap();
+        let laz_path = dir.path().join("tile.laz");
+        write_tile(&laz_path, 0.0, 100.0, &POINTS);
+        let output = dir.path().join("output");
+        let tile = test_tile(&output, 0.0);
+        let [low, medium, high] = CELLS;
+
+        for write_filled_dem in [true, false] {
+            let tile_id = generate_dem_and_vegetation_density_tiff_images_from_laz_file(
+                &laz_path,
+                None,
+                &output,
+                VegetationLayers::Height,
+                write_filled_dem,
+            )
+            .unwrap();
+            assert_eq!(tile_id, TileId::from(&tile));
+            assert_eq!(
+                vegetation_counts(&output),
+                counts_in([Some(low), Some(medium), Some(high)])
+            );
+            assert_eq!(
+                read_vegetation_layers(&output).unwrap(),
+                Some(VegetationLayers::Height)
+            );
+            assert!(output.join("extent.txt").exists());
+            let dem_with_buffer = crate::dem::read_dem_with_buffer(&tile);
+            assert_eq!(dem_with_buffer.is_ok(), write_filled_dem);
+            if let Ok(dem_with_buffer) = dem_with_buffer {
+                // The tile's ground, which the fill extends around it.
+                let (col, row) = (BUFFER * 2 + 10, BUFFER * 2 + 10);
+                assert_eq!(dem_with_buffer.get(col, row), 100.0);
+            }
+        }
+
+        for write_filled_dem in [true, false] {
+            generate_dem_and_vegetation_density_tiff_images_from_laz_file(
+                &laz_path,
+                None,
+                &output,
+                VegetationLayers::LidarClass,
+                write_filled_dem,
+            )
+            .unwrap();
+            // The unclassified point is not low vegetation by class.
+            assert_eq!(
+                vegetation_counts(&output),
+                counts_in([None, Some(high), Some(medium)])
+            );
+            assert_eq!(
+                read_vegetation_layers(&output).unwrap(),
+                Some(VegetationLayers::LidarClass)
+            );
+            assert_eq!(
+                output.join(crate::dem::DEM_WITH_BUFFER_FILE_NAME).exists(),
+                write_filled_dem
+            );
+        }
+    }
+
+    #[test]
+    fn reads_the_vegetation_layers_of_the_lidar_output() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(read_vegetation_layers(dir.path()).unwrap(), None);
+        let path = dir.path().join(VEGETATION_LAYERS_FILE_NAME);
+        std::fs::write(&path, "lidar-class\n").unwrap();
+        assert_eq!(
+            read_vegetation_layers(dir.path()).unwrap(),
+            Some(VegetationLayers::LidarClass)
+        );
+        std::fs::write(&path, "class").unwrap();
+        assert!(read_vegetation_layers(dir.path()).is_err());
     }
 }

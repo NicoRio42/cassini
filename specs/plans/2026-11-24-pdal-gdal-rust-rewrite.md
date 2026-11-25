@@ -41,7 +41,7 @@ We are replacing these with plain Rust rather than embedding GDAL through the `g
 | 5 | OSM import (ogr2ogr replacement) | 2 | Done |
 | 6 | Cleanup, docs and end-to-end verification without external tools | 3, 4, 5 | Done |
 | 7 | Packaging and release builds for the three platforms | 6 | Implemented; tagged pre-release not run yet |
-| 8 | Vegetation layers from height above ground | 6 | Not started |
+| 8 | Vegetation layers from height above ground | 6 | Replaced by [the 2026-11-25 plan](2026-11-25-dem-ign-and-vegetation-height.md) |
 
 ## Shared context
 
@@ -307,6 +307,8 @@ Each step section states its acceptance threshold. "Exact" means bit-identical v
 ---
 
 ## Step 8 — Vegetation layers from height above ground
+
+> **Replaced** by [the 2026-11-25 plan](2026-11-25-dem-ign-and-vegetation-height.md), which adds a 0.5 m DEM and IGN DEM input before this step. The text below is kept as written.
 
 **Goal:** classify vegetation by height above ground, as the PDAL pipeline meant to and never did (see the step 4 notes), and keep the current class-based layers as an option. This changes the default render, which is why it comes after the parity checks of step 6.
 

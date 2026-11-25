@@ -1,4 +1,5 @@
 in*
+!src/ui/assets/index.html
 out*
 target
 pullautin
