@@ -22,11 +22,27 @@ const LAMBERT_93_EPSG: u16 = 2154;
 const GT_MODEL_TYPE_GEO_KEY: u16 = 1024;
 const GT_RASTER_TYPE_GEO_KEY: u16 = 1025;
 const PROJECTED_CRS_GEO_KEY: u16 = 3072;
+const PROJ_COORD_TRANS_GEO_KEY: u16 = 3075;
+const PROJ_LINEAR_UNITS_GEO_KEY: u16 = 3076;
 const MODEL_TYPE_PROJECTED: u16 = 1;
 const MODEL_TYPE_GEOGRAPHIC: u16 = 2;
 const RASTER_PIXEL_IS_AREA: u16 = 1;
 const RASTER_PIXEL_IS_POINT: u16 = 2;
 const USER_DEFINED: u16 = 32767;
+const CT_LAMBERT_CONF_CONIC_2SP: u16 = 8;
+const LINEAR_METER: u16 = 9001;
+
+/// The parameters of Lambert-93, as GeoKeys: each with the keys a
+/// writer may store it under, and its value.
+const LAMBERT_93_PARAMETERS: [(&str, &[u16], f64); 6] = [
+    ("first standard parallel", &[3078], 49.0),
+    ("second standard parallel", &[3079], 44.0),
+    // The false origin keys, or the natural origin ones some writers use.
+    ("longitude of origin", &[3084, 3080], 3.0),
+    ("latitude of origin", &[3085, 3081], 46.5),
+    ("false easting", &[3086, 3082], 700_000.0),
+    ("false northing", &[3087, 3083], 6_600_000.0),
+];
 
 /// A cell value type that can be read from and written to a GeoTIFF band.
 pub trait Sample: Copy + PartialEq + 'static {
@@ -187,6 +203,33 @@ pub enum Compression {
     Deflate,
 }
 
+/// Where the cells of a GeoTIFF band are, without their values.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GridExtent {
+    pub min_x: f64,
+    pub max_y: f64,
+    /// The cell size in metres.
+    pub resolution: f64,
+    pub width: usize,
+    pub height: usize,
+}
+
+impl GridExtent {
+    pub fn max_x(&self) -> f64 {
+        self.min_x + self.width as f64 * self.resolution
+    }
+
+    pub fn min_y(&self) -> f64 {
+        self.max_y - self.height as f64 * self.resolution
+    }
+
+    /// Reads the extent of the single-band GeoTIFF file at `path`, with the
+    /// same checks as `Grid::read_geotiff`, without decoding its cells.
+    pub fn read_geotiff(path: &Path) -> Result<Self> {
+        open_geotiff(path).map(|(_, extent)| extent)
+    }
+}
+
 /// A north-up raster of square cells, row-major from the north-west corner.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Grid<T> {
@@ -291,64 +334,14 @@ impl<T: Sample> Grid<T> {
             path: path.to_path_buf(),
             message,
         };
-        let file = File::open(path).context(format!("could not open `{}`", path.display()))?;
-        let mut decoder = Decoder::new(file)
-            .context(format!("could not create decoder for `{}`", path.display()))?
-            .with_limits(Limits::unlimited());
-
-        let (width, height) = decoder.dimensions().context(format!(
-            "could not read dimensions from `{}`",
-            path.display()
-        ))?;
-        let color_type = decoder
-            .colortype()
-            .context(format!("could not read color type of `{}`", path.display()))?;
-        if !matches!(color_type, ColorType::Gray(_)) {
-            return Err(invalid(format!(
-                "expected a single band, found {color_type:?}"
-            )));
-        }
-
-        let geo_keys = decoder
-            .get_tag_u16_vec(Tag::GeoKeyDirectoryTag)
-            .unwrap_or_default();
-        if geo_key(&geo_keys, GT_MODEL_TYPE_GEO_KEY) == Some(MODEL_TYPE_GEOGRAPHIC) {
-            return Err(invalid(
-                "expected Lambert-93 (EPSG:2154), found geographic coordinates".to_owned(),
-            ));
-        }
-        // A user-defined CRS, or none, is assumed to be Lambert-93.
-        if let Some(code) = geo_key(&geo_keys, PROJECTED_CRS_GEO_KEY)
-            .filter(|&code| code != LAMBERT_93_EPSG && code != USER_DEFINED)
-        {
-            return Err(invalid(format!(
-                "expected Lambert-93 (EPSG:2154), found EPSG:{code}"
-            )));
-        }
-
-        let scale = decoder
-            .get_tag_f64_vec(Tag::ModelPixelScaleTag)
-            .map_err(|_| invalid("missing ModelPixelScaleTag".to_owned()))?;
-        let tiepoint = decoder
-            .get_tag_f64_vec(Tag::ModelTiepointTag)
-            .map_err(|_| invalid("missing ModelTiepointTag".to_owned()))?;
-        if scale.len() < 2 || tiepoint.len() < 6 {
-            return Err(invalid("malformed georeferencing tags".to_owned()));
-        }
-        if scale[0] != scale[1] {
-            return Err(invalid(format!(
-                "expected square cells, found {} x {}",
-                scale[0], scale[1]
-            )));
-        }
-        let resolution = scale[0];
-        let mut min_x = tiepoint[3] - tiepoint[0] * resolution;
-        let mut max_y = tiepoint[4] + tiepoint[1] * resolution;
-        // As GDAL does, a PixelIsPoint tiepoint is the centre of its cell.
-        if geo_key(&geo_keys, GT_RASTER_TYPE_GEO_KEY) == Some(RASTER_PIXEL_IS_POINT) {
-            min_x -= resolution / 2.0;
-            max_y += resolution / 2.0;
-        }
+        let (mut decoder, extent) = open_geotiff(path)?;
+        let GridExtent {
+            min_x,
+            max_y,
+            resolution,
+            width,
+            height,
+        } = extent;
 
         let nodata = decoder.get_tag_ascii_string(Tag::GdalNodata).ok();
 
@@ -363,7 +356,6 @@ impl<T: Sample> Grid<T> {
             ))
         };
         let values = T::from_decoded(decoded).ok_or_else(cannot_convert)?;
-        let (width, height) = (width as usize, height as usize);
         if values.len() != width * height {
             return Err(invalid(format!(
                 "expected {} values for {width} x {height} cells, found {}",
@@ -450,16 +442,155 @@ impl<T: Sample> Grid<T> {
     }
 }
 
+/// A decoder of the single-band GeoTIFF file at `path`, positioned before its
+/// cells, and their extent. Checks that the file is in Lambert-93.
+fn open_geotiff(path: &Path) -> Result<(Decoder<File>, GridExtent)> {
+    let invalid = |message: String| CassiniError::InvalidArtifact {
+        path: path.to_path_buf(),
+        message,
+    };
+    let file = File::open(path).context(format!("could not open `{}`", path.display()))?;
+    let mut decoder = Decoder::new(file)
+        .context(format!("could not create decoder for `{}`", path.display()))?
+        .with_limits(Limits::unlimited());
+
+    let (width, height) = decoder.dimensions().context(format!(
+        "could not read dimensions from `{}`",
+        path.display()
+    ))?;
+    let color_type = decoder
+        .colortype()
+        .context(format!("could not read color type of `{}`", path.display()))?;
+    if !matches!(color_type, ColorType::Gray(_)) {
+        return Err(invalid(format!(
+            "expected a single band, found {color_type:?}"
+        )));
+    }
+
+    let geo_keys = decoder
+        .get_tag_u16_vec(Tag::GeoKeyDirectoryTag)
+        .unwrap_or_default();
+    let geo_doubles = decoder
+        .get_tag_f64_vec(Tag::GeoDoubleParamsTag)
+        .unwrap_or_default();
+    check_lambert_93(&geo_keys, &geo_doubles).map_err(invalid)?;
+
+    let scale = decoder
+        .get_tag_f64_vec(Tag::ModelPixelScaleTag)
+        .map_err(|_| invalid("missing ModelPixelScaleTag".to_owned()))?;
+    let tiepoint = decoder
+        .get_tag_f64_vec(Tag::ModelTiepointTag)
+        .map_err(|_| invalid("missing ModelTiepointTag".to_owned()))?;
+    if scale.len() < 2 || tiepoint.len() < 6 {
+        return Err(invalid("malformed georeferencing tags".to_owned()));
+    }
+    if scale[0] != scale[1] {
+        return Err(invalid(format!(
+            "expected square cells, found {} x {}",
+            scale[0], scale[1]
+        )));
+    }
+    let resolution = scale[0];
+    let mut min_x = tiepoint[3] - tiepoint[0] * resolution;
+    let mut max_y = tiepoint[4] + tiepoint[1] * resolution;
+    // As GDAL does, a PixelIsPoint tiepoint is the centre of its cell.
+    if geo_key(&geo_keys, GT_RASTER_TYPE_GEO_KEY) == Some(RASTER_PIXEL_IS_POINT) {
+        min_x -= resolution / 2.0;
+        max_y += resolution / 2.0;
+    }
+
+    let extent = GridExtent {
+        min_x,
+        max_y,
+        resolution,
+        width: width as usize,
+        height: height as usize,
+    };
+    Ok((decoder, extent))
+}
+
+/// Checks that the GeoKeys `directory`, with the double parameters
+/// `doubles`, describe Lambert-93.
+///
+/// A user-defined CRS is accepted if its projection is Lambert-93's, as in
+/// the IGN DEMs, whose GeoKeys spell out Lambert-93 instead of naming
+/// EPSG:2154. A user-defined CRS without a projection, or no CRS at all, is
+/// assumed to be Lambert-93.
+fn check_lambert_93(directory: &[u16], doubles: &[f64]) -> std::result::Result<(), String> {
+    if geo_key(directory, GT_MODEL_TYPE_GEO_KEY) == Some(MODEL_TYPE_GEOGRAPHIC) {
+        return Err("expected Lambert-93 (EPSG:2154), found geographic coordinates".to_owned());
+    }
+    match geo_key(directory, PROJECTED_CRS_GEO_KEY) {
+        None | Some(LAMBERT_93_EPSG) => return Ok(()),
+        Some(USER_DEFINED) => {}
+        Some(code) => {
+            return Err(format!(
+                "expected Lambert-93 (EPSG:2154), found EPSG:{code}"
+            ));
+        }
+    }
+
+    let user_defined = |found: String| {
+        format!("expected Lambert-93 (EPSG:2154), found a user-defined CRS with {found}")
+    };
+    if let Some(units) =
+        geo_key(directory, PROJ_LINEAR_UNITS_GEO_KEY).filter(|&units| units != LINEAR_METER)
+    {
+        return Err(user_defined(format!("linear units {units}")));
+    }
+    match geo_key(directory, PROJ_COORD_TRANS_GEO_KEY) {
+        None => return Ok(()),
+        Some(CT_LAMBERT_CONF_CONIC_2SP) => {}
+        Some(transformation) => {
+            return Err(user_defined(format!(
+                "coordinate transformation {transformation}"
+            )));
+        }
+    }
+    for (name, keys, expected) in LAMBERT_93_PARAMETERS {
+        let value = keys
+            .iter()
+            .find_map(|&key| geo_double(directory, doubles, key))
+            .ok_or_else(|| user_defined(format!("no {name}")))?;
+        if (value - expected).abs() > 1e-9 * expected.abs() {
+            return Err(user_defined(format!(
+                "a {name} of {value} instead of {expected}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// The value of `key` in a GeoKeyDirectoryTag, if stored in the
+/// GeoDoubleParamsTag `doubles`.
+fn geo_double(directory: &[u16], doubles: &[f64], key: u16) -> Option<f64> {
+    match geo_key_entry(directory, key)? {
+        [location, 1, offset] if location == Tag::GeoDoubleParamsTag.to_u16() => {
+            doubles.get(offset as usize).copied()
+        }
+        _ => None,
+    }
+}
+
 /// The value of `key` in a GeoKeyDirectoryTag, if stored inline.
 fn geo_key(directory: &[u16], key: u16) -> Option<u16> {
+    match geo_key_entry(directory, key)? {
+        [0, _, value] => Some(value),
+        _ => None,
+    }
+}
+
+/// The location, count and value or offset of `key` in a
+/// GeoKeyDirectoryTag.
+fn geo_key_entry(directory: &[u16], key: u16) -> Option<[u16; 3]> {
     let count = *directory.get(3)? as usize;
     directory
         .get(4..4 + 4 * count)?
         .as_chunks::<4>()
         .0
         .iter()
-        .find(|&&[id, location, _, _]| id == key && location == 0)
-        .map(|&[_, _, _, value]| value)
+        .find(|&&[id, ..]| id == key)
+        .map(|&[_, location, count, value]| [location, count, value])
 }
 
 #[cfg(test)]
@@ -664,6 +795,129 @@ mod tests {
         if gdal_translate(&source, &translated, &["-mo", "AREA_OR_POINT=Point"]) {
             assert_eq!(Grid::<f32>::read_geotiff(translated.path()).unwrap(), grid);
         }
+    }
+
+    /// The GeoKeys of the IGN DEMs (MNT LiDAR HD from the Géoplateforme WMS):
+    /// a user-defined CRS spelling out Lambert-93, and its double parameters.
+    #[rustfmt::skip]
+    const IGN_GEO_KEYS: [u16; 80] = [
+        1, 1, 0, 19,
+        1024, 0, 1, 1,
+        1025, 0, 1, 1,
+        1026, 34737, 10, 0,
+        2048, 0, 1, 32767,
+        2050, 0, 1, 32767,
+        2051, 0, 1, 32767,
+        2052, 0, 1, 9001,
+        2054, 0, 1, 9102,
+        2056, 0, 1, 32767,
+        3072, 0, 1, 32767,
+        3074, 0, 1, 32767,
+        3075, 0, 1, 8,
+        3076, 0, 1, 9001,
+        3078, 34736, 1, 0,
+        3079, 34736, 1, 1,
+        3084, 34736, 1, 2,
+        3085, 34736, 1, 3,
+        3086, 34736, 1, 4,
+        3087, 34736, 1, 5,
+    ];
+    const IGN_GEO_DOUBLES: [f64; 6] = [49.0, 44.0, 3.0, 46.5, 700000.0, 6600000.0];
+
+    /// Writes a 2 x 2 Float32 GeoTIFF of 0.5 m cells to `path`, its
+    /// tiepoint at (`x`, `y`), with `geo_keys` and `geo_doubles`.
+    fn write_with_geo_keys(path: &Path, x: f64, y: f64, geo_keys: &[u16], geo_doubles: &[f64]) {
+        let mut encoder = TiffEncoder::new(File::create(path).unwrap()).unwrap();
+        let mut image = encoder.new_image::<colortype::Gray32Float>(2, 2).unwrap();
+        let directory = image.encoder();
+        directory
+            .write_tag(Tag::ModelPixelScaleTag, &[0.5, 0.5, 0.0][..])
+            .unwrap();
+        directory
+            .write_tag(Tag::ModelTiepointTag, &[0.0, 0.0, 0.0, x, y, 0.0][..])
+            .unwrap();
+        directory
+            .write_tag(Tag::GeoKeyDirectoryTag, geo_keys)
+            .unwrap();
+        directory
+            .write_tag(Tag::GeoDoubleParamsTag, geo_doubles)
+            .unwrap();
+        directory
+            .write_tag(Tag::GeoAsciiParamsTag, "EPSG:2154|")
+            .unwrap();
+        directory.write_tag(Tag::GdalNodata, " -9999").unwrap();
+        image.write_data(&[1.0f32, 2.0, -9999.0, 4.0]).unwrap();
+    }
+
+    #[test]
+    fn reads_the_user_defined_lambert_93_of_ign_dems() {
+        let file = TempFile::new("ign.tif");
+        write_with_geo_keys(
+            file.path(),
+            906999.75,
+            6455000.25,
+            &IGN_GEO_KEYS,
+            &IGN_GEO_DOUBLES,
+        );
+        let grid = Grid::<f32>::read_geotiff(file.path()).unwrap();
+        assert_eq!(
+            (
+                grid.min_x,
+                grid.max_y,
+                grid.resolution,
+                grid.width,
+                grid.height
+            ),
+            (906999.75, 6455000.25, 0.5, 2, 2)
+        );
+        assert_eq!(grid.nodata, Some(-9999.0));
+        assert_eq!(grid.values, [1.0, 2.0, -9999.0, 4.0]);
+        assert_eq!(
+            GridExtent::read_geotiff(file.path()).unwrap(),
+            GridExtent {
+                min_x: 906999.75,
+                max_y: 6455000.25,
+                resolution: 0.5,
+                width: 2,
+                height: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_user_defined_crs_other_than_lambert_93() {
+        let file = TempFile::new("user-defined.tif");
+        let with = |key: u16, value: u16| {
+            let mut keys = IGN_GEO_KEYS;
+            let entry = keys.chunks_mut(4).find(|entry| entry[0] == key).unwrap();
+            entry[3] = value;
+            keys
+        };
+        // Lambert-93 parameters but another projection: Transverse Mercator,
+        // and feet.
+        for (keys, message) in [
+            (with(3075, 1), "coordinate transformation 1"),
+            (with(3076, 9002), "linear units 9002"),
+        ] {
+            write_with_geo_keys(file.path(), 0.0, 0.0, &keys, &IGN_GEO_DOUBLES);
+            let error = Grid::<f32>::read_geotiff(file.path()).unwrap_err();
+            assert!(error.to_string().contains(message), "{error}");
+        }
+        // The parameters of CC46 (EPSG:3946), a Lambert conformal conic
+        // projection of the same family.
+        let cc46 = [45.25, 46.75, 3.0, 46.0, 1700000.0, 5200000.0];
+        write_with_geo_keys(file.path(), 0.0, 0.0, &IGN_GEO_KEYS, &cc46);
+        let error = GridExtent::read_geotiff(file.path()).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("first standard parallel of 45.25 instead of 49"),
+            "{error}"
+        );
+        // A missing parameter.
+        write_with_geo_keys(file.path(), 0.0, 0.0, &IGN_GEO_KEYS, &IGN_GEO_DOUBLES[..5]);
+        let error = Grid::<f32>::read_geotiff(file.path()).unwrap_err();
+        assert!(error.to_string().contains("no false northing"), "{error}");
     }
 
     #[test]

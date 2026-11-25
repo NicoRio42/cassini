@@ -51,6 +51,16 @@ cassini process ./path/to/my/tile.laz
 
 The output directory for the processed LiDAR file.
 
+#### `--dem`
+
+<p>
+
+**Type:** `string`<br />
+
+</p>
+
+Optional path to a GeoTIFF <GlossaryLink slug="dem" /> in Lambert-93 to use instead of computing the <GlossaryLink slug="dem" /> from the ground points, such as an IGN MNT LiDAR HD tile (see [Use IGN DEMs](/guides/batch-mode#use-ign-dems)). It must overlap the tile, and Cassini warns if it leaves more than one of its cells' width of the tile uncovered. It is copied to the output directory as `dem.tif`, on its own grid.
+
 #### `--shapefiles`
 
 <p>
@@ -65,13 +75,13 @@ This subcommand also accepts the [common rendering options](#common-rendering-op
 
 ## `cassini lidar`
 
-Run only the LiDAR processing step for a single tile. The `lidar` subcommand takes the path to the <GlossaryLink slug="lidar" /> file to process as an argument:
+Run only the LiDAR processing step for a single tile. The `lidar` subcommand takes the path to the <GlossaryLink slug="lidar" /> file to process as an argument, and the tile's <GlossaryLink slug="dem" /> with the required `--dem` option:
 
 <Tabs syncKey="os">
   <TabItem label="Windows" icon="seti:windows">
 
 ```sh frame="none"
-cassini lidar path\to\my\tile.laz
+cassini lidar path\to\my\tile.laz --dem path\to\my\dem.tif
 ```
 
   </TabItem>
@@ -79,7 +89,7 @@ cassini lidar path\to\my\tile.laz
   <TabItem label="macOS" icon="apple">
 
 ```sh frame="none"
-cassini lidar ./path/to/my/tile.laz
+cassini lidar ./path/to/my/tile.laz --dem ./path/to/my/dem.tif
 ```
 
   </TabItem>
@@ -87,7 +97,7 @@ cassini lidar ./path/to/my/tile.laz
   <TabItem label="Linux" icon="linux">
 
 ```sh frame="none"
-cassini lidar ./path/to/my/tile.laz
+cassini lidar ./path/to/my/tile.laz --dem ./path/to/my/dem.tif
 ```
 
   </TabItem>
@@ -105,6 +115,17 @@ cassini lidar ./path/to/my/tile.laz
 </p>
 
 The output directory for the processed <GlossaryLink slug="lidar" /> file.
+
+#### `--dem`
+
+<p>
+
+**Type:** `string`<br />
+**Required**
+
+</p>
+
+The path to the GeoTIFF <GlossaryLink slug="dem" /> in Lambert-93 of the tile, such as an IGN MNT LiDAR HD tile (see [Use IGN DEMs](/guides/batch-mode#use-ign-dems)). The <GlossaryLink slug="lidar" /> file is read for the vegetation only, and the <GlossaryLink slug="dem" /> is copied to the output directory as `dem.tif`, on its own grid. The `render` subcommand samples it, with the <GlossaryLink slug="dem" label="DEMs" /> of the `--neighbors` tiles, onto its half a meter grid.
 
 #### `--config` or `-C`
 
@@ -199,6 +220,8 @@ Process multiple <GlossaryLink slug="lidar" /> files at once. The `batch` subcom
 cassini batch
 ```
 
+GeoTIFF <GlossaryLink slug="dem" label="DEMs" /> in this directory, such as IGN MNT LiDAR HD tiles, are used instead of computing the <GlossaryLink slug="dem" /> from the ground points: each one for the tile containing the centre of its extent (see [Use IGN DEMs](/guides/batch-mode#use-ign-dems)).
+
 ### Options
 
 #### `--output-dir` or `-o`
@@ -245,7 +268,7 @@ cassini batch --threads 6
 
 </p>
 
-The `--skip-lidar` option will skip the <GlossaryLink slug="lidar" /> processing stage of the pipeline. It will only work if you allready ran `cassini` once with the same input files, as it will reuse some temp files.
+The `--skip-lidar` option will skip the <GlossaryLink slug="lidar" /> processing stage of the pipeline. It will only work if you allready ran `cassini` once with the same input files, as it will reuse some temp files, including the <GlossaryLink slug="dem" label="DEMs" />.
 
 This subcommand also accepts the [common rendering options](#common-rendering-options) and the [OCAD export options](#ocad-export-options).
 

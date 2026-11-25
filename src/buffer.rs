@@ -206,6 +206,41 @@ mod tests {
     }
 
     #[test]
+    fn takes_the_last_column_and_row_from_the_neighbors_of_half_cell_offset_sources() {
+        // A 2 m tile of 0.5 m cells, and its DEM and those of its east, south
+        // and south-east neighbours as IGN's are: 0.25 m west and north of
+        // their tiles, so each output cell centre is on a source cell edge.
+        let offset_source = |min_x: f64, max_y: f64, first: f32| Grid {
+            min_x,
+            max_y,
+            resolution: 0.5,
+            width: 4,
+            height: 4,
+            nodata: Some(-9999.0),
+            values: (0..16).map(|i| first + i as f32).collect(),
+        };
+        let mut output = Grid::new(0.0, 2.0, 0.5, 4, 4, Some(-9999.0), -9999.0f32);
+        for source in [
+            offset_source(-0.25, 2.25, 0.0),
+            offset_source(1.75, 2.25, 100.0),
+            offset_source(-0.25, 0.25, 200.0),
+            offset_source(1.75, 0.25, 300.0),
+        ] {
+            paste_nearest(&source, &mut output);
+        }
+        // The tie goes to the source cell east and south of the centre: the
+        // tile's DEM fills all but the last column and row, shifted by one
+        // cell, and the neighbours' first column or row the rest.
+        #[rustfmt::skip]
+        assert_eq!(output.values, [
+            5.0, 6.0, 7.0, 104.0,
+            9.0, 10.0, 11.0, 108.0,
+            13.0, 14.0, 15.0, 112.0,
+            201.0, 202.0, 203.0, 300.0,
+        ]);
+    }
+
+    #[test]
     fn composites_sources_with_transparent_nodata() {
         let mut output = Grid::new(-1.0, 3.0, 1.0, 4, 4, Some(-9999.0), -9999.0f32);
         paste_nearest(&source(0.0, 2.0, [1.0, -9999.0, 3.0, 4.0]), &mut output);
