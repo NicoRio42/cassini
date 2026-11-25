@@ -18,7 +18,7 @@ use std::{
     process::{Child, Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        Arc, Condvar, Mutex,
     },
     thread::{sleep, spawn},
     time::Duration,
@@ -204,6 +204,7 @@ pub struct Job {
     tile_ids: Vec<String>,
     state: Mutex<JobState>,
     cancelled: AtomicBool,
+    cancel_wakeup: Condvar,
     child: Mutex<Option<Child>>,
 }
 
@@ -221,6 +222,7 @@ impl Job {
                 first_log_index: 0,
             }),
             cancelled: AtomicBool::new(false),
+            cancel_wakeup: Condvar::new(),
             child: Mutex::new(None),
         });
 
@@ -228,6 +230,7 @@ impl Job {
         spawn(move || {
             let (status, error) = match running.run(&input, &batch_args, &client) {
                 Ok(status) => (status, None),
+                Err(_) if running.is_cancelled() => (JobStatus::Cancelled, None),
                 Err(error) => {
                     let message = super::error_message(&error);
                     running.log(format!("Error: {message}"));
@@ -263,7 +266,13 @@ impl Job {
 
     /// Stops the download or kills the batch, whichever is running.
     pub fn cancel(&self) {
-        self.cancelled.store(true, Ordering::SeqCst);
+        {
+            // Use the retry wait's mutex to avoid missing a cancellation
+            // between testing the flag and going to sleep.
+            let _state = self.state.lock().unwrap();
+            self.cancelled.store(true, Ordering::SeqCst);
+            self.cancel_wakeup.notify_all();
+        }
         if let Some(child) = self.child.lock().unwrap().as_mut() {
             let _ = child.kill();
         }
@@ -271,6 +280,14 @@ impl Job {
 
     fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::SeqCst)
+    }
+
+    fn wait_for_retry(&self, delay: Duration) {
+        let state = self.state.lock().unwrap();
+        let _ = self
+            .cancel_wakeup
+            .wait_timeout_while(state, delay, |_| !self.is_cancelled())
+            .unwrap();
     }
 
     fn log(&self, line: String) {
@@ -338,6 +355,9 @@ impl Job {
             }
         }
 
+        if self.is_cancelled() {
+            return Ok(JobStatus::Cancelled);
+        }
         {
             let mut state = self.state.lock().unwrap();
             state.status = JobStatus::Processing;
@@ -355,7 +375,18 @@ impl Job {
 
         let mut retries_left = DOWNLOAD_RETRIES;
         loop {
-            match self.download_attempt(client, url, &part_path) {
+            if self.is_cancelled() {
+                let _ = fs::remove_file(&part_path);
+                return Ok(false);
+            }
+            let attempt = self.download_attempt(client, url, &part_path);
+            // A cancellation during a blocking request takes precedence
+            // over its eventual HTTP or read error.
+            if self.is_cancelled() {
+                let _ = fs::remove_file(&part_path);
+                return Ok(false);
+            }
+            match attempt {
                 Ok(completed) => {
                     if !completed {
                         let _ = fs::remove_file(&part_path);
@@ -378,7 +409,7 @@ impl Job {
                     self.log(format!(
                         "Download failed: {reason}. Retrying in {delay:.0?} ({retries_left} retries left)"
                     ));
-                    sleep(delay);
+                    self.wait_for_retry(delay);
                 }
             }
         }
@@ -563,4 +594,135 @@ fn file_name(path: &Path) -> String {
     path.file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{net::TcpListener, time::Instant};
+    use tiny_http::{Header, Response, Server};
+
+    fn start_download(url: String, dir: &Path) -> Arc<Job> {
+        Job::start(
+            JobInput {
+                tiles: vec![IgnTile {
+                    id: "test".to_owned(),
+                    min_x: 0,
+                    max_y: 1000,
+                    laz_url: url.clone(),
+                    dem_url: url,
+                    laz_file_name: "tile.laz".to_owned(),
+                    dem_file_name: "tile.tif".to_owned(),
+                    points: 0,
+                    corners: [[0.0; 2]; 4],
+                }],
+                options: BatchOptions::default(),
+                config_path: dir.join("config.json"),
+                input_dir: dir.to_owned(),
+                output_dir: dir.join("out"),
+            },
+            Client::builder()
+                .no_proxy()
+                .timeout(Duration::from_secs(2))
+                .build()
+                .unwrap(),
+        )
+        .unwrap()
+    }
+
+    fn wait_until(condition: impl Fn() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !condition() {
+            assert!(Instant::now() < deadline, "job did not respond in time");
+            sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn assert_cancelled(job: &Job) {
+        wait_until(|| !job.status().is_running());
+        let snapshot = job.snapshot(0);
+        assert_eq!(snapshot.status, JobStatus::Cancelled);
+        assert!(snapshot.error.is_none());
+        assert!(snapshot.download.is_none());
+    }
+
+    #[test]
+    fn cancellation_during_a_request_takes_precedence_over_http_errors() {
+        for status in [503, 404] {
+            let dir = tempfile::tempdir().unwrap();
+            let server = Server::http(("127.0.0.1", 0)).unwrap();
+            let job = start_download(format!("http://{}/tile", server.server_addr()), dir.path());
+            let request = server
+                .recv_timeout(Duration::from_secs(3))
+                .unwrap()
+                .unwrap();
+            job.cancel();
+            request
+                .respond(
+                    Response::empty(status)
+                        .with_header(Header::from_bytes("Retry-After", "60").unwrap()),
+                )
+                .unwrap();
+            assert_cancelled(&job);
+            assert!(server.try_recv().unwrap().is_none());
+            assert!(!dir.path().join("tile.laz").exists());
+        }
+    }
+
+    #[test]
+    fn cancellation_interrupts_retry_after_without_another_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::http(("127.0.0.1", 0)).unwrap();
+        let job = start_download(format!("http://{}/tile", server.server_addr()), dir.path());
+        server
+            .recv_timeout(Duration::from_secs(3))
+            .unwrap()
+            .unwrap()
+            .respond(
+                Response::empty(503).with_header(Header::from_bytes("Retry-After", "60").unwrap()),
+            )
+            .unwrap();
+        wait_until(|| {
+            job.snapshot(0)
+                .logs
+                .iter()
+                .any(|line| line.contains("Retrying"))
+        });
+        job.cancel();
+        assert_cancelled(&job);
+        assert!(server.try_recv().unwrap().is_none());
+    }
+
+    #[test]
+    fn cancellation_after_a_read_failure_removes_the_partial_download() {
+        let dir = tempfile::tempdir().unwrap();
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let job = start_download(
+            format!("http://{}/tile", listener.local_addr().unwrap()),
+            dir.path(),
+        );
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0; 4096];
+        stream.read(&mut request).unwrap();
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\npartial")
+            .unwrap();
+        drop(stream);
+        wait_until(|| {
+            job.snapshot(0)
+                .logs
+                .iter()
+                .any(|line| line.contains("Retrying"))
+        });
+        assert!(dir.path().join("tile.laz.part").exists());
+        job.cancel();
+        assert_cancelled(&job);
+        assert!(!dir.path().join("tile.laz.part").exists());
+        assert!(!dir.path().join("tile.laz").exists());
+        listener.set_nonblocking(true).unwrap();
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
 }

@@ -11,6 +11,8 @@ const CONFIRM_ABOVE_TILES = 20;
 const BYTES_PER_POINT = 6.5;
 const DEM_BYTES = 16e6;
 const MAX_LOG_LINES = 2000;
+// Bound decoded images and GPU textures even when viewing a large area.
+const MAX_RESULT_IMAGES = 16;
 const OPTIONS_STORAGE_KEY = "cassini-ui-options";
 
 const OPTION_FIELDS = [
@@ -38,7 +40,8 @@ let appState = null;
 let mode = "click";
 let logIndex = 0;
 let pollTimer = null;
-let resultNames = [];
+let resultTiles = [];
+const activeResults = new Map(); // Loaded result names and image URLs.
 let mapReady = false;
 
 // ---------------------------------------------------------------------------
@@ -256,7 +259,7 @@ async function toggleTileAt(lngLat) {
 // Drawing
 
 let drag = null; // The screen point where a rectangle started.
-let vertices = []; // The points of the polygon being drawn, in screen pixels.
+let vertices = []; // The polygon vertices, in longitudes and latitudes.
 
 function setMode(next) {
   mode = next;
@@ -283,10 +286,13 @@ function cancelDrawing() {
   map.getSource("drawing")?.setData(emptyCollection());
 }
 
-/** The ring of the screen points, in longitudes and latitudes. */
+function coordinatesOf(points) {
+  return points.map((point) => map.unproject(point).toArray());
+}
+
+/** Close a ring of longitude/latitude coordinates. */
 function ringOf(points) {
-  const ring = points.map((point) => map.unproject(point).toArray());
-  return [...ring, ring[0]];
+  return [...points, points[0]];
 }
 
 function drawShape(points, cursor) {
@@ -294,7 +300,7 @@ function drawShape(points, cursor) {
   const features = points.map((point) => ({
     type: "Feature",
     properties: {},
-    geometry: { type: "Point", coordinates: map.unproject(point).toArray() },
+    geometry: { type: "Point", coordinates: point },
   }));
   if (all.length >= 3) {
     features.push({ type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [ringOf(all)] } });
@@ -302,7 +308,7 @@ function drawShape(points, cursor) {
     features.push({
       type: "Feature",
       properties: {},
-      geometry: { type: "LineString", coordinates: all.map((point) => map.unproject(point).toArray()) },
+      geometry: { type: "LineString", coordinates: all },
     });
   }
   map.getSource("drawing")?.setData({ type: "FeatureCollection", features });
@@ -318,8 +324,8 @@ map.on("mousedown", (event) => {
 });
 
 map.on("mousemove", (event) => {
-  if (mode === "rectangle" && drag) drawShape(rectanglePoints(drag, event.point));
-  if (mode === "polygon" && vertices.length > 0) drawShape(vertices, event.point);
+  if (mode === "rectangle" && drag) drawShape(coordinatesOf(rectanglePoints(drag, event.point)));
+  if (mode === "polygon" && vertices.length > 0) drawShape(vertices, map.unproject(event.point).toArray());
 });
 
 map.on("mouseup", (event) => {
@@ -328,7 +334,7 @@ map.on("mouseup", (event) => {
   drag = null;
   map.getSource("drawing")?.setData(emptyCollection());
   if (Math.abs(start.x - event.point.x) < 3 || Math.abs(start.y - event.point.y) < 3) return;
-  selectIn({ type: "Polygon", coordinates: [ringOf(rectanglePoints(start, event.point))] }, event.originalEvent.shiftKey);
+  selectIn({ type: "Polygon", coordinates: [ringOf(coordinatesOf(rectanglePoints(start, event.point)))] }, event.originalEvent.shiftKey);
 });
 
 map.on("click", (event) => {
@@ -336,12 +342,12 @@ map.on("click", (event) => {
   if (mode === "click") return toggleTileAt(event.lngLat);
   if (mode !== "polygon") return;
   const point = event.point;
-  if (vertices.length >= 3 && point.dist(vertices[0]) < 10) {
+  if (vertices.length >= 3 && point.dist(map.project(vertices[0])) < 10) {
     return finishPolygon(event.originalEvent.shiftKey);
   }
   // A double click sends two clicks on the same point first.
-  if (vertices.length > 0 && point.dist(vertices[vertices.length - 1]) < 3) return;
-  vertices.push(point);
+  if (vertices.length > 0 && point.dist(map.project(vertices[vertices.length - 1])) < 3) return;
+  vertices.push(map.unproject(point).toArray());
   drawShape(vertices);
 });
 
@@ -619,33 +625,56 @@ async function loadResults(fitTileIds) {
     return showMessage(`Could not list the generated maps: ${error.message}`);
   }
 
-  for (const name of resultNames) {
-    if (!results.some((result) => result.name === name)) {
+  resultTiles = results;
+  $("results").hidden = results.length === 0;
+  if (fitTileIds) fitTo(fitTileIds);
+  syncResults();
+}
+
+/** Keep only nearby, visible images in memory; metadata remains available. */
+function syncResults() {
+  if (!mapReady) return;
+  const bounds = map.getBounds();
+  const center = map.getCenter();
+  const longitudeScale = Math.cos(center.lat * Math.PI / 180);
+  const distance = (result) => {
+    const lng = result.corners.reduce((sum, corner) => sum + corner[0], 0) / 4;
+    const lat = result.corners.reduce((sum, corner) => sum + corner[1], 0) / 4;
+    return ((lng - center.lng) * longitudeScale) ** 2 + (lat - center.lat) ** 2;
+  };
+  const visible = $("show-results").checked ? resultTiles.filter((result) => {
+    const lngs = result.corners.map((corner) => corner[0]);
+    const lats = result.corners.map((corner) => corner[1]);
+    return Math.max(...lngs) >= bounds.getWest() && Math.min(...lngs) <= bounds.getEast() &&
+      Math.max(...lats) >= bounds.getSouth() && Math.min(...lats) <= bounds.getNorth();
+  }).sort((a, b) => distance(a) - distance(b)) : [];
+  const wanted = new Set(visible.slice(0, MAX_RESULT_IMAGES).map((result) => result.name));
+  for (const name of activeResults.keys()) {
+    if (!wanted.has(name)) {
       map.removeLayer(`result-${name}`);
       map.removeSource(`result-${name}`);
+      activeResults.delete(name);
     }
   }
-  const visibility = $("show-results").checked ? "visible" : "none";
   const opacity = Number($("results-opacity").value);
-  for (const result of results) {
+  for (const result of visible.slice(0, MAX_RESULT_IMAGES)) {
     const id = `result-${result.name}`;
     const source = map.getSource(id);
     if (source) {
-      source.updateImage({ url: result.url, coordinates: result.corners });
+      if (activeResults.get(result.name) !== result.url) {
+        source.updateImage({ url: result.url, coordinates: result.corners });
+      }
     } else {
       map.addSource(id, { type: "image", url: result.url, coordinates: result.corners });
       map.addLayer(
-        { id, type: "raster", source: id, layout: { visibility }, paint: { "raster-opacity": opacity, "raster-fade-duration": 0 } },
+        { id, type: "raster", source: id, paint: { "raster-opacity": opacity, "raster-fade-duration": 0 } },
         "selection-fill",
       );
     }
+    activeResults.set(result.name, result.url);
   }
-  resultNames = results.map((result) => result.name);
-
-  $("results").hidden = results.length === 0;
-  $("results-summary").textContent = `${plural(results.length, "tile")} in "${appState.output_dir}". The merged map is "${appState.output_dir}/merged-map.png".`;
-
-  if (fitTileIds) fitTo(fitTileIds);
+  $("results-summary").textContent = `${plural(resultTiles.length, "tile")} in "${appState.output_dir}".` +
+    (visible.length > MAX_RESULT_IMAGES ? ` Showing the closest ${MAX_RESULT_IMAGES} of ${visible.length} visible tiles. Zoom in to see the others.` : "");
 }
 
 function fitTo(tileIds) {
@@ -655,13 +684,11 @@ function fitTo(tileIds) {
   map.fitBounds(bounds, { padding: 40, maxZoom: 15 });
 }
 
-$("show-results").addEventListener("change", () => {
-  const visibility = $("show-results").checked ? "visible" : "none";
-  for (const name of resultNames) map.setLayoutProperty(`result-${name}`, "visibility", visibility);
-});
+map.on("moveend", syncResults);
+$("show-results").addEventListener("change", syncResults);
 
 $("results-opacity").addEventListener("input", () => {
-  for (const name of resultNames) map.setPaintProperty(`result-${name}`, "raster-opacity", Number($("results-opacity").value));
+  for (const name of activeResults.keys()) map.setPaintProperty(`result-${name}`, "raster-opacity", Number($("results-opacity").value));
 });
 
 // ---------------------------------------------------------------------------
