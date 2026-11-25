@@ -310,6 +310,7 @@ dependencies = [
  "open",
  "quick-xml",
  "reqwest",
+ "semver",
  "serde",
  "serde_json",
  "shapefile",

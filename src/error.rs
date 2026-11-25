@@ -46,6 +46,9 @@ pub enum CassiniError {
     #[error("invalid artifact `{path}`: {message}")]
     InvalidArtifact { path: PathBuf, message: String },
 
+    #[error("could not upgrade Cassini: {message}")]
+    Upgrade { message: String },
+
     #[error("request to `{url}` returned HTTP status {status}")]
     HttpStatus { url: String, status: u16 },
 

@@ -9,6 +9,9 @@ FROM ubuntu:22.04
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+# The image is upgraded by pulling a newer one: turns off the check for a newer
+# version, and makes `cassini upgrade` say so.
+ENV CASSINI_DOCKER=1
 WORKDIR /app
 COPY cassini /bin/cassini
 ENTRYPOINT ["/bin/cassini"]

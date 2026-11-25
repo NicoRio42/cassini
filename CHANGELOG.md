@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Upgrade command.** `cassini upgrade`, or `cassini update`, installs the latest version of Cassini, if it was installed with the install script. When Cassini runs in a terminal, it also checks in the background, at most once a day, whether there is a newer version, and suggests running `cassini upgrade` at the end of the command if there is. Set `CASSINI_NO_UPDATE_CHECK=1` to turn the check off. The Docker image doesn't check.
+
 ## 0.19.0
 
 ### Changed
