@@ -17,7 +17,7 @@ use crate::{
     tile::Tile,
     vectorization::{FeatureSink, Shapes, Tracer, NUDGE, SLIVER_AREA},
     vegetation::{
-        vegetation_interior, NoDataHandling, RasterInterior, UndergrowthMode, VegetationRasters,
+        vegetation_interior, NoDataHandling, UndergrowthMode, VegetationRasters,
         LOW_DENSITY_BLUR_RADIUS, MEDIUM_DENSITY_BLUR_RADIUS,
     },
 };
@@ -328,12 +328,7 @@ impl VegetationFields {
         undergrowth_mode: &UndergrowthMode,
     ) -> Result<Self> {
         let interior = vegetation_interior(tile, rasters)?;
-        let window = RasterInterior {
-            x: interior.x - MARGIN,
-            y: interior.y - MARGIN,
-            width: interior.width + 2 * MARGIN,
-            height: interior.height + 2 * MARGIN,
-        };
+        let window = interior.expanded(MARGIN);
         let grid = Window {
             width: window.width,
             height: window.height,

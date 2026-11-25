@@ -186,7 +186,7 @@ pub fn pullautin_cull_formlines_render_contours(
         let mut y = Vec::<f64>::new();
 
         for i in 0..x_array.len() {
-            let (pixel_x, pixel_y) = transform.world_to_px_f64(x_array[i], y_array[i]);
+            let (pixel_x, pixel_y) = transform.world_to_px(x_array[i], y_array[i]);
             x.push(pixel_x);
             y.push(pixel_y);
         }
@@ -822,7 +822,7 @@ mod tests {
                 // The strokes are offset from -w to w - 1 pixels and
                 // truncated, which puts them up to 1.5 pixels north.
                 assert!(
-                    (center - expected).abs() < 2.0,
+                    (f64::from(center) - expected).abs() < 2.0,
                     "{elevation} m at {dpi} DPI: {rows:?}"
                 );
                 widths.push(rows.len());

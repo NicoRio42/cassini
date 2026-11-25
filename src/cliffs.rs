@@ -27,6 +27,7 @@ pub fn render_cliffs(
     let mut cliffs_layer_canvas = RgbaImage::from_pixel(image_width, image_height, TRANSPARENT);
     let radius = |thickness: f32| (transform.mm_to_px(thickness) / 2.0) as i32;
     let margin = radius(CLIFF_THICKNESS_1.max(CLIFF_THICKNESS_2));
+    let extent = slopes.extent();
 
     for (index, slope) in slopes.values.iter().copied().enumerate() {
         let thickness = if slope > config.cliff_threshold_2 {
@@ -37,13 +38,8 @@ pub fn render_cliffs(
             continue;
         };
 
-        let (x, y) = transform.cell_center_px(
-            (slopes.min_x, slopes.max_y),
-            slopes.resolution,
-            index % slopes.width,
-            index / slopes.width,
-        );
-        let (x_pixel, y_pixel) = (x.round() as i32, y.round() as i32);
+        let (x_pixel, y_pixel) =
+            transform.cell_center_pixel(&extent, index % slopes.width, index / slopes.width);
         // The dots of the buffer that overlap the image are drawn, for the
         // cliffs across tile edges to be whole in the merged map.
         if x_pixel < -margin

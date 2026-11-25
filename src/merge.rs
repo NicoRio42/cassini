@@ -5,7 +5,7 @@ use crate::{
     canvas::Canvas,
     config::Config,
     constants::MAX_MERGED_PIXEL_WIDTH_AND_HEIGHT,
-    error::{Result, ResultContext},
+    error::{CassiniError, Result, ResultContext},
     render_transform::{PixelGrid, PixelRect, RenderTransform},
     tile::TileWithNeighbors,
 };
@@ -92,7 +92,24 @@ pub fn merge_maps(
                     continue;
                 }
 
-                let mut map = Canvas::load_from(&twn.tile.render_dir_path.join("full-map.png"))?;
+                let map_path = twn.tile.render_dir_path.join("full-map.png");
+                let mut map = Canvas::load_from(&map_path)?;
+                // Another size would leave gaps or overlaps between the tiles.
+                if (i64::from(map.width()), i64::from(map.height()))
+                    != (tile_rect.width(), tile_rect.height())
+                {
+                    return Err(CassiniError::InvalidArtifact {
+                        path: map_path,
+                        message: format!(
+                            "the map is {}x{} pixels, but {}x{} at {} DPI",
+                            map.width(),
+                            map.height(),
+                            tile_rect.width(),
+                            tile_rect.height(),
+                            config.dpi_resolution
+                        ),
+                    });
+                }
                 chunk_canvas.overlay(
                     &mut map,
                     (tile_rect.left - chunk_rect.left) as f32,
@@ -134,6 +151,7 @@ mod tests {
     use super::merge_maps;
     use crate::{
         config::Config,
+        error::CassiniError,
         render_transform::{PixelGrid, RenderTransform},
         tile::{Tile, TileWithNeighbors},
     };
@@ -176,7 +194,7 @@ mod tests {
             }
         }
 
-        merge_maps(dir.path().to_str().unwrap(), tiles, &config).unwrap();
+        merge_maps(dir.path().to_str().unwrap(), tiles.clone(), &config).unwrap();
 
         let merged = image::open(dir.path().join("merged-map.png"))
             .unwrap()
@@ -192,6 +210,18 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(dir.path().join("merged-map.pgw")).unwrap(),
             RenderTransform::new(grid, rect).world_file().to_string()
+        );
+
+        // A map of a former version, a pixel narrower.
+        let map_path = tiles[3].tile.render_dir_path.join("full-map.png");
+        let transform = RenderTransform::for_tile(&tiles[3].tile, &config);
+        RgbaImage::new(transform.width() - 1, transform.height())
+            .save(&map_path)
+            .unwrap();
+        let error = merge_maps(dir.path().to_str().unwrap(), tiles, &config).unwrap_err();
+        assert!(
+            matches!(&error, CassiniError::InvalidArtifact { path, .. } if *path == map_path),
+            "{error}"
         );
     }
 }

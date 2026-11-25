@@ -912,9 +912,20 @@ pub mod test_tiles {
     /// 25 cm over it, edges included, at `ground_z`, then `points` shifted
     /// by `ground_z - 100` m.
     pub fn write_tile(path: &Path, offset_x: f64, ground_z: f64, points: &[(f64, f64, f64, u8)]) {
+        write_tile_at(path, (offset_x, 0.0), ground_z, points);
+    }
+
+    /// Writes the LAZ file of the tile at (`offset_x`, `offset_y`), as
+    /// `write_tile`.
+    pub fn write_tile_at(
+        path: &Path,
+        (offset_x, offset_y): (f64, f64),
+        ground_z: f64,
+        points: &[(f64, f64, f64, u8)],
+    ) {
         let point = |x: f64, y: f64, z: f64, classification: u8| Point {
             x: MIN_X + offset_x + x,
-            y: MIN_Y + y,
+            y: MIN_Y + offset_y + y,
             z,
             return_number: 1,
             number_of_returns: 1,

@@ -9,6 +9,7 @@
 ### Fixed
 
 - **Georeferencing and seams of the maps.** Every map layer, the merged map and the world files now share one pixel grid. The merged map no longer has a transparent column or row every few tiles, and features are no longer shifted by up to a pixel between layers. The world files (`.pgw`) now give the centre of the top-left pixel, as GDAL, QGIS and OCAD expect, in full precision, so the maps are no longer offset by half a pixel. A tile image is now 2362 or 2363 pixels wide at 600 DPI, depending on where the tile is.
+- **Cliffs and vegetation at their cells' centre.** The cliff dots and the open land around high vegetation are now drawn at the centre of their cells instead of their north-west corner, which moved them 0.25 m and 0.5 m south-east of where the OCAD export puts them. Each 1 m vegetation cell now covers exactly its own pixels, so tile edges no longer show a yellow line at some DPI resolutions, such as 720 or 1200. Cells were drawn up to 0.64 pixels too wide before, so green areas are slightly smaller: 3 to 8% fewer green pixels on the test tiles. Cliffs and the open land around high vegetation next to a tile are drawn across its edge, so they are whole in the merged map.
 - The tiles of a batch are processed in the same order on every run, so two runs give the same `merged-map.ocd`.
 
 ## 0.19.0

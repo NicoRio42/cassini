@@ -448,7 +448,10 @@ impl MapRenderer {
     fn get_points_from_line_part(&self, line_part: &[Point]) -> Vec<(f32, f32)> {
         line_part
             .iter()
-            .map(|point| self.transform.world_to_px(point.x, point.y))
+            .map(|point| {
+                let (x, y) = self.transform.world_to_px(point.x, point.y);
+                (x as f32, y as f32)
+            })
             .collect()
     }
 
