@@ -47,7 +47,20 @@ pub fn create_dem_contours_and_slopes(
         mosaic_with_buffer::<f32>(tile, neighbor_tiles, "dem", DEM_BLOCK_SIZE)?;
 
     // Filling holes
+    let fill_start = Instant::now();
+    let nodata_cells = count_nodata(&dem_with_buffer);
     fill_nodata(&mut dem_with_buffer, DEFAULT_MAX_SEARCH_DISTANCE);
+    info!(
+        "Tile min_x={} min_y={} max_x={} max_y={}. Filled {} of the {} DEM cells without data, out of {}, in {:.1?}",
+        tile.min_x,
+        tile.min_y,
+        tile.max_x,
+        tile.max_y,
+        nodata_cells - count_nodata(&dem_with_buffer),
+        nodata_cells,
+        dem_with_buffer.values.len(),
+        fill_start.elapsed()
+    );
     dem_with_buffer.write_geotiff(&dem_with_buffer_path, Compression::None)?;
 
     let duration = start.elapsed();
@@ -104,6 +117,14 @@ pub fn create_dem_contours_and_slopes(
     );
 
     Ok(contours)
+}
+
+/// The number of nodata cells of `grid`.
+fn count_nodata(grid: &Grid<f32>) -> usize {
+    grid.values
+        .iter()
+        .filter(|&&value| !grid.has_data(value))
+        .count()
 }
 
 /// `grid` with cells `factor` times larger, each the mean of the data cells of

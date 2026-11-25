@@ -190,6 +190,22 @@ mod tests {
     }
 
     #[test]
+    fn copies_cells_of_the_same_resolution_one_to_one() {
+        let mut source = source(0.0, 1.0, [1.0, 2.0, 3.0, 4.0]);
+        source.resolution = 0.5;
+        let mut output = Grid::new(-0.5, 1.5, 0.5, 4, 4, Some(-9999.0), -9999.0f32);
+        paste_nearest(&source, &mut output);
+        let n = -9999.0;
+        #[rustfmt::skip]
+        assert_eq!(output.values, [
+            n, n, n, n,
+            n, 1.0, 2.0, n,
+            n, 3.0, 4.0, n,
+            n, n, n, n,
+        ]);
+    }
+
+    #[test]
     fn composites_sources_with_transparent_nodata() {
         let mut output = Grid::new(-1.0, 3.0, 1.0, 4, 4, Some(-9999.0), -9999.0f32);
         paste_nearest(&source(0.0, 2.0, [1.0, -9999.0, 3.0, 4.0]), &mut output);
@@ -224,9 +240,8 @@ mod tests {
         for dir in [&tile_dir, &east_dir, &west_dir] {
             std::fs::create_dir_all(dir).unwrap();
         }
-        let raster = |min_x: f64, value: f32| {
-            Grid::new(min_x, 1000.0, 100.0, 10, 10, Some(-9999.0), value)
-        };
+        let raster =
+            |min_x: f64, value: f32| Grid::new(min_x, 1000.0, 100.0, 10, 10, Some(-9999.0), value);
         raster(0.0, 1.0)
             .write_geotiff(&tile_dir.join("dem.tif"), Compression::None)
             .unwrap();
@@ -256,6 +271,8 @@ mod tests {
             -9999.0, -9999.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 2.0, 2.0,
         ]);
         // The north buffer has no data.
-        assert!(mosaic.values[..2 * 14].iter().all(|&value| value == -9999.0));
+        assert!(mosaic.values[..2 * 14]
+            .iter()
+            .all(|&value| value == -9999.0));
     }
 }
