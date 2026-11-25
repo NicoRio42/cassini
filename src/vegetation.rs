@@ -2,10 +2,11 @@ use crate::{
     buffer::create_tif_with_buffer,
     config::Config,
     constants::{
-        BUFFER, GREEN_1, GREEN_2, GREEN_3, INCH, TRANSPARENT, VEGETATION_BLOCK_SIZE, WHITE, YELLOW,
+        BUFFER, GREEN_1, GREEN_2, GREEN_3, TRANSPARENT, VEGETATION_BLOCK_SIZE, WHITE, YELLOW,
     },
     error::{CassiniError, Result, ResultContext},
     grid::Grid,
+    render_transform::RenderTransform,
     tile::Tile,
 };
 use image::{imageops, RgbaImage};
@@ -180,19 +181,16 @@ impl VegetationRasters {
 pub fn render_vegetation(
     tile: &Tile,
     neighbor_tiles: &[PathBuf],
-    image_width: u32,
-    image_height: u32,
+    transform: &RenderTransform,
     config: &Config,
     undergrowth_mode: &UndergrowthMode,
 ) -> Result<VegetationRasters> {
-    info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. Rendering vegetation",
-        tile.min_x, tile.min_y, tile.max_x, tile.max_y
-    );
+    info!("Tile {}. Rendering vegetation", tile);
 
     let start = Instant::now();
 
-    let vegetation_block_size_pixel = VEGETATION_BLOCK_SIZE as f32 * config.dpi_resolution / INCH;
+    let vegetation_block_size_pixel =
+        (VEGETATION_BLOCK_SIZE * transform.grid().pixels_per_metre()) as f32;
     let casted_base_vegetation_block_size_pixel = (vegetation_block_size_pixel * 2.).ceil() as i32;
     let casted_green_block_size_pixel = (vegetation_block_size_pixel).ceil() as u32;
 
@@ -206,6 +204,7 @@ pub fn render_vegetation(
         low: buffered("low_vegetation")?,
     };
 
+    let (image_width, image_height) = (transform.width(), transform.height());
     let mut base_vegetation_img = RgbaImage::from_pixel(image_width, image_height, YELLOW);
     let mut green_vegetation_img = RgbaImage::from_pixel(image_width, image_height, TRANSPARENT);
     let mut undergrowth_vegetation_img =
@@ -213,20 +212,27 @@ pub fn render_vegetation(
 
     let interior = vegetation_interior(tile, &rasters)?;
     let classification = classify_vegetation(&rasters, interior, config, undergrowth_mode);
+    // The classification covers the tile, in cells of 1 m.
+    let origin = (tile.min_x as f64, tile.max_y as f64);
+    let corner = |x: usize, y: usize| {
+        let (x, y) = transform.cell_corner_px(origin, VEGETATION_BLOCK_SIZE, x, y);
+        (x.floor() as i32, y.floor() as i32)
+    };
 
     // High vegetation and undergrowth use a single color per layer, so they can
     // be rasterized in cache-friendly row-major order without changing overlap
     // precedence.
     for y in 0..classification.height {
-        let y_pixel = (y as f32 * vegetation_block_size_pixel) as i32;
         for x in 0..classification.width {
             let index = y * classification.width + x;
-            let x_pixel = (x as f32 * vegetation_block_size_pixel) as i32;
+            let (x_pixel, y_pixel) = corner(x, y);
 
             if classification.high[index] != 0 {
+                let (center_x, center_y) =
+                    transform.cell_center_px(origin, VEGETATION_BLOCK_SIZE, x, y);
                 draw_filled_ellipse_mut(
                     &mut base_vegetation_img,
-                    (x_pixel, y_pixel),
+                    (center_x.round() as i32, center_y.round() as i32),
                     casted_base_vegetation_block_size_pixel,
                     casted_base_vegetation_block_size_pixel,
                     WHITE,
@@ -253,7 +259,6 @@ pub fn render_vegetation(
     // Keep the original x-major drawing order so existing color precedence is
     // unchanged even though classification now traverses source pixels by row.
     for x in 0..classification.width {
-        let x_pixel = (x as f32 * vegetation_block_size_pixel) as i32;
         for y in 0..classification.height {
             let index = y * classification.width + x;
             let color = match classification.green[index] {
@@ -262,7 +267,7 @@ pub fn render_vegetation(
                 3 => GREEN_3,
                 _ => continue,
             };
-            let y_pixel = (y as f32 * vegetation_block_size_pixel) as i32;
+            let (x_pixel, y_pixel) = corner(x, y);
             draw_filled_rect_mut(
                 &mut green_vegetation_img,
                 Rect::at(x_pixel, y_pixel)
@@ -301,10 +306,7 @@ pub fn render_vegetation(
 
     let duration = start.elapsed();
 
-    info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. Vegetation rendered in {:.1?}",
-        tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
-    );
+    info!("Tile {}. Vegetation rendered in {:.1?}", tile, duration);
 
     Ok(rasters)
 }

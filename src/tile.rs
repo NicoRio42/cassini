@@ -27,6 +27,12 @@ pub struct Tile {
     pub max_y: i64,
 }
 
+impl std::fmt::Display for Tile {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        TileId::from(self).fmt(formatter)
+    }
+}
+
 impl From<&Tile> for TileId {
     fn from(tile: &Tile) -> Self {
         Self {

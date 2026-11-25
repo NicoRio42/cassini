@@ -115,10 +115,7 @@ pub fn get_cliff_features(
     config: &Config,
     simplify_tolerance: f64,
 ) -> Result<Vec<MapFeature>> {
-    info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. Vectorizing cliffs",
-        tile.min_x, tile.min_y, tile.max_x, tile.max_y
-    );
+    info!("Tile {}. Vectorizing cliffs", tile);
 
     let start = Instant::now();
 
@@ -154,11 +151,8 @@ pub fn get_cliff_features(
     let duration = start.elapsed();
 
     info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. {} cliffs vectorized in {:.1?}",
-        tile.min_x,
-        tile.min_y,
-        tile.max_x,
-        tile.max_y,
+        "Tile {}. {} cliffs vectorized in {:.1?}",
+        tile,
         features.len(),
         duration
     );

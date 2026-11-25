@@ -1,11 +1,11 @@
 use crate::{
     coastlines::get_polygon_with_holes_from_coastlines,
-    config::Config,
-    constants::{BUFFER, COASTLINE_EDGE_BUFFER, INCH},
+    constants::{BUFFER, COASTLINE_EDGE_BUFFER},
     error::{Result, ResultContext},
     helpers::does_polyline_intersect_tile,
     map_features::{AreaSymbol, Extent, LineSymbol, MapFeature, PointSymbol},
     map_renderer::MapRenderer,
+    render_transform::RenderTransform,
     tile::Tile,
 };
 use cassini::osm_import::{read_osm_file, Tag};
@@ -16,13 +16,9 @@ use shapefile::{
 };
 use std::{collections::HashMap, path::Path, time::Instant};
 
-// To be replaced by a request struct (A8 in the 2026-11-25 audit).
-#[allow(clippy::too_many_arguments)]
 pub fn render_map_with_osm_vector_shapes(
     tile: &Tile,
-    image_width: u32,
-    image_height: u32,
-    config: &Config,
+    transform: &RenderTransform,
     vegetation_path: &Path,
     undergrowth_path: &Path,
     contours_path: &Path,
@@ -30,15 +26,8 @@ pub fn render_map_with_osm_vector_shapes(
     features: &[MapFeature],
 ) -> Result<()> {
     let start = Instant::now();
-    let scale_factor = config.dpi_resolution / INCH;
-
     let mut map_renderer = MapRenderer::new(
-        tile.min_x,
-        tile.min_y,
-        image_width,
-        image_height,
-        scale_factor,
-        config.dpi_resolution,
+        *transform,
         vegetation_path,
         undergrowth_path,
         contours_path,
@@ -115,10 +104,7 @@ pub fn render_map_with_osm_vector_shapes(
     map_renderer.save_as(tile.render_dir_path.join("full-map.png"))?;
     let duration = start.elapsed();
 
-    info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. Vectors rendered in {:.1?}",
-        tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
-    );
+    info!("Tile {}. Vectors rendered in {:.1?}", tile, duration);
 
     Ok(())
 }
@@ -226,10 +212,7 @@ fn classify_osm_shapes(
     lines: impl IntoIterator<Item = (Polyline, ShapeTags)>,
     skip_520: bool,
 ) -> Result<Vec<MapFeature>> {
-    info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. Classifying vectors",
-        tile.min_x, tile.min_y, tile.max_x, tile.max_y
-    );
+    info!("Tile {}. Classifying vectors", tile);
 
     let mut features: Vec<MapFeature> = vec![];
     // Shapefiles may cover much more than the tile, for instance when given

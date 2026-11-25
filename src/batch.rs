@@ -20,7 +20,7 @@ use crate::{
 };
 use log::{info, warn};
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fs::read_dir,
     path::{Path, PathBuf},
     sync::Arc,
@@ -131,10 +131,7 @@ pub fn batch(
         chunk_size,
         Stage::Render,
         move |tile: TileWithNeighbors| {
-            info!(
-                "Tile min_x={} min_y={} max_x={} max_y={}. Rendering map",
-                tile.tile.min_x, tile.tile.min_y, tile.tile.max_x, tile.tile.max_y
-            );
+            info!("Tile {}. Rendering map", tile.tile);
 
             let features =
                 render_tile_map(tile.tile.clone(), tile.neighbors, &options, &render_config)?;
@@ -180,10 +177,7 @@ fn run_lidar_stage(
         chunk_size,
         Stage::Lidar,
         move |tile: TileWithNeighbors| {
-            info!(
-                "Tile min_x={} min_y={} max_x={} max_y={}. Generating raw rasters",
-                tile.tile.min_x, tile.tile.min_y, tile.tile.max_x, tile.tile.max_y
-            );
+            info!("Tile {}. Generating raw rasters", tile.tile);
 
             let dem_pass = run_dem_pass(
                 &tile.laz_path,
@@ -424,7 +418,8 @@ pub fn get_tiles_with_neighbors(
     let paths =
         read_dir(input_dir).context(format!("could not read input directory `{input_dir}`"))?;
     let mut tiles: Vec<TileWithNeighbors> = vec![];
-    let mut tiles_map = HashMap::<(i64, i64, i64, i64), PathBuf>::new();
+    // Ordered, for the same merged map, OCAD file and logs on every run.
+    let mut tiles_map = BTreeMap::<(i64, i64, i64, i64), PathBuf>::new();
 
     for dir_entry in paths {
         let path = dir_entry
@@ -655,7 +650,7 @@ fn find_dems(input_dir: &str, tiles: &[TileId]) -> Result<HashMap<TileId, PathBu
 }
 
 fn get_neighbor_tile_from_hash_map(
-    tiles_map: &HashMap<(i64, i64, i64, i64), PathBuf>,
+    tiles_map: &BTreeMap<(i64, i64, i64, i64), PathBuf>,
     output_dir: &str,
     min_x: i64,
     min_y: i64,
@@ -761,11 +756,7 @@ mod tests {
         write_tile(&input.join("a.laz"), 0.0, 100.0, &POINTS);
         write_tile(&input.join("b.laz"), SIDE, 110.0, &[]);
         let output = dir.join("out");
-        let mut tiles =
-            get_tiles_with_neighbors(input.to_str().unwrap(), output.to_str().unwrap(), true)
-                .unwrap();
-        tiles.sort_by_key(|tile| tile.tile.min_x);
-        tiles
+        get_tiles_with_neighbors(input.to_str().unwrap(), output.to_str().unwrap(), true).unwrap()
     }
 
     #[test]
@@ -785,6 +776,32 @@ mod tests {
 
         let laz_paths: Vec<_> = tiles.iter().map(|tile| &tile.laz_path).collect();
         assert_eq!(laz_paths, [&input.join("a.LAZ")]);
+    }
+
+    #[test]
+    fn lists_the_tiles_west_to_east_whatever_the_file_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("in");
+        std::fs::create_dir(&input).unwrap();
+        for (name, offset) in [("a", 5), ("b", 0), ("c", 3), ("d", 1), ("e", 4), ("f", 2)] {
+            write_tile(
+                &input.join(format!("{name}.laz")),
+                offset as f64 * SIDE,
+                100.0,
+                &[],
+            );
+        }
+        let output = dir.path().join("out");
+
+        let tiles =
+            get_tiles_with_neighbors(input.to_str().unwrap(), output.to_str().unwrap(), false)
+                .unwrap();
+
+        let min_xs: Vec<i64> = tiles.iter().map(|tile| tile.tile.min_x).collect();
+        let mut sorted = min_xs.clone();
+        sorted.sort();
+        assert_eq!(min_xs.len(), 6);
+        assert_eq!(min_xs, sorted);
     }
 
     #[test]

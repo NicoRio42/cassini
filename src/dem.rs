@@ -41,10 +41,7 @@ pub const DEM_WITH_BUFFER_FILE_NAME: &str = "dem_with_buffer.tif";
 /// `dem.tif` rasters of the tile and its neighbours, mosaicked and filled.
 /// Returns it.
 pub fn create_dem_with_buffer(tile: &Tile, neighbor_tiles: &[PathBuf]) -> Result<Grid<f32>> {
-    info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. Generating dem with buffer",
-        tile.min_x, tile.min_y, tile.max_x, tile.max_y
-    );
+    info!("Tile {}. Generating dem with buffer", tile);
 
     let start = Instant::now();
 
@@ -56,8 +53,8 @@ pub fn create_dem_with_buffer(tile: &Tile, neighbor_tiles: &[PathBuf]) -> Result
     let duration = start.elapsed();
 
     info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. Dem with buffer generated in {:.1?}",
-        tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
+        "Tile {}. Dem with buffer generated in {:.1?}",
+        tile, duration
     );
 
     Ok(dem_with_buffer)
@@ -75,11 +72,8 @@ pub fn fill_dem_with_buffer(dem_with_buffer: &mut Grid<f32>, tile: &TileId) {
     let (nodata_cells, tile_cells) = count_tile_nodata(dem_with_buffer, tile);
     fill_nodata(dem_with_buffer, DEFAULT_MAX_SEARCH_DISTANCE);
     info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. Filled {} of the {} DEM cells of the tile without data, out of {}, in {:.1?}",
-        tile.min_x,
-        tile.min_y,
-        tile.max_x,
-        tile.max_y,
+        "Tile {}. Filled {} of the {} DEM cells of the tile without data, out of {}, in {:.1?}",
+        tile,
         nodata_cells - count_tile_nodata(dem_with_buffer, tile).0,
         nodata_cells,
         tile_cells,
@@ -156,10 +150,7 @@ pub fn create_contours_and_slopes(
     tile: &Tile,
     dem_with_buffer: &Grid<f32>,
 ) -> Result<Vec<ContourLine>> {
-    info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. Generating contours shapefiles",
-        tile.min_x, tile.min_y, tile.max_x, tile.max_y
-    );
+    info!("Tile {}. Generating contours shapefiles", tile);
 
     let start = Instant::now();
 
@@ -180,14 +171,11 @@ pub fn create_contours_and_slopes(
     let duration = start.elapsed();
 
     info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. Contours shapefiles generated in {:.1?}",
-        tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
+        "Tile {}. Contours shapefiles generated in {:.1?}",
+        tile, duration
     );
 
-    info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. Generating slopes tif image",
-        tile.min_x, tile.min_y, tile.max_x, tile.max_y
-    );
+    info!("Tile {}. Generating slopes tif image", tile);
 
     let start = Instant::now();
 
@@ -198,8 +186,8 @@ pub fn create_contours_and_slopes(
     let duration = start.elapsed();
 
     info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. Slopes tif image generated in {:.1?}",
-        tile.min_x, tile.min_y, tile.max_x, tile.max_y, duration
+        "Tile {}. Slopes tif image generated in {:.1?}",
+        tile, duration
     );
 
     Ok(contours)

@@ -6,6 +6,11 @@
 
 - **Upgrade command.** `cassini upgrade`, or `cassini update`, installs the latest version of Cassini, if it was installed with the install script. When Cassini runs in a terminal, it also checks in the background, at most once a day, whether there is a newer version, and suggests running `cassini upgrade` at the end of the command if there is. Set `CASSINI_NO_UPDATE_CHECK=1` to turn the check off. The Docker image doesn't check.
 
+### Fixed
+
+- **Georeferencing and seams of the maps.** Every map layer, the merged map and the world files now share one pixel grid. The merged map no longer has a transparent column or row every few tiles, and features are no longer shifted by up to a pixel between layers. The world files (`.pgw`) now give the centre of the top-left pixel, as GDAL, QGIS and OCAD expect, in full precision, so the maps are no longer offset by half a pixel. A tile image is now 2362 or 2363 pixels wide at 600 DPI, depending on where the tile is.
+- The tiles of a batch are processed in the same order on every run, so two runs give the same `merged-map.ocd`.
+
 ## 0.19.0
 
 ### Changed

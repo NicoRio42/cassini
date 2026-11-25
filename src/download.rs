@@ -39,19 +39,16 @@ pub fn download_osm_file(
     // existing `.osm` file is never downloaded again.
     let partial_osm_file_path = osm_file_path.with_extension("osm.part");
 
-    info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. Downloading osm file",
-        min_x, min_y, max_x, max_y
-    );
-
-    let start = Instant::now();
-
     let tile_id = TileId {
         min_x,
         min_y,
         max_x,
         max_y,
     };
+
+    info!("Tile {tile_id}. Downloading osm file");
+
+    let start = Instant::now();
 
     let (min_lon, min_lat) = lambert93_to_wgs84(
         (min_x - BUFFER as i64) as f64,
@@ -169,10 +166,7 @@ out skel qt;
 
     let duration = start.elapsed();
 
-    info!(
-        "Tile min_x={} min_y={} max_x={} max_y={}. Osm files downloaded in {:.1?}",
-        min_x, min_y, max_x, max_y, duration
-    );
+    info!("Tile {tile_id}. Osm files downloaded in {duration:.1?}");
 
     Ok(())
 }
